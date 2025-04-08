@@ -12,7 +12,9 @@ mod core;
 mod minimal_tracer;
 #[cfg(not(feature = "lambda"))]
 mod repl;
+mod build;
 
+use build::LexeBuild;
 use constcat::concat;
 use minimal_tracer::MinimalTracer;
 use tracing::trace;
@@ -72,12 +74,13 @@ fn usage() {
         r#"
 
 Usage:
-  llrt <filename>
-  llrt -v | --version
-  llrt -h | --help
-  llrt -e | --eval <source>
-  llrt compile input.js [output.lrt]
-  llrt test <test_args>
+  lexe <filename>
+  lexe -v | --version
+  lexe -h | --help
+  lexe -e | --eval <source>
+  lexe compile input.js [output.lrt]
+  lexe test <test_args>
+  lexe build <build_args>
 
 Options:
   -v, --version     Print version information
@@ -85,10 +88,18 @@ Options:
   -e, --eval        Evaluate the provided source code
   compile           Compile JS to bytecode and compress it with zstd:
                       if [output.lrt] is omitted, <input>.lrt is used.
-                      lrt file is expected to be executed by the llrt version
+                      lrt file is expected to be executed by the lexe version
                       that created it
   test              Run tests with provided arguments:
                       <test_args> -d <directory> <test-filter>
+  build             This command will create a standalone executable from the source code.
+                    build_args:
+                      -i, --input         input file(required)
+                      -o, --output        output file name(optional, default: input-<platform>)
+                      -d, --directory     output directory(optional, default: ./dist)
+                      -p, --platform      target platform, use "," to separate multiple platforms
+                                          options: linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64,windows-arm64
+                                          (optional, default: current platform)
 "#
     );
 }
@@ -161,6 +172,18 @@ async fn start_cli(vm: &Vm) {
                             exit(1);
                         }
                     },
+                    "build" => {
+                        #[cfg(not(feature = "lambda"))]
+                        {
+                          let build_args = BuildArgs::parse_from(&args[i + 1..]);
+                          LexeBuild::validate_args(build_args)?.run_build()?;
+                        }
+                        #[cfg(feature = "lambda")]
+                        {
+                            eprintln!("Not supported in \"lambda\" version.");
+                            exit(1);
+                        }
+                    }
                     _ => {},
                 }
 
