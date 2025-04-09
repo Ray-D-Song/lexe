@@ -8,11 +8,11 @@ use std::{
     time::Instant,
 };
 
+mod build;
 mod core;
 mod minimal_tracer;
 #[cfg(not(feature = "lambda"))]
 mod repl;
-mod build;
 
 use build::LexeBuild;
 use constcat::concat;
@@ -74,13 +74,13 @@ fn usage() {
         r#"
 
 Usage:
-  lexe <filename>
-  lexe -v | --version
-  lexe -h | --help
-  lexe -e | --eval <source>
-  lexe compile input.js [output.lrt]
-  lexe test <test_args>
-  lexe build <build_args>
+  llrt <filename>
+  llrt -v | --version
+  llrt -h | --help
+  llrt -e | --eval <source>
+  llrt compile input.js [output.lrt]
+  llrt test <test_args>
+  llrt build <build_args>
 
 Options:
   -v, --version     Print version information
@@ -88,7 +88,7 @@ Options:
   -e, --eval        Evaluate the provided source code
   compile           Compile JS to bytecode and compress it with zstd:
                       if [output.lrt] is omitted, <input>.lrt is used.
-                      lrt file is expected to be executed by the lexe version
+                      lrt file is expected to be executed by the llrt version
                       that created it
   test              Run tests with provided arguments:
                       <test_args> -d <directory> <test-filter>
@@ -175,15 +175,26 @@ async fn start_cli(vm: &Vm) {
                     "build" => {
                         #[cfg(not(feature = "lambda"))]
                         {
-                          let build_args = BuildArgs::parse_from(&args[i + 1..]);
-                          LexeBuild::validate_args(build_args)?.run_build()?;
+                            match LexeBuild::validate_args() {
+                                Ok(args) => {
+                                    if let Err(err) = args.run_build().await {
+                                        eprintln!("{}", err);
+                                        exit(1);
+                                    }
+                                },
+                                Err(err) => {
+                                    eprintln!("{}", err);
+                                    exit(1);
+                                },
+                            }
+                            exit(1);
                         }
                         #[cfg(feature = "lambda")]
                         {
                             eprintln!("Not supported in \"lambda\" version.");
                             exit(1);
                         }
-                    }
+                    },
                     _ => {},
                 }
 

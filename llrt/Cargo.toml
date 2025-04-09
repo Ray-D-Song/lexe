@@ -16,7 +16,10 @@ bindgen = ["llrt_core/bindgen"]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 constcat = "0.6"
 crossterm = { version = "0.28" }
+dirs = "6.0.0"
+libsui = "0.7.0"
 llrt_core = { path = "../llrt_core" }
+pico-args = "0.5.0"
 tokio = { version = "1", features = ["full"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-core = "0.1"

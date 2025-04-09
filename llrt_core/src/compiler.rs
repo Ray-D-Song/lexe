@@ -53,10 +53,12 @@ pub async fn compile_file(
             let module = Module::declare(ctx.clone(), module_name, source)?;
             let bytes = module.write(WriteOptions::default())?;
             let compressed = compress_module(&bytes)?;
-            fs::write(output_filename, &compressed)?;
 
             total_bytes += bytes.len();
             compressed_bytes += compressed.len();
+
+            fs::write(output_filename, &compressed)?;
+
             Ok(())
         })()
         .catch(&ctx)
@@ -71,4 +73,50 @@ pub async fn compile_file(
     );
 
     Ok(())
+}
+
+pub async fn compile_string(
+    input_str: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let resolver = (DummyResolver,);
+    let loader = (DummyLoader,);
+
+    let rt = Runtime::new()?;
+    rt.set_loader(resolver, loader);
+    let ctx = Context::full(&rt)?;
+
+    let mut total_bytes: usize = 0;
+    let mut compressed_bytes: usize = 0;
+    let js_bytes: usize = input_str.len();
+    let mut result_bytes = Vec::new();
+
+    ctx.with(|ctx| {
+        (|| {
+            let source = input_str;
+            let module_name = "string_module";
+
+            trace!("Compiling module: {}", module_name);
+
+            let module = Module::declare(ctx.clone(), module_name, source)?;
+            let bytes = module.write(WriteOptions::default())?;
+            let compressed = compress_module(&bytes)?;
+
+            total_bytes += bytes.len();
+            compressed_bytes += compressed.len();
+
+            result_bytes = compressed;
+            Ok(())
+        })()
+        .catch(&ctx)
+        .unwrap_or_else(|err| Vm::print_error_and_exit(&ctx, err))
+    });
+
+    trace!("JS size: {}", human_file_size(js_bytes));
+    trace!("Bytecode size: {}", human_file_size(total_bytes));
+    trace!(
+        "Compressed bytecode size: {}",
+        human_file_size(compressed_bytes)
+    );
+
+    Ok(result_bytes)
 }
