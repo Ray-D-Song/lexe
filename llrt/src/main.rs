@@ -14,7 +14,7 @@ mod minimal_tracer;
 #[cfg(not(feature = "lambda"))]
 mod repl;
 
-use build::LexeBuild;
+use build::{extract_code_binary, has_magic_number, LexeBuild};
 use constcat::concat;
 use minimal_tracer::MinimalTracer;
 use tracing::trace;
@@ -225,7 +225,23 @@ async fn start_cli(vm: &Vm) {
     } else {
         #[cfg(not(feature = "lambda"))]
         {
-            repl::run_repl(&vm.ctx).await;
+            let has_magic_number = match has_magic_number() {
+                Ok(has_magic_number) => has_magic_number,
+                Err(_) => false,
+            };
+            if has_magic_number {
+                // extract code binary by libsui
+                let code_binary = extract_code_binary();
+                if let Some(code_binary) = code_binary {
+                    vm.run_with(|ctx| {
+                        let module = llrt_core::modules::require::loader::CustomLoader::load_bytecode_module(ctx.clone(), &code_binary)?;
+                        module.eval()?;
+                        Ok(())
+                    }).await;
+                }
+            } else {
+                repl::run_repl(&vm.ctx).await;
+            }
         }
 
         #[cfg(feature = "lambda")]

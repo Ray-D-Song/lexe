@@ -1,8 +1,0 @@
-{
-  "cSpell.words": ["Abortable", "rquickjs", "LLRT", "llrt"],
-  "cmake.configureOnOpen": false,
-  "rust-analyzer.showUnlinkedFileNotification": false,
-  "editor.formatOnPaste": true,
-  "editor.formatOnSave": true,
-  "yaml.format.singleQuote": false
-}

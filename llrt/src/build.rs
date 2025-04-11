@@ -1,8 +1,10 @@
-use libsui::{Elf, Macho, PortableExecutable};
+use libsui::{find_section, Elf, Macho, PortableExecutable};
 use llrt_core::compiler::compile_string;
 use pico_args::Arguments;
+use std::env;
 use std::fs::File;
 use std::io::Write;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -192,21 +194,23 @@ impl LexeBuild {
             Err(e) => return Err(format!("Failed to compile input file: {}", e).into()),
         };
 
+        // get current executable path
+        // use this path to find other platform's llrt binary
+        let current_exe_path = env::current_exe()?;
+        let current_exe_dir = current_exe_path
+            .parent()
+            .ok_or("Failed to get current executable directory")?;
+        let root_dir = current_exe_dir
+            .parent()
+            .ok_or("Failed to get root directory")?;
+
         for platform in &self.args.platform {
             let output_name = self.output_name_for_platform(platform);
             let output_path = self.args.directory.join(output_name);
 
             println!("Building for {:?} -> {}", platform, output_path.display());
 
-            let cache_dir = match dirs::cache_dir() {
-                Some(path) => path,
-                None => {
-                    return Err("Failed to get cache directory".to_string().into());
-                },
-            };
-            // get llrt binary file from cache
-            let cache_path = PathBuf::from(cache_dir)
-                .join("lexe")
+            let cache_path = root_dir
                 .join(format!("llrt-{}", platform_to_str(platform)))
                 .join("llrt");
 
@@ -272,4 +276,40 @@ fn platform_to_str(platform: &Platform) -> &str {
         Platform::WindowsX64 => "windows-x64",
         Platform::WindowsArm64 => "windows-arm64",
     }
+}
+
+pub fn has_magic_number() -> std::io::Result<bool> {
+    let path = env::current_exe()?;
+    let mut file = File::open(path)?;
+
+    let file_size = file.metadata()?.len() as usize;
+    if file_size < MAGIC_NUMBER.len() {
+        return Ok(false); // file is too small to contain magic number
+    }
+
+    let search_area_size = 1024.min(file_size);
+    let search_start = file_size.saturating_sub(search_area_size);
+
+    file.seek(SeekFrom::Start(search_start as u64))?;
+
+    let mut buffer = vec![0; search_area_size];
+    file.read_exact(&mut buffer)?;
+
+    // search from end to start
+    for i in (0..search_area_size - MAGIC_NUMBER.len() + 1).rev() {
+        if &buffer[i..i + MAGIC_NUMBER.len()] == MAGIC_NUMBER.as_bytes() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+pub fn extract_code_binary() -> Option<Vec<u8>> {
+    let Some(data) = find_section(SECTION_NAME) else {
+        eprintln!("Error finding section");
+        return None;
+    };
+
+    Some(data.to_vec())
 }

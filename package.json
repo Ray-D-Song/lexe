@@ -3,9 +3,13 @@
     "./example/*"
   ],
   "license": "Apache-2.0",
-  "version": "0.5.1-beta",
+  "version": "0.1.0-alpha.1",
+  "name": "lexe",
+  "author": "Ray-D-Song",
+  "bin": {
+    "lexe": "./dist/bin.mjs"
+  },
   "type": "module",
-  "private": true,
   "prettier": {
     "trailingComma": "es5",
     "singleQuote": false
@@ -15,7 +19,6 @@
     "update": "yarn upgrade-interactive --latest",
     "reinstall": "rm -rf yarn.lock && rm -rf node_modules && yarn"
   },
-  "side-effects": false,
   "devDependencies": {
     "@aws-sdk/client-acm": "3.734.0",
     "@aws-sdk/client-amplify": "3.734.0",
@@ -102,5 +105,11 @@
     "typescript": "5.8.2",
     "vitest": "3.0.8"
   },
-  "packageManager": "yarn@1.22.22"
+  "packageManager": "yarn@1.22.22",
+  "dependencies": {
+    "extract-zip": "^2.0.1"
+  },
+  "files": [
+    "dist"
+  ]
 }

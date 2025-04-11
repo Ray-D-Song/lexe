@@ -12,6 +12,7 @@
 /slask
 /VERSION
 /bundle
+/dist
 
 *.zip
 cdk.out
@@ -23,3 +24,5 @@ bootstrap
 
 node_modules
 !/fixtures/node_modules
+
+hello.mjs
