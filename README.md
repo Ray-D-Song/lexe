@@ -6,16 +6,19 @@ You can use it to package your Node.js applications into a single executable fil
 npx lexe build -i index.js
 
 # -i, --input         input file(required)
+#
 # -o, --output        output file name(optional, default: <input file name>-<platform>)
+#
 # -d, --directory     output directory(optional, default: ./dist)
+#
 # -p, --platform      target platform, use "," to separate multiple platforms
 #                     options: linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64,windows-arm64
 #                     (optional, default: current platform)
 ```
 
 > [!WARNING]
-> Lexe is not a drop-in replacement for Node.js. It only supports a subset of Node.js APIs.
-> You can read more about LLRT in [LLRT README](https://github.com/awslabs/llrt)
+> Lexe is not a drop-in replacement for Node.js. It only supports a subset of Node.js APIs.  
+> You can read more about LLRT in [LLRT README](https://github.com/awslabs/llrt)  
 > Since Lexe is a fork of LLRT, the following document is basically a copy of LLRT
 
 ## Compatibility matrix
