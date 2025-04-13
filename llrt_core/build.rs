@@ -203,15 +203,12 @@ fn generate_bytecode_cache(out_dir: &str) -> StdResult<(), Box<dyn Error>> {
         human_file_size(total_bytes)
     );
 
-    let compression_dictionary_path = Path::new(out_dir)
-        .join("compression.dict")
-        .to_string_lossy()
-        .to_string();
+    let dictionary_path = "../prebuild/compression.dict";
 
     if cfg!(feature = "uncompressed") {
-        generate_compression_dictionary(&compression_dictionary_path, &lrt_filenames)?;
+        // use prebuild dict
     } else {
-        total_bytes = compress_bytecode(compression_dictionary_path, lrt_filenames)?;
+        total_bytes = compress_bytecode(dictionary_path.to_string(), lrt_filenames)?;
 
         info!(
             "\n===============================\nCompressed bytecode size: {}\n===============================",
@@ -221,9 +218,9 @@ fn generate_bytecode_cache(out_dir: &str) -> StdResult<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn compress_bytecode(dictionary_path: String, source_files: Vec<String>) -> io::Result<usize> {
-    generate_compression_dictionary(&dictionary_path, &source_files)?;
-
+fn compress_bytecode(_: String, source_files: Vec<String>) -> io::Result<usize> {
+    let prebuild_dict_path = "../prebuild/compression.dict";
+    
     let mut total_size = 0;
     let tmp_dir = env::temp_dir();
 
@@ -245,7 +242,7 @@ fn compress_bytecode(dictionary_path: String, source_files: Vec<String>) -> io::
                 "-22",
                 "-f",
                 "-D",
-                &dictionary_path,
+                prebuild_dict_path,
                 &tmp_filename,
                 "-o",
                 &filename,
@@ -271,6 +268,8 @@ fn compress_bytecode(dictionary_path: String, source_files: Vec<String>) -> io::
     Ok(total_size)
 }
 
+// no longer used
+#[allow(dead_code)]
 fn generate_compression_dictionary(
     dictionary_path: &str,
     source_files: &[String],

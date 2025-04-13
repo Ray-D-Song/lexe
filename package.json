@@ -3,9 +3,11 @@
     "./example/*"
   ],
   "license": "Apache-2.0",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "name": "lexe",
   "author": "Ray-D-Song",
+  "homepage": "https://github.com/Ray-D-Song/lexe",
+  "description": "Package your Node.js application into a single executable file, but only 10MB.",
   "bin": {
     "lexe": "./dist/bin.mjs"
   },

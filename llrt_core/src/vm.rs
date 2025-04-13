@@ -13,7 +13,7 @@ use rquickjs::{
     Result, Value,
 };
 
-pub static COMPRESSION_DICT: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/compression.dict"));
+pub static COMPRESSION_DICT: &[u8] = include_bytes!("../../prebuild/compression.dict");
 
 use crate::libs::{
     context::set_spawn_error_handler,

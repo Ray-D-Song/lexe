@@ -1,0 +1,1 @@
+Pre-generate compressed dictionaries instead of generating them at build time, to avoid the problem of dictionaries generated on platform 1 not being usable on platform 2.  

@@ -1,12 +1,11 @@
 use libsui::{find_section, Elf, Macho, PortableExecutable};
 use llrt_core::compiler::compile_string;
-use pico_args::Arguments;
-use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::env;
 
 static MAGIC_NUMBER: &str = "1exe6und1e";
 static SECTION_NAME: &str = "1exec0de";
@@ -22,7 +21,6 @@ enum Platform {
     DarwinX64,
     DarwinArm64,
     WindowsX64,
-    WindowsArm64,
 }
 
 impl FromStr for Platform {
@@ -35,7 +33,6 @@ impl FromStr for Platform {
             "darwin-x64" => Ok(Platform::DarwinX64),
             "darwin-arm64" => Ok(Platform::DarwinArm64),
             "windows-x64" => Ok(Platform::WindowsX64),
-            "windows-arm64" => Ok(Platform::WindowsArm64),
             _ => Err(format!("Unknown platform: {}", s)),
         }
     }
@@ -46,8 +43,8 @@ struct BuildArgs {
     /// Input file (required)
     input: PathBuf,
 
-    /// Output file name (optional, default: input-<platform>)
-    output: Option<String>,
+    /// Output file name (optional, default: input file name)
+    output: String,
 
     /// Output directory (optional, default: ./dist)
     directory: PathBuf,
@@ -71,11 +68,7 @@ impl Platform {
                 Platform::DarwinArm64
             }
         } else {
-            if cfg!(target_arch = "x86_64") {
-                Platform::WindowsX64
-            } else {
-                Platform::WindowsArm64
-            }
+            Platform::WindowsX64
         }
     }
 }
@@ -88,93 +81,63 @@ type BuildErr = Box<dyn std::error::Error + Send + Sync>;
 
 impl LexeBuild {
     /// Validate build arguments and return a Build instance
-    pub fn validate_args() -> Result<Self, String> {
-        let mut pargs = Arguments::from_env();
+    pub fn validate_args(args: &[String]) -> Result<Self, String> {
+        let mut input: Option<PathBuf> = None;
+        let mut output = String::new();
+        let mut directory: Option<PathBuf> = None;
+        let mut platform = Vec::new();
 
-        println!("{:?}", pargs);
+        for arg in args.iter().filter(|arg| arg.contains('=')) {
+            let parts: Vec<&str> = arg.split('=').collect();
+            
+            // check argument format
+            if parts.len() != 2 {
+                return Err(format!("Invalid argument format: {}", arg));
+            }
 
-        // ignore the first argument (build)
-        let _ = pargs.opt_value_from_str::<_, String>("build").ok();
-
-        // Parse input (required) - try both flag and positional formats
-        let input = match pargs
-            .value_from_str::<_, PathBuf>("--input")
-            .or_else(|_| pargs.value_from_str::<_, PathBuf>("-i"))
-        {
-            Ok(path) => path,
-            Err(_) => {
-                // Try as positional argument if flag parsing failed
-                if let Some(arg) = pargs.free_from_str::<String>().ok() {
-                    PathBuf::from(arg)
-                } else {
-                    return Err("Input file is required. Use --input <file> or -i <file> or provide as positional argument".to_string());
-                }
-            },
-        };
-
-        // Parse output (optional)
-        let output = match pargs
-            .opt_value_from_str::<_, String>("--output")
-            .or_else(|_| pargs.opt_value_from_str::<_, String>("-o"))
-        {
-            Ok(val) => val,
-            Err(e) => return Err(format!("Failed to parse output name: {}", e)),
-        };
-
-        // Parse directory (optional, default: "dist")
-        let directory = match pargs
-            .opt_value_from_str::<_, PathBuf>("--directory")
-            .or_else(|_| pargs.opt_value_from_str::<_, PathBuf>("-d"))
-        {
-            Ok(Some(dir)) => dir,
-            Ok(None) => PathBuf::from("dist"),
-            Err(e) => return Err(format!("Failed to parse directory path: {}", e)),
-        };
-
-        // Parse platforms (optional, default: current platform)
-        let platform_str = match pargs
-            .opt_value_from_str::<_, String>("--platform")
-            .or_else(|_| pargs.opt_value_from_str::<_, String>("-p"))
-        {
-            Ok(Some(p)) => p,
-            Ok(None) => platform_to_str(&Platform::current()).to_string(),
-            Err(e) => return Err(format!("Failed to parse platform: {}", e)),
-        };
-
-        let platform = platform_str
-            .split(',')
-            .map(|s| Platform::from_str(s.trim()))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        if platform.is_empty() {
-            return Err("At least one platform must be specified".to_string());
-        }
-
-        // Check for unused arguments
-        let remaining = pargs.finish();
-        if !remaining.is_empty() {
-            return Err(format!("Unknown arguments: {:?}", remaining));
-        }
-
-        let args = BuildArgs {
-            input,
-            output,
-            directory,
-            platform,
-        };
-
-        // Ensure input file exists
-        if !args.input.exists() {
-            return Err(format!("Input file not found: {}", args.input.display()));
-        }
-
-        // Create output directory if it doesn't exist
-        if !args.directory.exists() {
-            if let Err(e) = std::fs::create_dir_all(&args.directory) {
-                return Err(format!("Failed to create output directory: {}", e));
+            match parts[0] {
+                "-i" => input = Some(PathBuf::from(parts[1])),
+                "-o" => output = parts[1].to_string(),
+                "-d" => directory = Some(PathBuf::from(parts[1])),
+                "-p" => {
+                    let parsed_platforms: Result<Vec<Platform>, _> = 
+                        parts[1].split(',')
+                        .map(|p| p.parse::<Platform>())
+                        .collect();
+                    
+                    match parsed_platforms {
+                        Ok(platforms) => platform = platforms,
+                        Err(e) => return Err(format!("Invalid platform: {}", e)),
+                    }
+                },
+                _ => return Err(format!("Unknown argument: {}", parts[0])),
             }
         }
 
+        // validate input
+        if input.is_none() {
+            return Err("Input file is required".to_string());
+        }
+
+        // default platform
+        if platform.is_empty() {
+            platform.push(Platform::current());
+        }
+
+        // default output
+        if output.is_empty () {
+            // get input file name and remove extension
+            let input_file_name = input.as_ref().unwrap().file_name().unwrap().to_str().unwrap();
+            let input_file_name = input_file_name.split('.').next().unwrap();
+            output = input_file_name.to_string();
+        }
+
+        // default directory
+        if directory.is_none() {
+            directory = Some(PathBuf::from("./dist"));
+        }
+
+        let args = BuildArgs { input: input.unwrap(), output, directory: directory.unwrap(), platform };
         Ok(LexeBuild { args })
     }
 
@@ -205,14 +168,15 @@ impl LexeBuild {
             .ok_or("Failed to get root directory")?;
 
         for platform in &self.args.platform {
-            let output_name = self.output_name_for_platform(platform);
-            let output_path = self.args.directory.join(output_name);
+            let output_path = self.output_path_for_platform(platform);
 
-            println!("Building for {:?} -> {}", platform, output_path.display());
+            println!("Building for: {:?} -> {}", platform, output_path.display());
 
+            println!("root_dir: {}", root_dir.display());
             let cache_path = root_dir
                 .join(format!("llrt-{}", platform_to_str(platform)))
-                .join("llrt");
+                .join(platform_to_binary_name(platform));
+            println!("cache_path: {}", cache_path.display());
 
             if !cache_path.exists() {
                 return Err(format!("Cache path does not exist: {}", cache_path.display()).into());
@@ -230,7 +194,7 @@ impl LexeBuild {
                 }
             }
             let mut output = File::create(output_path)?;
-            if platform == &Platform::WindowsX64 || platform == &Platform::WindowsArm64 {
+            if platform == &Platform::WindowsX64 {
                 PortableExecutable::from(&llrt_binary)?
                     .write_resource(SECTION_NAME, compiled.clone())?
                     .build(&mut output)?;
@@ -251,19 +215,14 @@ impl LexeBuild {
         Ok(())
     }
 
-    fn output_name_for_platform(&self, platform: &Platform) -> String {
-        self.args.output.as_ref().map_or_else(
-            || {
-                let stem = self
-                    .args
-                    .input
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("output");
-                format!("{}-{}", stem, platform_to_str(platform))
-            },
-            |name| name.clone(),
-        )
+    // output name for platform
+    fn output_path_for_platform(&self, platform: &Platform) -> PathBuf {
+        let file_name = match platform {
+            Platform::WindowsX64 => format!("{}-{}.exe", self.args.output, platform_to_str(platform)),
+            _ => format!("{}-{}", self.args.output, platform_to_str(platform)),
+        };
+
+        self.args.directory.join(file_name)
     }
 }
 
@@ -274,7 +233,14 @@ fn platform_to_str(platform: &Platform) -> &str {
         Platform::DarwinX64 => "darwin-x64",
         Platform::DarwinArm64 => "darwin-arm64",
         Platform::WindowsX64 => "windows-x64",
-        Platform::WindowsArm64 => "windows-arm64",
+    }
+}
+
+fn platform_to_binary_name(platform: &Platform) -> &str {
+    if platform == &Platform::WindowsX64 {
+        "llrt.exe"
+    } else {
+        "llrt"
     }
 }
 

@@ -4,7 +4,6 @@ import { spawnSync } from 'child_process'
 import path from 'path'
 import extractZip from 'extract-zip'
 import { fileURLToPath } from 'url';
-import esbuild from 'esbuild'
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,18 +11,21 @@ const __dirname = path.dirname(__filename);
 (async function() {
   try {
     const args = process.argv.slice(2);
-    const isTestMode = args.includes('test');
+    const platform = args[0]; // platform is optional
     
-    const files = isTestMode 
-      ? ['llrt-darwin-arm64-no-sdk.zip'] 
-      : [
-          'llrt-linux-x64-no-sdk.zip',
-          'llrt-linux-arm64-no-sdk.zip',
-          'llrt-darwin-x64-no-sdk.zip',
-          'llrt-darwin-arm64-no-sdk.zip',
-          'llrt-windows-x64-no-sdk.zip',
-          'llrt-windows-arm64-no-sdk.zip',
-        ];
+    const allPlatforms = [
+      'linux-x64',
+      'linux-arm64',
+      'darwin-x64',
+      'darwin-arm64',
+      'windows-x64',
+    ];
+    
+    // if platform is provided, only build the specified platform, otherwise build all platforms
+    const platformsToBuild = platform ? platform.split(',') : allPlatforms;
+    
+    // generate file names based on platforms
+    const files = platformsToBuild.map(p => `llrt-${p}-no-sdk.zip`);
     
     const distDir = path.resolve(__dirname, 'dist');
     try {
@@ -40,7 +42,7 @@ const __dirname = path.dirname(__filename);
       recursive: true,
     });
     console.log('build: dist/ created successfully.');
-    console.log(`build: running in ${isTestMode ? 'test' : 'normal'} mode`);
+    console.log(`build: building for platforms: ${platformsToBuild.join(', ')}`);
     
     // clean llrt zip
     for (const file of files) {
@@ -57,7 +59,6 @@ const __dirname = path.dirname(__filename);
 
     // copy files to dist directory
     await copyAndUnzip(files, distDir);
-
 
     // copy lexe_bin.mjs to dist directory
     await copyFile(path.resolve(__dirname, 'lexe_bin.mjs'), path.resolve(distDir, 'bin.mjs'));

@@ -94,12 +94,14 @@ Options:
                       <test_args> -d <directory> <test-filter>
   build             This command will create a standalone executable from the source code.
                     build_args:
-                      -i, --input         input file(required)
-                      -o, --output        output file name(optional, default: input-<platform>)
-                      -d, --directory     output directory(optional, default: ./dist)
-                      -p, --platform      target platform, use "," to separate multiple platforms
-                                          options: linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64,windows-arm64
-                                          (optional, default: current platform)
+                      -i      input file(required)
+                      -o      output file(optional, default: <input file name>-<platform>)
+                      -d      output directory(optional, default: ./dist)
+                      -p      target platform, use "," to separate multiple platforms
+                                options: linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64
+                                (optional, default: current platform)
+                    
+                    like: llrt build -i=input.js -o=binary -d=dist -p=linux-x64,windows-x64
 "#
     );
 }
@@ -175,7 +177,8 @@ async fn start_cli(vm: &Vm) {
                     "build" => {
                         #[cfg(not(feature = "lambda"))]
                         {
-                            match LexeBuild::validate_args() {
+                            let build_args = args[i + 1..].to_vec();
+                            match LexeBuild::validate_args(&build_args) {
                                 Ok(args) => {
                                     if let Err(err) = args.run_build().await {
                                         eprintln!("{}", err);

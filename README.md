@@ -1,20 +1,22 @@
 # Lexe
+[中文文档](README-zh.md)
+
 Lexe is a fork of AWS's lightweight JavaScript runtime "LLRT".  
-You can use it to package your Node.js applications into a single executable file, but the size is only 5~8MB.
+You can use it to package your Node.js applications into a single executable file, but the size is only 10MB.
 
 ```bash
-npx lexe build -i index.js
+npx lexe build -i=index.js
 
-# -i, --input         input file(required)
-#
-# -o, --output        output file name(optional, default: <input file name>-<platform>)
-#
-# -d, --directory     output directory(optional, default: ./dist)
-#
-# -p, --platform      target platform, use "," to separate multiple platforms
-#                     options: linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64,windows-arm64
-#                     (optional, default: current platform)
+npx lexe build -i=index.js -o=binary -d=dist -p=linux-x64,windows-x64
 ```
+
+Options:
+- `-i`: input file(required)
+- `-o`: output file(optional, default: <input file name>-<platform>)
+- `-d`: output directory(optional, default: ./dist)
+- `-p`: target platform, use "," to separate multiple platforms
+  options: linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64
+  (optional, default: current platform)
 
 > [!WARNING]
 > Lexe is not a drop-in replacement for Node.js. It only supports a subset of Node.js APIs.  
