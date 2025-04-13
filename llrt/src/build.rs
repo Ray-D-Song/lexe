@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::env;
 
 static MAGIC_NUMBER: &str = "1exe6und1e";
+static LIBSUI_MAGIC_NUMBER: u32 = 0x501e;
 static SECTION_NAME: &str = "1exec0de";
 
 /**
@@ -15,7 +16,7 @@ static SECTION_NAME: &str = "1exec0de";
  *     .run_build()
  */
 #[derive(Debug, Clone, PartialEq)]
-enum Platform {
+pub enum Platform {
     LinuxX64,
     LinuxArm64,
     DarwinX64,
@@ -54,7 +55,7 @@ struct BuildArgs {
 }
 
 impl Platform {
-    fn current() -> Self {
+    pub fn current() -> Self {
         if cfg!(target_os = "linux") {
             if cfg!(target_arch = "x86_64") {
                 Platform::LinuxX64
@@ -143,8 +144,7 @@ impl LexeBuild {
 
     /// Execute the build process
     pub async fn run_build(self) -> Result<(), BuildErr> {
-        println!("Starting build process...");
-        println!("Compile input file: {}", self.args.input.display());
+        println!("\x1b[33mCompile input file: {}\x1b[0m", self.args.input.display());
 
         // read input file
         let input_str = match std::fs::read_to_string(&self.args.input) {
@@ -170,22 +170,32 @@ impl LexeBuild {
         for platform in &self.args.platform {
             let output_path = self.output_path_for_platform(platform);
 
-            println!("Building for: {:?} -> {}", platform, output_path.display());
+            // Print the build platform and output path in yellow
+            println!("\x1b[33mBuilding for: {:?} -> {}\x1b[0m", platform, output_path.display());
 
-            println!("root_dir: {}", root_dir.display());
             let cache_path = root_dir
                 .join(format!("llrt-{}", platform_to_str(platform)))
                 .join(platform_to_binary_name(platform));
-            println!("cache_path: {}", cache_path.display());
 
+            // check if the file in cache_path exists
             if !cache_path.exists() {
-                return Err(format!("Cache path does not exist: {}", cache_path.display()).into());
+                return Err(format!("LLRT binary not found in cache: {}", cache_path.display()).into());
             }
+
             // read llrt binary file
             let llrt_binary = match std::fs::read(&cache_path) {
                 Ok(bytes) => bytes,
                 Err(e) => return Err(format!("Failed to read llrt binary: {}", e).into()),
             };
+
+            // Ensure the output directory exists before creating the file
+            if let Some(parent_dir) = output_path.parent() {
+                std::fs::create_dir_all(parent_dir)?;
+            } else {
+                // This case should ideally not happen with the current logic,
+                // but it's good practice to handle it.
+                return Err(format!("Could not determine parent directory for output path: {}", output_path.display()).into());
+            }
 
             if output_path.exists() {
                 // delete existing output file
@@ -193,25 +203,28 @@ impl LexeBuild {
                     return Err(format!("Failed to remove existing output file: {}", e).into());
                 }
             }
-            let mut output = File::create(output_path)?;
+            let mut output = File::create(&output_path)?;
             if platform == &Platform::WindowsX64 {
                 PortableExecutable::from(&llrt_binary)?
                     .write_resource(SECTION_NAME, compiled.clone())?
                     .build(&mut output)?;
+                output.write_all(MAGIC_NUMBER.as_bytes())?;
             } else if platform == &Platform::LinuxX64 || platform == &Platform::LinuxArm64 {
-                let elf = Elf::new(&llrt_binary);
-                elf.append(SECTION_NAME, &compiled, &mut output)?;
+                Elf::new(&llrt_binary)
+                    .append(SECTION_NAME, &compiled, &mut output)?;
+                // Linux does not need to write magic number
+                // libsui already appends magic number to the output file
+                // 1exe6und1e will affect libsui find section
             } else if platform == &Platform::DarwinX64 || platform == &Platform::DarwinArm64 {
                 Macho::from(llrt_binary)?
                     .write_section(SECTION_NAME, compiled.clone())?
                     .build_and_sign(&mut output)?;
+                output.write_all(MAGIC_NUMBER.as_bytes())?;
             }
-
-            // append MAGIC_NUMBER
-            output.write_all(MAGIC_NUMBER.as_bytes())?;
         }
 
-        println!("Build completed successfully");
+        // Print build completion message in green
+        println!("\x1b[32mBuild successfully\x1b[0m");
         Ok(())
     }
 
@@ -244,31 +257,47 @@ fn platform_to_binary_name(platform: &Platform) -> &str {
     }
 }
 
-pub fn has_magic_number() -> std::io::Result<bool> {
+pub fn has_magic_number(platform: &Platform) -> std::io::Result<bool> {
     let path = env::current_exe()?;
     let mut file = File::open(path)?;
 
     let file_size = file.metadata()?.len() as usize;
-    if file_size < MAGIC_NUMBER.len() {
-        return Ok(false); // file is too small to contain magic number
+    if file_size < 16 {  // ensure enough data to read magic number
+        return Ok(false);
     }
 
-    let search_area_size = 1024.min(file_size);
-    let search_start = file_size.saturating_sub(search_area_size);
+    match platform {
+        Platform::LinuxX64 | Platform::LinuxArm64 => {
+            // for Linux platform, need to detect libsui's magic number
+            // libsui appends 16 bytes trailer to the file: magic number(4 bytes) + hash(4 bytes) + size(8 bytes)
+            const TRAILER_LEN: i64 = 16;
+            file.seek(SeekFrom::End(-TRAILER_LEN))?;
+            let mut buf = [0; 4]; // only read magic number part
+            file.read_exact(&mut buf)?;
+            
+            // check magic number (little endian)
+            let magic = u32::from_le_bytes(buf);
+            Ok(magic == LIBSUI_MAGIC_NUMBER)
+        },
+        _ => {
+            // other platforms use the original string magic number detection method
+            let search_area_size = 1024.min(file_size);
+            let search_start = file_size.saturating_sub(search_area_size);
 
-    file.seek(SeekFrom::Start(search_start as u64))?;
+            file.seek(SeekFrom::Start(search_start as u64))?;
 
-    let mut buffer = vec![0; search_area_size];
-    file.read_exact(&mut buffer)?;
+            let mut buffer = vec![0; search_area_size];
+            file.read_exact(&mut buffer)?;
 
-    // search from end to start
-    for i in (0..search_area_size - MAGIC_NUMBER.len() + 1).rev() {
-        if &buffer[i..i + MAGIC_NUMBER.len()] == MAGIC_NUMBER.as_bytes() {
-            return Ok(true);
+            // search string magic number
+            for i in (0..search_area_size - MAGIC_NUMBER.len() + 1).rev() {
+                if &buffer[i..i + MAGIC_NUMBER.len()] == MAGIC_NUMBER.as_bytes() {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
         }
     }
-
-    Ok(false)
 }
 
 pub fn extract_code_binary() -> Option<Vec<u8>> {

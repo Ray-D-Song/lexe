@@ -3,7 +3,7 @@
     "./example/*"
   ],
   "license": "Apache-2.0",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.6",
   "name": "lexe",
   "author": "Ray-D-Song",
   "homepage": "https://github.com/Ray-D-Song/lexe",

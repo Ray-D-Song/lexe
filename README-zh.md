@@ -2,6 +2,8 @@
 Lexe 是 AWS 轻量级 JavaScript 运行时 "LLRT" 的一个分支。  
 您可以使用它将 Node.js 应用程序打包成单个可执行文件，而大小仅为 10MB。
 
+![Size comparison](./benchmarks/size.png)
+
 ```bash
 npx lexe build -i=index.js
 
@@ -10,10 +12,10 @@ npx lexe build -i=index.js -o=binary -d=dist -p=linux-x64,windows-x64
 
 选项：
 - `-i`: 输入文件（必需）
-- `-o`: 输出文件（可选，默认：<输入文件名>-<平台>）
-- `-d`: 输出目录（可选，默认：./dist）
+- `-o`: 输出文件（可选，默认：`<输入文件名>-<平台>`）
+- `-d`: 输出目录（可选，默认：`./dist`）
 - `-p`: 目标平台，使用","分隔多个平台
-  选项：linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64
+  选项：`linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64`
   （可选，默认：当前平台）
 
 > [!警告]

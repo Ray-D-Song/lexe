@@ -14,7 +14,7 @@ mod minimal_tracer;
 #[cfg(not(feature = "lambda"))]
 mod repl;
 
-use build::{extract_code_binary, has_magic_number, LexeBuild};
+use build::{extract_code_binary, has_magic_number, LexeBuild, Platform};
 use constcat::concat;
 use minimal_tracer::MinimalTracer;
 use tracing::trace;
@@ -228,7 +228,7 @@ async fn start_cli(vm: &Vm) {
     } else {
         #[cfg(not(feature = "lambda"))]
         {
-            let has_magic_number = match has_magic_number() {
+            let has_magic_number = match has_magic_number(&Platform::current()) {
                 Ok(has_magic_number) => has_magic_number,
                 Err(_) => false,
             };
