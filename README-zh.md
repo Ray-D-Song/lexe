@@ -18,7 +18,7 @@ npx lexe build -i=index.js -o=binary -d=dist -p=linux-x64,windows-x64
   选项：`linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64`
   （可选，默认：当前平台）
 
-> [!警告]
+> [!WARNING]
 > Lexe 不是 Node.js 的完全替代品。它只支持 Node.js API 的一个子集。  
 > 您可以在 [LLRT README](https://github.com/awslabs/llrt) 中了解更多关于 LLRT 的信息  
 > 由于 Lexe 是 LLRT 的一个分支，以下文档基本上是 LLRT 的副本
