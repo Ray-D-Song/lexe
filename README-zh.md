@@ -19,9 +19,9 @@ npx lexe build -i=index.js -o=binary -d=dist -p=linux-x64,windows-x64
   （可选，默认：当前平台）
 
 > [!IMPORTANT]
-> 请注意，Lexe(or LLRT) 目前并不支持完整的 http 和 https 模块，而是实现了 `fetch` 用于请求，`net` 用于搭建低层级的网络服务
-> 在 LLRT team 的 ROADMAP 中，http 和 https 模块是 [2025 年的目标之一](https://github.com/awslabs/llrt/issues/635)
-> 所以我目前不推荐使用 Lexe 来搭建 HTTP 服务，而是用于创建 CLI 工具
+> 请注意，Lexe(or LLRT) 目前并不支持完整的 http 和 https 模块，而是实现了 `fetch` 用于请求，`net` 用于搭建低层级的网络服务  
+> 在 LLRT team 的 ROADMAP 中，http 和 https 模块是 [2025 年的目标之一](https://github.com/awslabs/llrt/issues/635)  
+> 所以我目前不推荐使用 Lexe 来搭建 HTTP 服务，而是用于创建 CLI 工具  
 
 > [!WARNING]
 > Lexe 不是 Node.js 的完全替代品。它只支持 Node.js API 的一个子集。  
