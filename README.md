@@ -20,6 +20,11 @@ Options:
   options: linux-x64,linux-arm64,darwin-x64,darwin-arm64,windows-x64
   (optional, default: current platform)
 
+> [!IMPORTANT]
+> Lexe(or LLRT) currently does not support the complete http and https modules, but implements `fetch` for requests and `net` for low-level network services.
+> In the LLRT team's ROADMAP, http and https modules are a [2025 goal](https://github.com/awslabs/llrt/issues/635)
+> So I currently do not recommend using Lexe to build HTTP services, but to create CLI tools
+
 > [!WARNING]
 > Lexe is not a drop-in replacement for Node.js. It only supports a subset of Node.js APIs.  
 > You can read more about LLRT in [LLRT README](https://github.com/awslabs/llrt)  
