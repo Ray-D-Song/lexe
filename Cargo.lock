@@ -1863,7 +1863,7 @@ dependencies = [
  "p384",
  "p521",
  "pkcs8",
- "rand 0.8.5",
+ "rand 0.9.0",
  "ring",
  "rquickjs",
  "rsa",
@@ -2052,7 +2052,7 @@ dependencies = [
  "llrt_stream",
  "llrt_test",
  "llrt_utils",
- "rand 0.8.5",
+ "rand 0.9.0",
  "rquickjs",
  "tokio",
  "tracing",
@@ -2066,7 +2066,7 @@ dependencies = [
  "itoa",
  "llrt_test",
  "llrt_utils",
- "rand 0.8.5",
+ "rand 0.9.0",
  "rquickjs",
  "ryu",
 ]
@@ -2099,7 +2099,7 @@ dependencies = [
  "llrt_utils",
  "memchr",
  "once_cell",
- "rand 0.8.5",
+ "rand 0.9.0",
  "rquickjs",
 ]
 
@@ -2164,7 +2164,7 @@ name = "llrt_test"
 version = "0.5.1-beta"
 dependencies = [
  "nanoid",
- "rand 0.8.5",
+ "rand 0.9.0",
  "rquickjs",
  "tokio",
 ]
