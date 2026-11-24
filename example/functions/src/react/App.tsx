@@ -14,7 +14,7 @@ function App({ todoItems = [], releaseName = "" }: Props) {
         <img src={logo} className="logo" alt="logo" />
       </header>
       <main className="main">
-        <h1>raster_runtime React TODO - {releaseName}</h1>
+        <h1>lexe React TODO - {releaseName}</h1>
         <TodoList items={todoItems} />
       </main>
     </div>

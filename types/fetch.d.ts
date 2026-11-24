@@ -215,7 +215,7 @@ declare global {
      */
     readonly url: string;
     /**
-     * Contains the request's keepalive setting (true or false), which indicates whether raster_runtime will
+     * Contains the request's keepalive setting (true or false), which indicates whether lexe will
      * keep the associated connection alive.
      */
     readonly keepalive: boolean;

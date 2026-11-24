@@ -1,20 +1,20 @@
 #pragma once
 
 #include "internal.h"
-#include "raster_v8_bridge.h"
+#include "lexe_v8_bridge.h"
 #include "v8_local_helpers.h"
 
 #include <cstddef>
 #include <v8.h>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
-inline RasterV8ContextState* bridge_ctx() {
-  return raster_v8_current_context();
+inline LexeV8ContextState* bridge_ctx() {
+  return lexe_v8_current_context();
 }
 
-inline const RasterV8BridgeV1* bridge() {
-  return raster_v8_bridge();
+inline const LexeV8BridgeV1* bridge() {
+  return lexe_v8_bridge();
 }
 
 inline shim::ObjectLayout* layout_from_slot(v8::internal::Address* slot) {
@@ -81,13 +81,13 @@ inline uint64_t materialize_oddball_root(shim::ObjectLayout* layout) {
   if (!isolate || !ctx) {
     return 0;
   }
-  auto* impl = iso_impl(reinterpret_cast<RasterV8IsolateState*>(isolate));
+  auto* impl = iso_impl(reinterpret_cast<LexeV8IsolateState*>(isolate));
   const int root_index = oddball_root_index(impl, layout);
   if (root_index < 0) {
     return 0;
   }
   uint64_t root_id = 0;
-  if (raster_v8_oddball_root(ctx, root_index, &root_id) != RASTER_V8_OK) {
+  if (lexe_v8_oddball_root(ctx, root_index, &root_id) != LEXE_V8_OK) {
     return 0;
   }
   layout->contents.root_id = root_id;
@@ -134,7 +134,7 @@ inline uint64_t root_from_object(const void* self) {
     return 0;
   }
   uint64_t root_id = 0;
-  if (raster_v8_root_id_for_js_object(ctx, const_cast<void*>(self), &root_id) == RASTER_V8_OK) {
+  if (lexe_v8_root_id_for_js_object(ctx, const_cast<void*>(self), &root_id) == LEXE_V8_OK) {
     return root_id;
   }
   return 0;
@@ -155,8 +155,8 @@ inline v8::Local<v8::Value> local_value_from_root(v8::Isolate* isolate, uint64_t
   return local_from_root<v8::Value>(isolate, root_id, &shim::Map::object_map());
 }
 
-inline bool bridge_ok(RasterV8Status status) {
-  return status == RASTER_V8_OK;
+inline bool bridge_ok(LexeV8Status status) {
+  return status == LEXE_V8_OK;
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

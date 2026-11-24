@@ -1,0 +1,35 @@
+[package]
+name = "lexe_compression"
+description = "lexe compression helpers"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[lib]
+name = "lexe_compression"
+path = "src/lib.rs"
+
+[features]
+default = ["all-c"]
+
+all-c = ["brotli-c", "flate2-c", "zstd-c"]
+all-rust = ["brotli-rust", "flate2-rust", "zstd-rust"]
+
+brotli-c = ["brotlic"]
+brotli-rust = ["brotli"]
+
+flate2-c = ["flate2/zlib-ng"]
+flate2-rust = ["flate2/rust_backend"]
+
+zstd-c = ["zstd"]
+zstd-rust = ["zstd"] # No pure rust implementation exists
+
+[dependencies]
+# Optional
+brotlic = { version = "0.8", default-features = false, optional = true }
+brotli = { version = "8", features = [
+    "std",
+], default-features = false, optional = true }
+flate2 = { version = "1", default-features = false, optional = true }
+zstd = { version = "0.13", default-features = false, optional = true }

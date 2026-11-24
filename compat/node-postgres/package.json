@@ -1,5 +1,5 @@
 {
-  "name": "@raster-runtime/compat-node-postgres",
+  "name": "@lexe/compat-node-postgres",
   "private": true,
   "version": "0.0.0",
   "engines": {

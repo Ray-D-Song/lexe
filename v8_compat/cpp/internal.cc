@@ -1,33 +1,33 @@
 #include "internal.h"
 #include "abi_137_generated.h"
-#include "raster_v8_bridge.h"
+#include "lexe_v8_bridge.h"
 
 #include <cstdio>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
-void register_handle_repr(RasterV8ContextState* ctx, uintptr_t repr, uint64_t root_id) {
+void register_handle_repr(LexeV8ContextState* ctx, uintptr_t repr, uint64_t root_id) {
   if (!ctx || repr == 0 || root_id == 0) {
     return;
   }
   ctx_impl(ctx)->repr_to_root[repr] = root_id;
 }
 
-void unregister_handle_repr(RasterV8ContextState* ctx, uintptr_t repr) {
+void unregister_handle_repr(LexeV8ContextState* ctx, uintptr_t repr) {
   if (!ctx || repr == 0) {
     return;
   }
   ctx_impl(ctx)->repr_to_root.erase(repr);
 }
 
-static uint64_t root_from_layout(RasterV8ContextState* ctx, shim::ObjectLayout* layout) {
+static uint64_t root_from_layout(LexeV8ContextState* ctx, shim::ObjectLayout* layout) {
   if (!layout) {
     return 0;
   }
   if (layout->contents.root_id != 0) {
     return layout->contents.root_id;
   }
-  auto* isolate = raster_v8_current_isolate();
+  auto* isolate = lexe_v8_current_isolate();
   if (!isolate) {
     return 0;
   }
@@ -36,26 +36,26 @@ static uint64_t root_from_layout(RasterV8ContextState* ctx, shim::ObjectLayout* 
     return 0;
   }
   uint64_t root_id = 0;
-  if (raster_v8_oddball_root(ctx, root_index, &root_id) != RASTER_V8_OK) {
+  if (lexe_v8_oddball_root(ctx, root_index, &root_id) != LEXE_V8_OK) {
     return 0;
   }
   layout->contents.root_id = root_id;
   return root_id;
 }
 
-static uint64_t smi_to_number_root(RasterV8ContextState* ctx, int32_t smi) {
-  const RasterV8BridgeV1* b = raster_v8_bridge();
+static uint64_t smi_to_number_root(LexeV8ContextState* ctx, int32_t smi) {
+  const LexeV8BridgeV1* b = lexe_v8_bridge();
   if (!b || !b->number_new) {
     return 0;
   }
   uint64_t root_id = 0;
-  if (b->number_new(ctx, static_cast<double>(smi), &root_id) != RASTER_V8_OK) {
+  if (b->number_new(ctx, static_cast<double>(smi), &root_id) != LEXE_V8_OK) {
     return 0;
   }
   return root_id;
 }
 
-static uint64_t try_root_from_known_layout(RasterV8ContextState* ctx,
+static uint64_t try_root_from_known_layout(LexeV8ContextState* ctx,
                                            shim::ObjectLayout* layout,
                                            uintptr_t repr) {
   if (!layout) {
@@ -86,7 +86,7 @@ static uint64_t try_root_from_known_layout(RasterV8ContextState* ctx,
   return 0;
 }
 
-uint64_t resolve_root_from_repr(RasterV8ContextState* ctx, uintptr_t repr) {
+uint64_t resolve_root_from_repr(LexeV8ContextState* ctx, uintptr_t repr) {
   if (repr == 0) {
     return 0;
   }
@@ -115,7 +115,7 @@ uint64_t resolve_root_from_repr(RasterV8ContextState* ctx, uintptr_t repr) {
       }
     }
   }
-  if (auto* isolate = raster_v8_current_isolate()) {
+  if (auto* isolate = lexe_v8_current_isolate()) {
     auto* iso = iso_impl(isolate);
     const shim::ObjectLayout* known[] = {
         &iso->undefined_value.layout, &iso->the_hole_value.layout,
@@ -152,7 +152,7 @@ uint64_t resolve_root_from_repr(RasterV8ContextState* ctx, uintptr_t repr) {
   return 0;
 }
 
-uint64_t resolve_return_value_repr(RasterV8ContextState* ctx, uintptr_t repr) {
+uint64_t resolve_return_value_repr(LexeV8ContextState* ctx, uintptr_t repr) {
   // Callback/accessor return slots only:
   // - Unset default is a strong-tagged undefined layout (not raw 0).
   // - ReturnValue::Set(0) / IntegralToSmi(0) stores raw 0.
@@ -187,38 +187,38 @@ void init_isolate_roots(IsolateImpl* isolate) {
   isolate->empty_string.layout =
       shim::ObjectLayout(const_cast<shim::Map*>(&shim::Map::string_map()), 0);
 
-  isolate->roots[RASTER_V8_K_UNDEFINED_VALUE_ROOT_INDEX] =
+  isolate->roots[LEXE_V8_K_UNDEFINED_VALUE_ROOT_INDEX] =
       reinterpret_cast<uintptr_t>(&isolate->undefined_value.layout);
-  isolate->roots[RASTER_V8_K_THE_HOLE_VALUE_ROOT_INDEX] =
+  isolate->roots[LEXE_V8_K_THE_HOLE_VALUE_ROOT_INDEX] =
       reinterpret_cast<uintptr_t>(&isolate->the_hole_value.layout);
-  isolate->roots[RASTER_V8_K_NULL_VALUE_ROOT_INDEX] =
+  isolate->roots[LEXE_V8_K_NULL_VALUE_ROOT_INDEX] =
       reinterpret_cast<uintptr_t>(&isolate->null_value.layout);
-  isolate->roots[RASTER_V8_K_TRUE_VALUE_ROOT_INDEX] =
+  isolate->roots[LEXE_V8_K_TRUE_VALUE_ROOT_INDEX] =
       reinterpret_cast<uintptr_t>(&isolate->true_value.layout);
-  isolate->roots[RASTER_V8_K_FALSE_VALUE_ROOT_INDEX] =
+  isolate->roots[LEXE_V8_K_FALSE_VALUE_ROOT_INDEX] =
       reinterpret_cast<uintptr_t>(&isolate->false_value.layout);
-  isolate->roots[RASTER_V8_K_EMPTY_STRING_ROOT_INDEX] =
+  isolate->roots[LEXE_V8_K_EMPTY_STRING_ROOT_INDEX] =
       reinterpret_cast<uintptr_t>(&isolate->empty_string.layout);
 }
 
 int oddball_root_index(IsolateImpl* isolate, const shim::ObjectLayout* layout) {
   if (layout == &isolate->undefined_value.layout) {
-    return RASTER_V8_K_UNDEFINED_VALUE_ROOT_INDEX;
+    return LEXE_V8_K_UNDEFINED_VALUE_ROOT_INDEX;
   }
   if (layout == &isolate->the_hole_value.layout) {
-    return RASTER_V8_K_THE_HOLE_VALUE_ROOT_INDEX;
+    return LEXE_V8_K_THE_HOLE_VALUE_ROOT_INDEX;
   }
   if (layout == &isolate->null_value.layout) {
-    return RASTER_V8_K_NULL_VALUE_ROOT_INDEX;
+    return LEXE_V8_K_NULL_VALUE_ROOT_INDEX;
   }
   if (layout == &isolate->true_value.layout) {
-    return RASTER_V8_K_TRUE_VALUE_ROOT_INDEX;
+    return LEXE_V8_K_TRUE_VALUE_ROOT_INDEX;
   }
   if (layout == &isolate->false_value.layout) {
-    return RASTER_V8_K_FALSE_VALUE_ROOT_INDEX;
+    return LEXE_V8_K_FALSE_VALUE_ROOT_INDEX;
   }
   if (layout == &isolate->empty_string.layout) {
-    return RASTER_V8_K_EMPTY_STRING_ROOT_INDEX;
+    return LEXE_V8_K_EMPTY_STRING_ROOT_INDEX;
   }
   return -1;
 }
@@ -227,11 +227,11 @@ HandleScopeData* handle_scope_data(IsolateImpl* isolate) {
   return &isolate->handle_scope_data;
 }
 
-ContextImpl* ctx_impl(RasterV8ContextState* ctx) {
+ContextImpl* ctx_impl(LexeV8ContextState* ctx) {
   return reinterpret_cast<ContextImpl*>(ctx);
 }
 
-IsolateImpl* iso_impl(RasterV8IsolateState* isolate) {
+IsolateImpl* iso_impl(LexeV8IsolateState* isolate) {
   return reinterpret_cast<IsolateImpl*>(isolate);
 }
 
@@ -262,7 +262,7 @@ node::node_module* take_pending_v8_module(size_t index) {
   return module;
 }
 
-shim::HandleSlot* alloc_handle_slot(RasterV8ContextState* ctx) {
+shim::HandleSlot* alloc_handle_slot(LexeV8ContextState* ctx) {
   auto* impl = ctx_impl(ctx);
   auto& arena = impl->arena;
   if (arena.watermark % HandleArena::kBlockSize == 0) {
@@ -275,8 +275,8 @@ shim::HandleSlot* alloc_handle_slot(RasterV8ContextState* ctx) {
   return slot;
 }
 
-void rewind_handle_arena(RasterV8ContextState* ctx, size_t watermark) {
-  const RasterV8BridgeV1* bridge = raster_v8_bridge();
+void rewind_handle_arena(LexeV8ContextState* ctx, size_t watermark) {
+  const LexeV8BridgeV1* bridge = lexe_v8_bridge();
   auto* impl = ctx_impl(ctx);
   auto& arena = impl->arena;
   while (arena.watermark > watermark) {
@@ -293,7 +293,7 @@ void rewind_handle_arena(RasterV8ContextState* ctx, size_t watermark) {
   }
 }
 
-uintptr_t local_from_root(RasterV8ContextState* ctx, uint64_t root_id, const shim::Map* map) {
+uintptr_t local_from_root(LexeV8ContextState* ctx, uint64_t root_id, const shim::Map* map) {
   auto* slot = alloc_handle_slot(ctx);
   slot->object = shim::ObjectLayout(map, root_id);
   slot->object.tagged_map = shim::TaggedPointer(&slot->object);
@@ -312,7 +312,7 @@ uint64_t root_from_local(uintptr_t tagged) {
   }
   auto* layout = ptr.getPtr<shim::ObjectLayout>();
   if (!layout) {
-    if (const RasterV8BridgeV1* bridge = raster_v8_bridge()) {
+    if (const LexeV8BridgeV1* bridge = lexe_v8_bridge()) {
       bridge->fatal("root_from_local", "invalid local handle");
     }
     return 0;
@@ -320,7 +320,7 @@ uint64_t root_from_local(uintptr_t tagged) {
   if (layout->contents.root_id != 0) {
     return layout->contents.root_id;
   }
-  if (auto* ctx = raster_v8_current_context()) {
+  if (auto* ctx = lexe_v8_current_context()) {
     if (uint64_t root_id = resolve_root_from_repr(ctx, reinterpret_cast<uintptr_t>(layout))) {
       layout->contents.root_id = root_id;
       return root_id;
@@ -365,7 +365,7 @@ size_t dispose_strong_context_persistents(IsolateImpl* isolate, uintptr_t contex
   if (!isolate) {
     return 0;
   }
-  const RasterV8BridgeV1* b = raster_v8_bridge();
+  const LexeV8BridgeV1* b = lexe_v8_bridge();
   size_t weak_remaining = 0;
   for (auto it = isolate->persistents.begin(); it != isolate->persistents.end();) {
     if (it->second.context_key != context_key) {
@@ -417,7 +417,7 @@ void dispose_context_persistents(IsolateImpl* isolate, uintptr_t context_key) {
   size_t weak_remaining = dispose_strong_context_persistents(isolate, context_key);
   if (weak_remaining != 0) {
     fprintf(stderr,
-            "raster_v8: %zu weak persistent(s) remain for context %#lx\n",
+            "lexe_v8: %zu weak persistent(s) remain for context %#lx\n",
             weak_remaining,
             static_cast<unsigned long>(context_key));
     abort();
@@ -430,7 +430,7 @@ void dispose_isolate_persistents(IsolateImpl* isolate) {
   }
   if (!isolate->persistents.empty()) {
     fprintf(stderr,
-            "raster_v8: %zu persistent(s) remain at isolate destroy\n",
+            "lexe_v8: %zu persistent(s) remain at isolate destroy\n",
             isolate->persistents.size());
     abort();
   }
@@ -438,4 +438,4 @@ void dispose_isolate_persistents(IsolateImpl* isolate) {
   isolate->layout_to_function_id.clear();
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

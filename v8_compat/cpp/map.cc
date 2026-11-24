@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 namespace shim {
 
 static_assert(offsetof(Map, instance_type) == 11);
@@ -32,4 +32,4 @@ const Map& Map::string_map() { return g_string_map; }
 const Map& Map::heap_number_map() { return g_heap_number_map; }
 
 }  // namespace shim
-}  // namespace raster_v8
+}  // namespace lexe_v8

@@ -2,7 +2,7 @@
 
 #include "registry_ownership.h"
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 AccessorRegistry& AccessorRegistry::instance() {
   static AccessorRegistry registry;
@@ -33,4 +33,4 @@ void AccessorRegistry::erase_accessor(uint32_t id) {
   accessors_.erase(id);
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

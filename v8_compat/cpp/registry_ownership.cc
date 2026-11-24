@@ -6,7 +6,7 @@
 #include "template_registry.h"
 #include "v8_bridge_helpers.h"
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 RegistryOwnership& RegistryOwnership::instance() {
   static RegistryOwnership ownership;
@@ -79,15 +79,15 @@ size_t RegistryOwnership::function_template_ids_for_context(uintptr_t context_ke
   return count;
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8
 
-extern "C" size_t raster_v8_function_template_ids_for_context(uintptr_t context_key,
+extern "C" size_t lexe_v8_function_template_ids_for_context(uintptr_t context_key,
                                                               uint32_t* out,
                                                               size_t capacity) {
-  return raster_v8::RegistryOwnership::instance().function_template_ids_for_context(
+  return lexe_v8::RegistryOwnership::instance().function_template_ids_for_context(
       context_key, out, capacity);
 }
 
-extern "C" void raster_v8_clear_registries_for_context(uintptr_t context_key) {
-  raster_v8::RegistryOwnership::instance().clear_context(context_key);
+extern "C" void lexe_v8_clear_registries_for_context(uintptr_t context_key) {
+  lexe_v8::RegistryOwnership::instance().clear_context(context_key);
 }

@@ -1,0 +1,94 @@
+[package]
+name = "lexe"
+version = "0.1.0"
+edition = "2021"
+license-file = "LICENSE"
+build = "build.rs"
+
+[features]
+default = ["base", "macro", "tls-ring", "crypto-rust"]
+base = ["lexe_core/base", "sqlite", "dep:lexe_http"]
+console = ["lexe_core/console"]
+path = ["lexe_core/path"]
+process = ["lexe_core/process"]
+timers = ["lexe_core/timers"]
+# WASI / wasm32-wasip1 subset: no tokio net/process/fs, no native addons.
+wasi = ["macro", "console", "path", "process", "timers"]
+http = ["lexe_core/http", "dep:lexe_http"]
+macro = ["lexe_core/macro"]
+uncompressed = ["lexe_core/uncompressed"]
+bindgen = ["lexe_core/bindgen"]
+
+# TLS crypto backend features
+tls-ring = ["lexe_core/tls-ring"]
+tls-aws-lc = ["lexe_core/tls-aws-lc"]
+tls-graviola = ["lexe_core/tls-graviola"]
+tls-openssl = ["lexe_core/tls-openssl"]
+
+# Crypto provider features
+crypto-rust = ["lexe_core/crypto-rust"]
+crypto-ring = ["lexe_core/crypto-ring"]
+crypto-ring-rust = ["lexe_core/crypto-ring-rust"]
+crypto-graviola = ["lexe_core/crypto-graviola"]
+crypto-graviola-rust = ["lexe_core/crypto-graviola-rust"]
+crypto-openssl = ["lexe_core/crypto-openssl"]
+
+# OpenSSL vendored (builds OpenSSL from source)
+openssl-vendored = ["lexe_core/openssl-vendored"]
+sqlite = ["lexe_core/sqlite", "dep:lexe_sqlite"]
+napi = ["lexe_core/napi", "dep:lexe_napi"]
+v8-compat = ["napi", "lexe_napi/v8-compat", "lexe_core/v8-compat", "dep:lexe_napi", "dep:v8_compat"]
+
+[dependencies]
+constcat = { version = "0.6", default-features = false }
+jiff = { version = "0.2" }
+lexe_core = { path = "../lexe_core", default-features = false }
+lexe_utils = { path = "../libs/lexe_utils", default-features = false }
+lexe_worker_threads = { path = "../modules/lexe_worker_threads" }
+lexe_child_process = { path = "../modules/lexe_child_process" }
+lexe_process = { path = "../modules/lexe_process" }
+lexe_timers = { path = "../modules/lexe_timers" }
+rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
+url = { version = "2", features = ["std"], default-features = false }
+lexe_sqlite = { path = "../modules/lexe_sqlite", optional = true }
+lexe_http = { path = "../modules/lexe_http", default-features = false, optional = true }
+lexe_napi = { path = "../modules/lexe_napi", optional = true }
+v8_compat = { path = "../v8_compat", optional = true }
+tokio = { version = "1", features = [
+  "macros",
+  "rt",
+  "sync",
+], default-features = false }
+tracing = { version = "0.1", features = ["log"], default-features = false }
+tracing-core = { version = "0.1", default-features = false }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+bytes = { version = "1", default-features = false }
+crossterm = { version = "0.29", features = [
+  "events",
+  "windows",
+], default-features = false }
+http-body-util = { version = "0.1", default-features = false }
+hyper = { version = "1", features = ["client"], default-features = false }
+libsui = "0.16"
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+tokio = { version = "1", features = ["io-util", "net", "rt-multi-thread", "signal"], default-features = false }
+
+[target.'cfg(not(any(target_os = "windows", target_family = "wasm")))'.dependencies]
+snmalloc-rs = { version = "0.7", features = [
+  "default",
+  "lto",
+], default-features = false }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+lexe_test = { version = "0.1.0", path = "../libs/lexe_test" }
+
+[build-dependencies]
+cc = "1"
+
+[[bin]]
+name = "lexe"
+path = "src/main.rs"

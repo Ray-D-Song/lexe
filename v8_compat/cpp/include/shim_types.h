@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 namespace shim {
 
 enum class InstanceType : uint16_t {
@@ -102,6 +102,6 @@ struct HandleSlot {
 
 }  // namespace shim
 
-static_assert(offsetof(raster_v8::shim::ObjectLayout, embedder_slot_0) == 32);
+static_assert(offsetof(lexe_v8::shim::ObjectLayout, embedder_slot_0) == 32);
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

@@ -1,4 +1,12 @@
 {
+  "name": "lexe",
+  "author": "Ray-D-Song",
+  "homepage": "https://github.com/Ray-D-Song/lexe",
+  "description": "Lightweight JavaScript runtime built on QuickJS with Node.js compatibility and single-executable compilation.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ray-D-Song/lexe.git"
+  },
   "workspaces": [
     "./example/*"
   ],

@@ -1,5 +1,5 @@
 {
-  "cSpell.words": ["Abortable", "rquickjs", "raster_runtime"],
+  "cSpell.words": ["Abortable", "rquickjs", "lexe"],
   "cmake.configureOnOpen": false,
   "rust-analyzer.showUnlinkedFileNotification": false,
   "editor.formatOnPaste": true,
@@ -18,7 +18,7 @@
   "remote.forwardPorts": [5173],
   "remote.portsAttributes": {
     "5173": {
-      "label": "raster-wasm",
+      "label": "lexe-wasm",
       "onAutoForward": "notify"
     }
   }

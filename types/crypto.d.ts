@@ -573,7 +573,7 @@ declare module "crypto" {
       /**
        * Using the method and parameters specified in `algorithm` and the keying material provided by `baseKey`,
        * `subtle.deriveBits()` attempts to generate `length` bits.
-       * The raster_runtime implementation requires that when `length` is a number it must be multiple of `8`.
+       * The lexe implementation requires that when `length` is a number it must be multiple of `8`.
        * When `length` is `null` the maximum number of bits for a given algorithm is generated. This is allowed
        * for the `'ECDH'`, `'X25519'`, and `'X448'` algorithms.
        * If successful, the returned promise will be resolved with an `<ArrayBuffer>` containing the generated data.

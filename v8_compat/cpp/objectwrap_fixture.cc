@@ -1,5 +1,5 @@
 #include "internal.h"
-#include "raster_v8_bridge.h"
+#include "lexe_v8_bridge.h"
 #include "v8_bridge_helpers.h"
 
 #include <atomic>
@@ -8,7 +8,7 @@
 #include <v8-persistent-handle.h>
 #include <v8-weak-callback-info.h>
 
-extern "C" RasterV8Status raster_v8_value_to_float64(RasterV8ContextState* ctx,
+extern "C" LexeV8Status lexe_v8_value_to_float64(LexeV8ContextState* ctx,
                                                      uint64_t root,
                                                      double* out);
 
@@ -63,7 +63,7 @@ static void fixture_weak_callback(const v8::WeakCallbackInfo<void>& data) {
 
 }  // namespace
 
-extern "C" void raster_v8_test_objectwrap_fixture_cleanup_hook(void* arg) {
+extern "C" void lexe_v8_test_objectwrap_fixture_cleanup_hook(void* arg) {
   auto* counters = static_cast<FixtureCounters*>(arg);
   counters->cleanup_count.fetch_add(1, std::memory_order_relaxed);
   if (counters->strong_persistent != nullptr && !counters->strong_persistent->IsEmpty()) {
@@ -73,10 +73,10 @@ extern "C" void raster_v8_test_objectwrap_fixture_cleanup_hook(void* arg) {
   }
 }
 
-extern "C" FixtureCounters* raster_v8_test_objectwrap_fixture_setup(
-    RasterV8ContextState* ctx_state) {
-  const RasterV8BridgeV1* bridge = raster_v8_bridge();
-  auto* isolate = reinterpret_cast<v8::Isolate*>(raster_v8_current_isolate());
+extern "C" FixtureCounters* lexe_v8_test_objectwrap_fixture_setup(
+    LexeV8ContextState* ctx_state) {
+  const LexeV8BridgeV1* bridge = lexe_v8_bridge();
+  auto* isolate = reinterpret_cast<v8::Isolate*>(lexe_v8_current_isolate());
   if (!bridge || !ctx_state || !isolate) {
     return nullptr;
   }
@@ -90,18 +90,18 @@ extern "C" FixtureCounters* raster_v8_test_objectwrap_fixture_setup(
   };
   counters->weak_closure = closure;
 
-  if (bridge->object_new(ctx_state, &counters->strong_root_id) != RASTER_V8_OK ||
+  if (bridge->object_new(ctx_state, &counters->strong_root_id) != LEXE_V8_OK ||
       counters->strong_root_id == 0) {
     delete closure;
     delete counters;
     return nullptr;
   }
-  v8::Local<v8::Object> strong_object = raster_v8::local_from_root<v8::Object>(
-      isolate, counters->strong_root_id, &raster_v8::shim::Map::object_map());
+  v8::Local<v8::Object> strong_object = lexe_v8::local_from_root<v8::Object>(
+      isolate, counters->strong_root_id, &lexe_v8::shim::Map::object_map());
   counters->strong_persistent = new v8::Persistent<v8::Object>();
   counters->strong_persistent->Reset(isolate, strong_object);
 
-  if (bridge->object_new(ctx_state, &counters->weak_root_id) != RASTER_V8_OK ||
+  if (bridge->object_new(ctx_state, &counters->weak_root_id) != LEXE_V8_OK ||
       counters->weak_root_id == 0) {
     counters->strong_persistent->Reset();
     delete counters->strong_persistent;
@@ -109,8 +109,8 @@ extern "C" FixtureCounters* raster_v8_test_objectwrap_fixture_setup(
     delete counters;
     return nullptr;
   }
-  v8::Local<v8::Object> weak_object = raster_v8::local_from_root<v8::Object>(
-      isolate, counters->weak_root_id, &raster_v8::shim::Map::object_map());
+  v8::Local<v8::Object> weak_object = lexe_v8::local_from_root<v8::Object>(
+      isolate, counters->weak_root_id, &lexe_v8::shim::Map::object_map());
   closure->persistent = new v8::Persistent<v8::Object>();
   closure->persistent->Reset(isolate, weak_object);
   closure->persistent->SetWeak(static_cast<void*>(closure),
@@ -120,10 +120,10 @@ extern "C" FixtureCounters* raster_v8_test_objectwrap_fixture_setup(
   return counters;
 }
 
-extern "C" void raster_v8_test_objectwrap_fixture_release_bridge_roots(
-    RasterV8ContextState* ctx_state,
+extern "C" void lexe_v8_test_objectwrap_fixture_release_bridge_roots(
+    LexeV8ContextState* ctx_state,
     FixtureCounters* counters) {
-  const RasterV8BridgeV1* bridge = raster_v8_bridge();
+  const LexeV8BridgeV1* bridge = lexe_v8_bridge();
   if (!bridge || !ctx_state || !counters) {
     return;
   }
@@ -137,7 +137,7 @@ extern "C" void raster_v8_test_objectwrap_fixture_release_bridge_roots(
   }
 }
 
-extern "C" void raster_v8_test_objectwrap_fixture_read_counts(const FixtureCounters* counters,
+extern "C" void lexe_v8_test_objectwrap_fixture_read_counts(const FixtureCounters* counters,
                                                               int* cleanup_out,
                                                               int* weak_out,
                                                               int* destructor_out) {
@@ -155,7 +155,7 @@ extern "C" void raster_v8_test_objectwrap_fixture_read_counts(const FixtureCount
   }
 }
 
-extern "C" void raster_v8_test_objectwrap_fixture_destroy(FixtureCounters* counters) {
+extern "C" void lexe_v8_test_objectwrap_fixture_destroy(FixtureCounters* counters) {
   if (!counters) {
     return;
   }
@@ -173,26 +173,26 @@ extern "C" void raster_v8_test_objectwrap_fixture_destroy(FixtureCounters* count
   delete counters;
 }
 
-extern "C" int raster_v8_test_persistent_binds_to_requested_local(
-    RasterV8ContextState* ctx_state) {
-  const RasterV8BridgeV1* bridge = raster_v8_bridge();
-  auto* isolate = reinterpret_cast<v8::Isolate*>(raster_v8_current_isolate());
-  auto* isolate_impl = raster_v8::iso_impl(
-      reinterpret_cast<RasterV8IsolateState*>(raster_v8_current_isolate()));
+extern "C" int lexe_v8_test_persistent_binds_to_requested_local(
+    LexeV8ContextState* ctx_state) {
+  const LexeV8BridgeV1* bridge = lexe_v8_bridge();
+  auto* isolate = reinterpret_cast<v8::Isolate*>(lexe_v8_current_isolate());
+  auto* isolate_impl = lexe_v8::iso_impl(
+      reinterpret_cast<LexeV8IsolateState*>(lexe_v8_current_isolate()));
   if (!bridge || !ctx_state || !isolate || !isolate_impl) {
     return 0;
   }
   uint64_t first_root = 0;
   uint64_t second_root = 0;
-  if (bridge->object_new(ctx_state, &first_root) != RASTER_V8_OK || first_root == 0 ||
-      bridge->object_new(ctx_state, &second_root) != RASTER_V8_OK || second_root == 0) {
+  if (bridge->object_new(ctx_state, &first_root) != LEXE_V8_OK || first_root == 0 ||
+      bridge->object_new(ctx_state, &second_root) != LEXE_V8_OK || second_root == 0) {
     return 0;
   }
-  v8::Local<v8::Object> first = raster_v8::local_from_root<v8::Object>(
-      isolate, first_root, &raster_v8::shim::Map::object_map());
+  v8::Local<v8::Object> first = lexe_v8::local_from_root<v8::Object>(
+      isolate, first_root, &lexe_v8::shim::Map::object_map());
   // Materialize second last so g_last_materialized_layout points at the wrong object.
-  v8::Local<v8::Object> second = raster_v8::local_from_root<v8::Object>(
-      isolate, second_root, &raster_v8::shim::Map::object_map());
+  v8::Local<v8::Object> second = lexe_v8::local_from_root<v8::Object>(
+      isolate, second_root, &lexe_v8::shim::Map::object_map());
   (void)second;
 
   v8::Persistent<v8::Object> persistent;
@@ -209,22 +209,22 @@ extern "C" int raster_v8_test_persistent_binds_to_requested_local(
   return bound_to_first ? 1 : 0;
 }
 
-extern "C" int raster_v8_test_objectwrap_strong_reset_scrubs_layout_maps(
-    RasterV8ContextState* ctx_state) {
-  const RasterV8BridgeV1* bridge = raster_v8_bridge();
-  auto* isolate = reinterpret_cast<v8::Isolate*>(raster_v8_current_isolate());
-  auto* isolate_impl = raster_v8::iso_impl(
-      reinterpret_cast<RasterV8IsolateState*>(raster_v8_current_isolate()));
+extern "C" int lexe_v8_test_objectwrap_strong_reset_scrubs_layout_maps(
+    LexeV8ContextState* ctx_state) {
+  const LexeV8BridgeV1* bridge = lexe_v8_bridge();
+  auto* isolate = reinterpret_cast<v8::Isolate*>(lexe_v8_current_isolate());
+  auto* isolate_impl = lexe_v8::iso_impl(
+      reinterpret_cast<LexeV8IsolateState*>(lexe_v8_current_isolate()));
   if (!bridge || !ctx_state || !isolate || !isolate_impl) {
     return 0;
   }
 
   uint64_t root_id = 0;
-  if (bridge->object_new(ctx_state, &root_id) != RASTER_V8_OK || root_id == 0) {
+  if (bridge->object_new(ctx_state, &root_id) != LEXE_V8_OK || root_id == 0) {
     return 0;
   }
-  v8::Local<v8::Object> object = raster_v8::local_from_root<v8::Object>(
-      isolate, root_id, &raster_v8::shim::Map::object_map());
+  v8::Local<v8::Object> object = lexe_v8::local_from_root<v8::Object>(
+      isolate, root_id, &lexe_v8::shim::Map::object_map());
 
   v8::Persistent<v8::Object> persistent;
   persistent.Reset(isolate, object);
@@ -240,8 +240,8 @@ extern "C" int raster_v8_test_objectwrap_strong_reset_scrubs_layout_maps(
     return 0;
   }
 
-  raster_v8_register_layout_root(reinterpret_cast<void*>(layout_addr), root_id);
-  raster_v8_register_layout_function_id(reinterpret_cast<void*>(layout_addr), 1);
+  lexe_v8_register_layout_root(reinterpret_cast<void*>(layout_addr), root_id);
+  lexe_v8_register_layout_function_id(reinterpret_cast<void*>(layout_addr), 1);
 
   persistent.Reset();
 
@@ -251,9 +251,9 @@ extern "C" int raster_v8_test_objectwrap_strong_reset_scrubs_layout_maps(
           isolate_impl->layout_to_function_id.end();
 
   uint64_t second_root_id = 0;
-  if (bridge->object_new(ctx_state, &second_root_id) == RASTER_V8_OK && second_root_id != 0) {
-    v8::Local<v8::Object> second_object = raster_v8::local_from_root<v8::Object>(
-        isolate, second_root_id, &raster_v8::shim::Map::object_map());
+  if (bridge->object_new(ctx_state, &second_root_id) == LEXE_V8_OK && second_root_id != 0) {
+    v8::Local<v8::Object> second_object = lexe_v8::local_from_root<v8::Object>(
+        isolate, second_root_id, &lexe_v8::shim::Map::object_map());
     v8::Persistent<v8::Object> second_persistent;
     second_persistent.Reset(isolate, second_object);
     second_persistent.Reset();
@@ -264,14 +264,14 @@ extern "C" int raster_v8_test_objectwrap_strong_reset_scrubs_layout_maps(
 
 /// Bypasses repr_to_root fast path: rejects Smi, materializes isolate oddball
 /// direct layouts, and safely handles unmaterialized (root_id==0) arena slots.
-extern "C" int raster_v8_test_resolve_root_repr_smi_and_tagged(
-    RasterV8ContextState* ctx_state) {
+extern "C" int lexe_v8_test_resolve_root_repr_smi_and_tagged(
+    LexeV8ContextState* ctx_state) {
   if (!ctx_state) {
     return 0;
   }
-  auto* impl = raster_v8::ctx_impl(ctx_state);
+  auto* impl = lexe_v8::ctx_impl(ctx_state);
 
-  const RasterV8BridgeV1* bridge = raster_v8_bridge();
+  const LexeV8BridgeV1* bridge = lexe_v8_bridge();
   if (!bridge || !bridge->root_drop) {
     return 0;
   }
@@ -279,18 +279,18 @@ extern "C" int raster_v8_test_resolve_root_repr_smi_and_tagged(
   // General resolver must reject pure Smi (no provenance → not a layout).
   const uintptr_t smi_four =
       (static_cast<uintptr_t>(4) << 32) |
-      static_cast<uintptr_t>(raster_v8::shim::TaggedPointer::Tag::Smi);
-  if (raster_v8::resolve_root_from_repr(ctx_state, smi_four) != 0) {
+      static_cast<uintptr_t>(lexe_v8::shim::TaggedPointer::Tag::Smi);
+  if (lexe_v8::resolve_root_from_repr(ctx_state, smi_four) != 0) {
     return 0;
   }
   // Return-value entry materializes Smi 4 → number root for 4.
   const uint64_t smi_root =
-      raster_v8::resolve_return_value_repr(ctx_state, smi_four);
+      lexe_v8::resolve_return_value_repr(ctx_state, smi_four);
   if (smi_root == 0) {
     return 0;
   }
   double smi_number = 0.0;
-  if (raster_v8_value_to_float64(ctx_state, smi_root, &smi_number) != RASTER_V8_OK ||
+  if (lexe_v8_value_to_float64(ctx_state, smi_root, &smi_number) != LEXE_V8_OK ||
       smi_number != 4.0) {
     bridge->root_drop(smi_root);
     return 0;
@@ -298,12 +298,12 @@ extern "C" int raster_v8_test_resolve_root_repr_smi_and_tagged(
   bridge->root_drop(smi_root);
 
   // Set(0) return-value slot uses raw 0 — must become number root 0.
-  const uint64_t zero_root = raster_v8::resolve_return_value_repr(ctx_state, 0);
+  const uint64_t zero_root = lexe_v8::resolve_return_value_repr(ctx_state, 0);
   if (zero_root == 0) {
     return 0;
   }
   double zero_number = 1.0;
-  if (raster_v8_value_to_float64(ctx_state, zero_root, &zero_number) != RASTER_V8_OK ||
+  if (lexe_v8_value_to_float64(ctx_state, zero_root, &zero_number) != LEXE_V8_OK ||
       zero_number != 0.0) {
     bridge->root_drop(zero_root);
     return 0;
@@ -311,35 +311,35 @@ extern "C" int raster_v8_test_resolve_root_repr_smi_and_tagged(
   bridge->root_drop(zero_root);
 
   // Unknown aligned direct / strong-tagged addresses must not become numbers.
-  raster_v8::shim::ObjectLayout stack_layout;
+  lexe_v8::shim::ObjectLayout stack_layout;
   const uintptr_t unknown_direct = reinterpret_cast<uintptr_t>(&stack_layout);
-  if (raster_v8::resolve_root_from_repr(ctx_state, unknown_direct) != 0) {
+  if (lexe_v8::resolve_root_from_repr(ctx_state, unknown_direct) != 0) {
     return 0;
   }
   const uintptr_t unknown_tagged =
-      static_cast<uintptr_t>(raster_v8::shim::TaggedPointer(&stack_layout).value);
-  if (raster_v8::resolve_root_from_repr(ctx_state, unknown_tagged) != 0) {
+      static_cast<uintptr_t>(lexe_v8::shim::TaggedPointer(&stack_layout).value);
+  if (lexe_v8::resolve_root_from_repr(ctx_state, unknown_tagged) != 0) {
     return 0;
   }
-  if (raster_v8::resolve_return_value_repr(ctx_state, unknown_direct) != 0) {
+  if (lexe_v8::resolve_return_value_repr(ctx_state, unknown_direct) != 0) {
     return 0;
   }
-  if (raster_v8::resolve_return_value_repr(ctx_state, unknown_tagged) != 0) {
+  if (lexe_v8::resolve_return_value_repr(ctx_state, unknown_tagged) != 0) {
     return 0;
   }
 
   // Isolate oddball direct address (root_id starts at 0; not in repr_to_root).
-  auto* isolate_state = raster_v8_current_isolate();
+  auto* isolate_state = lexe_v8_current_isolate();
   if (!isolate_state) {
     return 0;
   }
-  auto* iso = raster_v8::iso_impl(isolate_state);
+  auto* iso = lexe_v8::iso_impl(isolate_state);
   const uintptr_t undef_addr =
       reinterpret_cast<uintptr_t>(&iso->undefined_value.layout);
   impl->repr_to_root.erase(undef_addr);
   iso->undefined_value.layout.contents.root_id = 0;
   const uint64_t oddball_root =
-      raster_v8::resolve_root_from_repr(ctx_state, undef_addr);
+      lexe_v8::resolve_root_from_repr(ctx_state, undef_addr);
   if (oddball_root == 0) {
     return 0;
   }
@@ -347,15 +347,15 @@ extern "C" int raster_v8_test_resolve_root_repr_smi_and_tagged(
   // Unmaterialized arena object: clear root + erase maps so resolve cannot use
   // the registered fast path; direct address must not crash (root may stay 0).
   uint64_t root_id = 0;
-  if (bridge->object_new(ctx_state, &root_id) != RASTER_V8_OK || root_id == 0) {
+  if (bridge->object_new(ctx_state, &root_id) != LEXE_V8_OK || root_id == 0) {
     return 0;
   }
   auto* isolate = reinterpret_cast<v8::Isolate*>(isolate_state);
-  v8::Local<v8::Object> object = raster_v8::local_from_root<v8::Object>(
-      isolate, root_id, &raster_v8::shim::Map::object_map());
+  v8::Local<v8::Object> object = lexe_v8::local_from_root<v8::Object>(
+      isolate, root_id, &lexe_v8::shim::Map::object_map());
   (void)object;
 
-  raster_v8::shim::ObjectLayout* arena_layout = nullptr;
+  lexe_v8::shim::ObjectLayout* arena_layout = nullptr;
   uintptr_t tagged_repr = 0;
   uintptr_t direct_addr = 0;
   for (auto& block : impl->arena.blocks) {
@@ -381,10 +381,10 @@ extern "C" int raster_v8_test_resolve_root_repr_smi_and_tagged(
   arena_layout->contents.root_id = 0;
 
   // Unmaterialized direct/tagged: must not UBSan/crash (root stays 0 for plain objects).
-  if (raster_v8::resolve_root_from_repr(ctx_state, direct_addr) != 0) {
+  if (lexe_v8::resolve_root_from_repr(ctx_state, direct_addr) != 0) {
     return 0;
   }
-  if (raster_v8::resolve_root_from_repr(ctx_state, tagged_repr) != 0) {
+  if (lexe_v8::resolve_root_from_repr(ctx_state, tagged_repr) != 0) {
     return 0;
   }
 
@@ -392,11 +392,11 @@ extern "C" int raster_v8_test_resolve_root_repr_smi_and_tagged(
   arena_layout->contents.root_id = root_id;
   impl->repr_to_root.erase(direct_addr);
   impl->repr_to_root.erase(tagged_repr);
-  if (raster_v8::resolve_root_from_repr(ctx_state, direct_addr) != root_id) {
+  if (lexe_v8::resolve_root_from_repr(ctx_state, direct_addr) != root_id) {
     return 0;
   }
   impl->repr_to_root.erase(direct_addr);
-  if (raster_v8::resolve_root_from_repr(ctx_state, tagged_repr) != root_id) {
+  if (lexe_v8::resolve_root_from_repr(ctx_state, tagged_repr) != root_id) {
     return 0;
   }
 

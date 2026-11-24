@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use rquickjs::qjs::{self, JSContext, JSValue, JS_MKVAL, JS_TAG_INT};
 
-use crate::bridge::{with_state, with_state_for_ctx, RasterV8Status};
+use crate::bridge::{with_state, with_state_for_ctx, LexeV8Status};
 
 fn new_int32(_ctx: *mut JSContext, val: i32) -> JSValue {
     JS_MKVAL(JS_TAG_INT, val)
@@ -78,12 +78,12 @@ static V8_OBJECT_CLASS: Lazy<Mutex<HashMap<usize, qjs::JSClassID>>> =
 use crate::context_tables::{self, WeakPass, WeakPhase, WeakSlot};
 
 extern "C" {
-    fn raster_v8_invoke_weak_callback_first_pass(
+    fn lexe_v8_invoke_weak_callback_first_pass(
         callback: *mut c_void,
         parameter: *mut c_void,
         out_second_pass: *mut *mut c_void,
     ) -> i32;
-    fn raster_v8_invoke_weak_callback_second_pass(callback: *mut c_void, parameter: *mut c_void);
+    fn lexe_v8_invoke_weak_callback_second_pass(callback: *mut c_void, parameter: *mut c_void);
 }
 
 pub(crate) fn dispatch_pending_weak_callbacks_for_ctx(ctx: *mut JSContext) {
@@ -96,7 +96,7 @@ pub(crate) fn dispatch_pending_weak_callbacks_for_ctx(ctx: *mut JSContext) {
         for item in pending {
             match item.pass {
                 WeakPass::Second => unsafe {
-                    raster_v8_invoke_weak_callback_second_pass(
+                    lexe_v8_invoke_weak_callback_second_pass(
                         item.callback as *mut c_void,
                         item.parameter as *mut c_void,
                     );
@@ -104,7 +104,7 @@ pub(crate) fn dispatch_pending_weak_callbacks_for_ctx(ctx: *mut JSContext) {
                 WeakPass::First => {
                     let mut second_pass: *mut c_void = std::ptr::null_mut();
                     let needs_second = unsafe {
-                        raster_v8_invoke_weak_callback_first_pass(
+                        lexe_v8_invoke_weak_callback_first_pass(
                             item.callback as *mut c_void,
                             item.parameter as *mut c_void,
                             &mut second_pass,
@@ -123,7 +123,7 @@ pub(crate) fn dispatch_pending_weak_callbacks_for_ctx(ctx: *mut JSContext) {
         }
         for item in deferred_second {
             unsafe {
-                raster_v8_invoke_weak_callback_second_pass(
+                lexe_v8_invoke_weak_callback_second_pass(
                     item.callback as *mut c_void,
                     item.parameter as *mut c_void,
                 );
@@ -139,7 +139,7 @@ pub fn dispatch_pending_weak_callbacks() {
 }
 
 #[no_mangle]
-pub extern "C" fn raster_v8_dispatch_pending_weak_callbacks() {
+pub extern "C" fn lexe_v8_dispatch_pending_weak_callbacks() {
     dispatch_pending_weak_callbacks();
 }
 
@@ -202,109 +202,109 @@ fn root_id_for_ptr(state: &crate::bridge::BridgeState, ptr: usize) -> Option<u64
 }
 
 pub unsafe extern "C" fn root_from_js_value(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     js_value_tag: u64,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() || js_value_tag == 0 {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ptr = js_value_tag as usize;
         if let Some(id) = root_id_for_ptr(state, ptr) {
             *out = id;
-            return RasterV8Status::Ok;
+            return LexeV8Status::Ok;
         }
         root_restrong_from_object_ptr(_ctx, ptr as *mut c_void, out)
     })
 }
 
 pub unsafe extern "C" fn root_id_for_js_object(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_ptr: *mut c_void,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() || object_ptr.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ptr = object_ptr as usize;
         let Some(id) = root_id_for_ptr(state, ptr) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         *out = id;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_ptr_for_root(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     root: u64,
     out: *mut *mut c_void,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(obj) = state.get_object_for_root(root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(key) = object_ptr_key(obj) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         *out = key as *mut c_void;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn root_restrong_from_object_ptr(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_ptr: *mut c_void,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() || object_ptr.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ctx = state.ctx_ptr();
         let ptr = object_ptr as usize;
         if let Some(id) = root_id_for_ptr(state, ptr) {
             *out = id;
-            return RasterV8Status::Ok;
+            return LexeV8Status::Ok;
         }
         if let Some(value) = state.take_weak_hold(ptr) {
             *out = state
                 .roots
                 .insert_owned(unsafe { crate::owned_js_value::OwnedJsValue::new(ctx, value) });
-            return RasterV8Status::Ok;
+            return LexeV8Status::Ok;
         }
         let tagged = qjs::JS_MKPTR(qjs::JS_TAG_OBJECT, object_ptr);
         if !qjs::JS_IsObject(tagged) {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         }
         let dup = qjs::JS_DupValue(ctx, tagged);
         if qjs::JS_IsException(dup) {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         *out = state
             .roots
             .insert_owned(unsafe { crate::owned_js_value::OwnedJsValue::new(ctx, dup) });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
-pub fn root_make_weak(state: &mut crate::bridge::BridgeState, id: u64) -> RasterV8Status {
+pub fn root_make_weak(state: &mut crate::bridge::BridgeState, id: u64) -> LexeV8Status {
     let ctx = state.ctx_ptr();
     let Some(value) = state.roots.detach_root(id) else {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     };
     let Some(key) = object_ptr_key(value) else {
         unsafe { qjs::JS_FreeValue(ctx, value) };
-        return RasterV8Status::Ok;
+        return LexeV8Status::Ok;
     };
     state.insert_weak_hold(key, value);
     state.record_weak_root(id, key);
-    RasterV8Status::Ok
+    LexeV8Status::Ok
 }
 
 pub(crate) fn process_weak_holds_for_ctx(state: &mut crate::bridge::BridgeState) {
@@ -327,7 +327,7 @@ pub(crate) fn process_weak_holds_for_ctx(state: &mut crate::bridge::BridgeState)
 }
 
 pub unsafe extern "C" fn unregister_weak_for_object_ptr(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_ptr: *mut c_void,
 ) {
     if object_ptr.is_null() {
@@ -349,7 +349,7 @@ pub(crate) fn ensure_v8_object_class(ctx: *mut JSContext) -> qjs::JSClassID {
     unsafe {
         qjs::JS_NewClassID(rt, &mut class_id);
         let def = qjs::JSClassDef {
-            class_name: c"RasterV8Object".as_ptr(),
+            class_name: c"LexeV8Object".as_ptr(),
             finalizer: Some(v8_object_finalizer),
             gc_mark: None,
             call: None,
@@ -391,72 +391,72 @@ fn atom_from_key(ctx: *mut JSContext, key: JSValue) -> Option<qjs::JSAtom> {
 }
 
 pub unsafe extern "C" fn object_get(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     key_root: u64,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(obj) = state.roots.get(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(key) = state.roots.get(key_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(atom) = atom_from_key(state.ctx_ptr(), key) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let val = qjs::JS_GetProperty(state.ctx_ptr(), obj, atom);
         qjs::JS_FreeAtom(state.ctx_ptr(), atom);
         if qjs::JS_IsException(val) {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), val)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_get_index(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     index: u32,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(obj) = state.roots.get(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let val = qjs::JS_GetPropertyUint32(state.ctx_ptr(), obj, index);
         if qjs::JS_IsException(val) {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), val)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_set_index(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     index: u32,
     value_root: u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     with_state(|state| {
         let Some(obj) = state.roots.get(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(val) = state.roots.get(value_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let rc = qjs::JS_SetPropertyUint32(
             state.ctx_ptr(),
@@ -465,35 +465,35 @@ pub unsafe extern "C" fn object_set_index(
             qjs::JS_DupValue(state.ctx_ptr(), val),
         );
         if rc < 0 {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_define_own_property(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     key_root: u64,
     value_root: u64,
     attr: c_int,
     out: *mut bool,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(obj) = state.roots.get(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(key) = state.roots.get(key_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(val) = state.roots.get(value_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(atom) = atom_from_key(state.ctx_ptr(), key) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let mut flags = qjs::JS_PROP_C_W_E as c_int;
         if attr & 1 == 0 {
@@ -514,31 +514,31 @@ pub unsafe extern "C" fn object_define_own_property(
         );
         qjs::JS_FreeAtom(state.ctx_ptr(), atom);
         if rc < 0 {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         *out = true;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_has_own_property(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     key_root: u64,
     out: *mut bool,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(obj) = state.roots.get(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(key) = state.roots.get(key_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(atom) = atom_from_key(state.ctx_ptr(), key) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let mut prop = qjs::JSPropertyDescriptor {
             flags: 0,
@@ -549,7 +549,7 @@ pub unsafe extern "C" fn object_has_own_property(
         let rc = qjs::JS_GetOwnProperty(state.ctx_ptr(), &mut prop, obj, atom);
         qjs::JS_FreeAtom(state.ctx_ptr(), atom);
         if rc < 0 {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         if rc > 0 {
             qjs::JS_FreeValue(state.ctx_ptr(), prop.value);
@@ -561,40 +561,40 @@ pub unsafe extern "C" fn object_has_own_property(
             }
         }
         *out = rc > 0;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_get_prototype(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(obj) = state.roots.get(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let proto = qjs::JS_GetPrototype(state.ctx_ptr(), obj);
         if qjs::JS_IsException(proto) {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), proto)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn array_new(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     length: c_int,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let arr = qjs::JS_NewArray(state.ctx_ptr());
@@ -605,69 +605,69 @@ pub unsafe extern "C" fn array_new(
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), arr)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn number_new(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     value: f64,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let num = qjs::JS_NewFloat64(value);
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), num)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn bigint_new(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     value: i64,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let bi = qjs::JS_NewBigInt64(state.ctx_ptr(), value);
         *out = state
             .roots
             .insert_owned(unsafe { crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), bi) });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn integer_new(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     value: c_int,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let num = new_int32(state.ctx_ptr(), value);
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), num)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn string_new_latin1(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     data: *const u8,
     length: c_int,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if data.is_null() || out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let bytes = if length < 0 {
@@ -683,66 +683,66 @@ pub unsafe extern "C" fn string_new_latin1(
         *out = state
             .roots
             .insert_owned(unsafe { crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), js) });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn string_to_utf8(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     value_root: u64,
     out_ptr: *mut *mut c_char,
     out_len: *mut usize,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out_ptr.is_null() || out_len.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(val) = state.roots.get(value_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let mut len: usize = 0;
         let ptr = qjs::JS_ToCStringLen(state.ctx_ptr(), &mut len, val);
         if ptr.is_null() {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         }
         *out_ptr = ptr as *mut c_char;
         *out_len = len;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn string_free_utf8(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     ptr: *mut c_char,
-) -> RasterV8Status {
+) -> LexeV8Status {
     with_state(|state| {
         if !ptr.is_null() {
             qjs::JS_FreeCString(state.ctx_ptr(), ptr);
         }
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn function_call(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     func_root: u64,
     recv_root: u64,
     argc: c_int,
     args: *const u64,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(func) = state.roots.get(func_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let recv = if recv_root == 0 {
             qjs::JS_UNDEFINED
         } else {
             let Some(r) = state.roots.get(recv_root) else {
-                return RasterV8Status::Error;
+                return LexeV8Status::Error;
             };
             qjs::JS_DupValue(state.ctx_ptr(), r)
         };
@@ -751,7 +751,7 @@ pub unsafe extern "C" fn function_call(
             let slice = std::slice::from_raw_parts(args, argc as usize);
             for &root in slice {
                 let Some(arg) = state.roots.get(root) else {
-                    return RasterV8Status::Error;
+                    return LexeV8Status::Error;
                 };
                 argv.push(qjs::JS_DupValue(state.ctx_ptr(), arg));
             }
@@ -764,40 +764,40 @@ pub unsafe extern "C" fn function_call(
             qjs::JS_FreeValue(state.ctx_ptr(), recv);
         }
         if qjs::JS_IsException(result) {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), result)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn throw_value(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     value_root: u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     with_state(|state| {
         let Some(val) = state.roots.get(value_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         qjs::JS_Throw(state.ctx_ptr(), qjs::JS_DupValue(state.ctx_ptr(), val));
-        RasterV8Status::Exception
+        LexeV8Status::Exception
     })
 }
 
 pub unsafe extern "C" fn new_exception(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     msg_root: u64,
     kind: c_int,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let Some(msg) = state.roots.get(msg_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let err = match kind {
             1 => {
@@ -831,17 +831,17 @@ pub unsafe extern "C" fn new_exception(
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), err)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn external_new(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     ptr: *mut c_void,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ctx = state.ctx_ptr();
@@ -858,25 +858,25 @@ pub unsafe extern "C" fn external_new(
         *out = state
             .roots
             .insert_owned(unsafe { crate::owned_js_value::OwnedJsValue::new(ctx, obj) });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_reserve_internal_fields(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     count: c_int,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if count < 0 {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ctx = state.ctx_ptr();
         let Some(obj) = state.roots.get(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(key) = object_ptr_key(obj) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let count = count as usize;
         context_tables::with_context_tables(ctx, |tables| {
@@ -886,17 +886,17 @@ pub unsafe extern "C" fn object_reserve_internal_fields(
                 entry.resize(count, 0);
             }
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn object_internal_field_count(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     out: *mut c_int,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ctx = state.ctx_ptr();
@@ -913,23 +913,23 @@ pub unsafe extern "C" fn object_internal_field_count(
             .unwrap_or(0)
         });
         *out = count as c_int;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn internal_field_set(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     index: c_int,
     ptr: *mut c_void,
-) -> RasterV8Status {
+) -> LexeV8Status {
     with_state(|state| {
         let ctx = state.ctx_ptr();
         let Some(obj) = state.get_object_for_root(object_root) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         let Some(key) = object_ptr_key(obj) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         context_tables::with_context_tables(ctx, |tables| {
             let fields = tables.internal_fields.entry(key).or_default();
@@ -955,18 +955,18 @@ pub unsafe extern "C" fn internal_field_set(
             qjs::JS_SetOpaque(obj, ptr);
             let _ = class_id;
         }
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn internal_field_get(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     index: c_int,
     out: *mut *mut c_void,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ctx = state.ctx_ptr();
@@ -991,58 +991,58 @@ pub unsafe extern "C" fn internal_field_get(
         unsafe {
             *out = ptr as *mut c_void;
         }
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn symbol_iterator(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let global = qjs::JS_GetGlobalObject(state.ctx_ptr());
         let symbol = qjs::JS_GetPropertyStr(state.ctx_ptr(), global, c"Symbol".as_ptr());
         qjs::JS_FreeValue(state.ctx_ptr(), global);
         if qjs::JS_IsException(symbol) {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         let iter = qjs::JS_GetPropertyStr(state.ctx_ptr(), symbol, c"iterator".as_ptr());
         qjs::JS_FreeValue(state.ctx_ptr(), symbol);
         if qjs::JS_IsException(iter) {
-            return RasterV8Status::Exception;
+            return LexeV8Status::Exception;
         }
         *out = state.roots.insert_owned(unsafe {
             crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), iter)
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 extern "C" {
-    fn raster_v8_context_root_id(ctx: *mut crate::bridge::RasterV8ContextState) -> u64;
+    fn lexe_v8_context_root_id(ctx: *mut crate::bridge::LexeV8ContextState) -> u64;
 }
 
 pub unsafe extern "C" fn get_context_root(
-    ctx: *mut crate::bridge::RasterV8ContextState,
+    ctx: *mut crate::bridge::LexeV8ContextState,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
-    *out = raster_v8_context_root_id(ctx);
-    RasterV8Status::Ok
+    *out = lexe_v8_context_root_id(ctx);
+    LexeV8Status::Ok
 }
 
 pub unsafe extern "C" fn oddball_root(
-    _ctx: *mut crate::bridge::RasterV8ContextState,
+    _ctx: *mut crate::bridge::LexeV8ContextState,
     root_index: c_int,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     with_state(|state| {
         let ctx = state.ctx_ptr();
@@ -1058,33 +1058,33 @@ pub unsafe extern "C" fn oddball_root(
                     .roots
                     .insert_owned(unsafe { crate::owned_js_value::OwnedJsValue::new(ctx, empty) })
             },
-            _ => return RasterV8Status::Error,
+            _ => return LexeV8Status::Error,
         };
         *out = root;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     })
 }
 
 pub unsafe extern "C" fn get_creation_context(
-    ctx: *mut crate::bridge::RasterV8ContextState,
+    ctx: *mut crate::bridge::LexeV8ContextState,
     _object_root: u64,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     get_context_root(ctx, out)
 }
 
 pub unsafe extern "C" fn register_weak_callback(
-    ctx_state: *mut crate::bridge::RasterV8ContextState,
+    ctx_state: *mut crate::bridge::LexeV8ContextState,
     object_root: u64,
     parameter: *mut c_void,
     callback: *mut c_void,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if callback.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
-    let register_on = |ctx: *mut qjs::JSContext, obj: JSValue| -> RasterV8Status {
+    let register_on = |ctx: *mut qjs::JSContext, obj: JSValue| -> LexeV8Status {
         let Some(key) = object_ptr_key(obj) else {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         };
         context_tables::with_context_tables(ctx, |tables| {
             tables.weak_callbacks.insert(
@@ -1096,7 +1096,7 @@ pub unsafe extern "C" fn register_weak_callback(
                 },
             );
         });
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     };
 
     if let Some(qjs_ctx) =
@@ -1104,14 +1104,14 @@ pub unsafe extern "C" fn register_weak_callback(
     {
         return crate::bridge::with_state_for_ctx(qjs_ctx, |state| {
             let Some(obj) = state.get_object_for_root(object_root) else {
-                return RasterV8Status::Error;
+                return LexeV8Status::Error;
             };
             register_on(state.ctx_ptr(), obj)
         });
     }
 
     crate::bridge::with_state_for_object_root(object_root, register_on)
-        .unwrap_or(RasterV8Status::Error)
+        .unwrap_or(LexeV8Status::Error)
 }
 
 /// Invoke every registered ObjectWrap weak callback without waiting for JSObject
@@ -1128,7 +1128,7 @@ pub(crate) unsafe fn force_invoke_registered_weak_callbacks(ctx: *mut JSContext)
     for (key, callback, parameter) in slots {
         let mut second_pass: *mut c_void = std::ptr::null_mut();
         let needs_second = unsafe {
-            raster_v8_invoke_weak_callback_first_pass(
+            lexe_v8_invoke_weak_callback_first_pass(
                 callback as *mut c_void,
                 parameter as *mut c_void,
                 &mut second_pass,
@@ -1136,7 +1136,7 @@ pub(crate) unsafe fn force_invoke_registered_weak_callbacks(ctx: *mut JSContext)
         } != 0;
         if needs_second && !second_pass.is_null() {
             unsafe {
-                raster_v8_invoke_weak_callback_second_pass(second_pass, parameter as *mut c_void);
+                lexe_v8_invoke_weak_callback_second_pass(second_pass, parameter as *mut c_void);
             }
         }
         context_tables::unregister_weak_callback(ctx, key);
@@ -1174,7 +1174,7 @@ pub fn prepare_shutdown(ctx: *mut JSContext) -> Result<(), String> {
 }
 
 #[no_mangle]
-pub extern "C" fn raster_v8_run_gc() {
+pub extern "C" fn lexe_v8_run_gc() {
     with_state(|state| {
         let ctx = state.ctx_ptr();
         let rt = unsafe { qjs::JS_GetRuntime(ctx) };

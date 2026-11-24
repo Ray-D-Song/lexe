@@ -76,7 +76,7 @@ declare module "console" {
              *
              * The specific operation of `console.clear()` can vary across operating systems
              * and terminal types. For most Linux operating systems, `console.clear()` operates similarly to the `clear` shell command. On Windows, `console.clear()` will clear only the output in the
-             * current terminal viewport for the raster_runtime
+             * current terminal viewport for the lexe
              * binary.
              */
             clear(): void;
@@ -158,7 +158,7 @@ declare module "console" {
          *
          * _**Warning**_: The global console object's methods are neither consistently
          * synchronous like the browser APIs they resemble, nor are they consistently
-         * asynchronous like all other raster_runtime streams. See the [`note on process I/O`](https://nodejs.org/docs/latest-v22.x/api/process.html#a-note-on-process-io) for
+         * asynchronous like all other lexe streams. See the [`note on process I/O`](https://nodejs.org/docs/latest-v22.x/api/process.html#a-note-on-process-io) for
          * more information.
          *
          * Example using the global `console`:

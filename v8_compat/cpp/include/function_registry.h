@@ -8,7 +8,7 @@
 
 #include "template_registry.h"
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 struct FunctionRecord {
   uint32_t template_id = 0;
@@ -31,4 +31,4 @@ class FunctionRegistry {
   std::unordered_map<uint32_t, FunctionRecord> functions_;
 };
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

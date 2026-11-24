@@ -1,0 +1,68 @@
+[package]
+name = "lexe_fetch"
+description = "lexe Module fetch"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_fetch"
+path = "src/lib.rs"
+
+[features]
+default = ["http1", "http2", "compression-c", "webpki-roots", "tls-ring"]
+
+http1 = ["hyper/http1", "lexe_http/http1"]
+http2 = ["hyper/http2", "lexe_http/http2"]
+
+compression-c = ["lexe_compression/all-c"]
+compression-rust = ["lexe_compression/all-rust"]
+
+webpki-roots = ["lexe_http/webpki-roots"]
+native-roots = ["lexe_http/native-roots"]
+
+tls-ring = ["lexe_http/tls-ring", "lexe_test_tls/tls-ring"]
+tls-aws-lc = ["lexe_http/tls-aws-lc", "lexe_test_tls/tls-aws-lc"]
+tls-graviola = ["lexe_http/tls-graviola", "lexe_test_tls/tls-graviola"]
+tls-openssl = ["lexe_http/tls-openssl", "lexe_test_tls/tls-openssl"]
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+either = { version = "1", default-features = false }
+http-body = { version = "1", default-features = false }
+http-body-util = { version = "0.1", default-features = false }
+hyper = { version = "1", features = ["client"], default-features = false }
+itoa = { version = "1", default-features = false }
+lexe_abort = { version = "0.1.0", path = "../lexe_abort" }
+lexe_buffer = { version = "0.1.0", path = "../lexe_buffer" }
+lexe_compression = { version = "0.1.0", path = "../../libs/lexe_compression", default-features = false }
+lexe_context = { version = "0.1.0", path = "../../libs/lexe_context" }
+lexe_encoding = { version = "0.1.0", path = "../../libs/lexe_encoding" }
+lexe_http = { version = "0.1.0", default-features = false, path = "../lexe_http" }
+lexe_json = { version = "0.1.0", path = "../../libs/lexe_json" }
+lexe_url = { version = "0.1.0", path = "../lexe_url" }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+lexe_stream_web = { version = "0.1.0", path = "../lexe_stream_web" }
+once_cell = { version = "1", features = ["std"], default-features = false }
+pin-project-lite = { version = "0.2", default-features = false }
+percent-encoding = { version = "2", features = [
+  "std",
+], default-features = false }
+rand = { version = "0.10.1", features = [
+  "std",
+  "thread_rng",
+], default-features = false }
+rquickjs = { version = "=0.12.1", default-features = false }
+tokio = { version = "1", features = [
+  "macros",
+  "sync",
+], default-features = false }
+tracing = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+lexe_compression = { version = "0.1.0", path = "../../libs/lexe_compression" }
+lexe_test = { path = "../../libs/lexe_test" }
+lexe_test_tls = { path = "../../libs/lexe_test_tls", default-features = false }
+wiremock = { version = "0.6", default-features = false }

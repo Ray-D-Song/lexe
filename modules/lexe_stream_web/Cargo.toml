@@ -1,0 +1,21 @@
+[package]
+name = "lexe_stream_web"
+description = "lexe Module stream/web"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[lib]
+name = "lexe_stream_web"
+path = "src/lib.rs"
+
+[dependencies]
+lexe_abort = { version = "0.1.0", path = "../lexe_abort" }
+lexe_util = { version = "0.1.0", path = "../lexe_util", default-features = false }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+tokio = { version = "1", features = ["test-util"], default-features = false }

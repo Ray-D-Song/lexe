@@ -4,7 +4,7 @@ import path from "node:path";
 
 process.env.NODE_PATH = ".";
 
-const SRC_DIR = path.join("raster_runtime_core", "src", "modules", "js");
+const SRC_DIR = path.join("lexe_core", "src", "modules", "js");
 const TESTS_DIR = "tests";
 const TESTS_SUB_DIR = process.env.TEST_SUB_DIR || "unit";
 const OUT_DIR = "bundle/js";
@@ -17,8 +17,8 @@ const ENTRYPOINTS = [
   "worker_threads",
   "http2",
   "test",
-  "@raster_runtime/test/index",
-  "@raster_runtime/test/worker",
+  "@lexe/test/index",
+  "@lexe/test/worker",
 ];
 
 async function readFilesRecursive(dir, filePredicate) {
@@ -40,7 +40,7 @@ const TEST_FILES = await readFilesRecursive(
   path.join(TESTS_DIR, TESTS_SUB_DIR),
   (filePath) =>
     filePath.endsWith(".test.ts") ||
-    filePath.endsWith(".test.raster.ts") ||
+    filePath.endsWith(".test.lexe.ts") ||
     filePath.endsWith(".spec.ts") ||
     filePath.endsWith(".any.js")
 );
@@ -136,11 +136,11 @@ const ES_BUILD_OPTIONS = {
     "node:vm",
     "zlib",
     "node:zlib",
-    "raster_runtime:hex",
-    "raster_runtime:timezone",
-    "raster_runtime:util",
-    "raster_runtime:qjs",
-    "raster_runtime:xml",
+    "lexe:hex",
+    "lexe:timezone",
+    "lexe:util",
+    "lexe:qjs",
+    "lexe:xml",
   ],
 };
 
@@ -160,7 +160,7 @@ async function createOutputDirectories() {
 
 async function buildLibrary() {
   const defaultLibEsBuildOption = {
-    chunkNames: "raster_runtime-[name]-runtime-[hash]",
+    chunkNames: "lexe-[name]-runtime-[hash]",
     ...ES_BUILD_OPTIONS,
     splitting: false,
     keepNames: true,

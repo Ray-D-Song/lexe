@@ -2,7 +2,7 @@
  * The `timers/promises` API provides an alternative set of timer functions
  * that return `Promise` objects.
  *
- * Raster supports `setTimeout`, `setInterval` (async iterator) and `scheduler`.
+ * Lexe supports `setTimeout`, `setInterval` (async iterator) and `scheduler`.
  *
  * Options may include `{ signal?: AbortSignal, ref?: boolean }`. `ref: false` keeps
  * the scheduled timer from holding the event loop open by itself.

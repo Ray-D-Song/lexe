@@ -5,7 +5,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 enum class RegistryKind : uint8_t {
   ObjectTemplate = 1,
@@ -31,4 +31,4 @@ class RegistryOwnership {
 
 uintptr_t current_quickjs_context_key();
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

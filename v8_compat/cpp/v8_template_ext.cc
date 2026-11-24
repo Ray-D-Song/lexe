@@ -4,7 +4,7 @@
 
 #include <v8.h>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 static shim::ObjectLayout* alloc_template_object(uint32_t template_id, const shim::Map* map) {
   auto* ctx = bridge_ctx();
@@ -18,26 +18,26 @@ static shim::ObjectLayout* alloc_template_object(uint32_t template_id, const shi
   return &slot->object;
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8
 
 namespace v8 {
 
 void Template::Set(Local<Name> name, Local<Data> value, PropertyAttribute attributes) {
-  uint32_t template_id = static_cast<uint32_t>(raster_v8::root_from_object(this));
-  auto* rec = raster_v8::TemplateRegistry::instance().object_template_at(template_id);
+  uint32_t template_id = static_cast<uint32_t>(lexe_v8::root_from_object(this));
+  auto* rec = lexe_v8::TemplateRegistry::instance().object_template_at(template_id);
   if (!rec) {
-    auto* fn_rec = raster_v8::TemplateRegistry::instance().function_template_at(template_id);
+    auto* fn_rec = lexe_v8::TemplateRegistry::instance().function_template_at(template_id);
     if (!fn_rec) {
       return;
     }
-    rec = raster_v8::TemplateRegistry::instance().object_template_at(fn_rec->instance_template_id);
+    rec = lexe_v8::TemplateRegistry::instance().object_template_at(fn_rec->instance_template_id);
   }
   if (!rec) {
     return;
   }
   rec->properties.emplace_back(
-      raster_v8::root_from_local(name),
-      raster_v8::root_from_local(Local<Value>::Cast(value)), attributes);
+      lexe_v8::root_from_local(name),
+      lexe_v8::root_from_local(Local<Value>::Cast(value)), attributes);
 }
 
 void Template::SetNativeDataProperty(
@@ -50,33 +50,33 @@ void Template::SetNativeDataProperty(
     SideEffectType setter_side_effect_type) {
   (void)getter_side_effect_type;
   (void)setter_side_effect_type;
-  uint32_t template_id = static_cast<uint32_t>(raster_v8::root_from_object(this));
-  auto* fn_rec = raster_v8::TemplateRegistry::instance().function_template_at(template_id);
-  auto* rec = fn_rec ? raster_v8::TemplateRegistry::instance().object_template_at(
+  uint32_t template_id = static_cast<uint32_t>(lexe_v8::root_from_object(this));
+  auto* fn_rec = lexe_v8::TemplateRegistry::instance().function_template_at(template_id);
+  auto* rec = fn_rec ? lexe_v8::TemplateRegistry::instance().object_template_at(
                            fn_rec->prototype_template_id)
-                     : raster_v8::TemplateRegistry::instance().object_template_at(template_id);
+                     : lexe_v8::TemplateRegistry::instance().object_template_at(template_id);
   if (!rec) {
     return;
   }
-  raster_v8::NativeDataProperty prop{};
-  prop.name_root_id = raster_v8::root_from_local(name);
+  lexe_v8::NativeDataProperty prop{};
+  prop.name_root_id = lexe_v8::root_from_local(name);
   prop.getter = getter;
   prop.setter = setter;
-  prop.data_root_id = data.IsEmpty() ? 0 : raster_v8::root_from_local(data);
+  prop.data_root_id = data.IsEmpty() ? 0 : lexe_v8::root_from_local(data);
   prop.attribute = attribute;
-  prop.accessor_id = raster_v8::AccessorRegistry::instance().register_accessor(
+  prop.accessor_id = lexe_v8::AccessorRegistry::instance().register_accessor(
       getter, prop.data_root_id);
   rec->native_properties.push_back(prop);
 }
 
 Local<ObjectTemplate> FunctionTemplate::InstanceTemplate() {
-  uint32_t template_id = static_cast<uint32_t>(raster_v8::root_from_object(this));
-  auto* rec = raster_v8::TemplateRegistry::instance().function_template_at(template_id);
+  uint32_t template_id = static_cast<uint32_t>(lexe_v8::root_from_object(this));
+  auto* rec = lexe_v8::TemplateRegistry::instance().function_template_at(template_id);
   if (!rec) {
     return Local<ObjectTemplate>();
   }
-  auto* object = raster_v8::alloc_template_object(rec->instance_template_id,
-                                                  &raster_v8::shim::Map::object_map());
+  auto* object = lexe_v8::alloc_template_object(rec->instance_template_id,
+                                                  &lexe_v8::shim::Map::object_map());
   if (!object) {
     return Local<ObjectTemplate>();
   }
@@ -84,13 +84,13 @@ Local<ObjectTemplate> FunctionTemplate::InstanceTemplate() {
 }
 
 Local<ObjectTemplate> FunctionTemplate::PrototypeTemplate() {
-  uint32_t template_id = static_cast<uint32_t>(raster_v8::root_from_object(this));
-  auto* rec = raster_v8::TemplateRegistry::instance().function_template_at(template_id);
+  uint32_t template_id = static_cast<uint32_t>(lexe_v8::root_from_object(this));
+  auto* rec = lexe_v8::TemplateRegistry::instance().function_template_at(template_id);
   if (!rec) {
     return Local<ObjectTemplate>();
   }
-  auto* object = raster_v8::alloc_template_object(rec->prototype_template_id,
-                                                  &raster_v8::shim::Map::object_map());
+  auto* object = lexe_v8::alloc_template_object(rec->prototype_template_id,
+                                                  &lexe_v8::shim::Map::object_map());
   if (!object) {
     return Local<ObjectTemplate>();
   }
@@ -98,12 +98,12 @@ Local<ObjectTemplate> FunctionTemplate::PrototypeTemplate() {
 }
 
 void FunctionTemplate::SetClassName(Local<String> name) {
-  uint32_t template_id = static_cast<uint32_t>(raster_v8::root_from_object(this));
-  auto* rec = raster_v8::TemplateRegistry::instance().function_template_at(template_id);
+  uint32_t template_id = static_cast<uint32_t>(lexe_v8::root_from_object(this));
+  auto* rec = lexe_v8::TemplateRegistry::instance().function_template_at(template_id);
   if (!rec) {
     return;
   }
-  rec->class_name_root_id = raster_v8::root_from_local(name);
+  rec->class_name_root_id = lexe_v8::root_from_local(name);
 }
 
 }  // namespace v8

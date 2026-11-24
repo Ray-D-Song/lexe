@@ -44,7 +44,7 @@ declare module "net" {
    * A `net.Socket` can be created by the user and used directly to interact with a server. For example, it is returned by {@link createConnection},
    * so the user can use it to talk to the server.
    *
-   * It can also be created by raster_runtime and passed to the user when a connection is received.
+   * It can also be created by lexe and passed to the user when a connection is received.
    * For example, it is passed to the listeners of a `'connection'` event emitted on a {@link Server}, so the user can use it to interact with the client.
    */
   class Socket extends Duplex {

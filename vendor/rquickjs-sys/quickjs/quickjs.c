@@ -20964,7 +20964,7 @@ static bool js_async_function_resume(JSContext *ctx, JSAsyncFunctionData *s)
             int i, res;
 
             /* await — use PromiseResolve; reaction BEFORE/AFTER use a hidden
-               hook Promise created in perform_promise_then (Raster patch). */
+               hook Promise created in perform_promise_then (Lexe patch). */
             JS_FreeValue(ctx, func_ret); /* not used */
             promise = js_promise_resolve(ctx, ctx->promise_ctor,
                                          1, vc(&value), 0);
@@ -54329,7 +54329,7 @@ typedef struct JSPromiseReactionData {
     struct list_head link; /* not used in promise_reaction_job */
     JSValue resolving_funcs[2];
     JSValue handler;
-    /* Raster: promise used as the async resource for BEFORE/AFTER hooks.
+    /* Lexe: promise used as the async resource for BEFORE/AFTER hooks.
        Prefer the .then() result promise; for await/async-generator (undefined
        capability) this is a hidden hook-only promise whose INIT parent is the
        source so ALS can inherit store at schedule time. */
@@ -54397,7 +54397,7 @@ static JSValue promise_reaction_job(JSContext *ctx, int argc,
     JSRuntime *rt;
     bool do_hooks;
 
-    /* Raster: argv[0] is the reaction async resource (result/hidden promise),
+    /* Lexe: argv[0] is the reaction async resource (result/hidden promise),
        not the source promise. argc=6. */
     assert(argc == 6);
     hook_resource = argv[0];
@@ -54499,7 +54499,7 @@ static void fulfill_or_reject_promise(JSContext *ctx, JSValueConst promise,
 
     list_for_each_safe(el, el1, &s->promise_reactions[is_reject]) {
         rd = list_entry(el, JSPromiseReactionData, link);
-        /* Raster: BEFORE/AFTER use reaction resource, not source promise. */
+        /* Lexe: BEFORE/AFTER use reaction resource, not source promise. */
         args[0] = rd->hook_promise;
         args[1] = rd->resolving_funcs[0];
         args[2] = rd->resolving_funcs[1];
@@ -55254,7 +55254,7 @@ static JSValue js_promise_race(JSContext *ctx, JSValueConst this_val,
     goto done;
 }
 
-/* Raster: get result Promise from a native resolve/reject capability function. */
+/* Lexe: get result Promise from a native resolve/reject capability function. */
 static JSValue get_promise_from_resolving_func(JSValueConst func)
 {
     JSObject *p;
@@ -55271,7 +55271,7 @@ static JSValue get_promise_from_resolving_func(JSValueConst func)
     return js_dup(s->promise);
 }
 
-/* Raster: hidden Promise used only as hook async resource when capability is
+/* Lexe: hidden Promise used only as hook async resource when capability is
    not a native resolving function (await / custom species). INIT parent is
    the source Promise so ALS can inherit store at .then()/await schedule time. */
 static JSValue create_hook_reaction_promise(JSContext *ctx, JSValueConst source)
@@ -58217,7 +58217,7 @@ void JS_DetachArrayBuffer(JSContext *ctx, JSValueConst obj)
 
     if (!abuf || abuf->detached)
         return;
-    /* Raster/quickjs-ng: free backing store once. Clear free_func/opaque/data
+    /* Lexe/quickjs-ng: free backing store once. Clear free_func/opaque/data
        *before* calling free_func so a re-entrant finalizer cannot double-free. */
     if (abuf->free_func) {
         JSFreeArrayBufferDataFunc *ff = abuf->free_func;
@@ -58400,7 +58400,7 @@ static JSValue js_array_buffer_transfer(JSContext *ctx, JSValueConst this_val,
             memset(bs + old_len, 0, new_len - old_len);
     }
     /* neuter the backing buffer and hand free_func to the new AB.
-       Raster: clear free_func/opaque on the old buffer so its finalizer does
+       Lexe: clear free_func/opaque on the old buffer so its finalizer does
        not call free with a NULL data pointer (double-free / NonNull panic). */
     {
         JSFreeArrayBufferDataFunc *ff = abuf->free_func;

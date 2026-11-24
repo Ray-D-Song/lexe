@@ -7,16 +7,16 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug executable 'raster_runtime'",
+      "name": "Debug executable 'lexe'",
       "cargo": {
         "args": ["build"],
         "filter": {
-          "name": "raster_runtime",
+          "name": "lexe",
           "kind": "bin"
         }
       },
       "env": {
-        "RUST_LOG": "raster_runtime=trace,hyper::http=trace"
+        "RUST_LOG": "lexe=trace,hyper::http=trace"
       },
       "args": ["index.mjs"],
       "cwd": "${workspaceFolder}"
@@ -24,16 +24,16 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Debug tests 'raster_runtime'",
+      "name": "Debug tests 'lexe'",
       "cargo": {
         "args": ["build"],
         "filter": {
-          "name": "raster_runtime",
+          "name": "lexe",
           "kind": "bin"
         }
       },
       "env": {
-        "RUST_LOG": "raster_runtime=trace,hyper::http=trace"
+        "RUST_LOG": "lexe=trace,hyper::http=trace"
       },
       "args": ["test", "-d", "bundle"],
       "cwd": "${workspaceFolder}"

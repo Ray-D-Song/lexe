@@ -11,9 +11,9 @@ it("registers vm as a builtin module", () => {
 
 it("returns the last expression and syncs sandbox globals", () => {
   const sandbox: { count: number; name?: string } = { count: 0 };
-  expect(runInNewContext("count += 1; name = 'raster'; count", sandbox)).toBe(1);
+  expect(runInNewContext("count += 1; name = 'lexe'; count", sandbox)).toBe(1);
   expect(sandbox.count).toBe(1);
-  expect(sandbox.name).toBe("raster");
+  expect(sandbox.name).toBe("lexe");
 });
 
 it("reads nested sandbox values in the child context", () => {

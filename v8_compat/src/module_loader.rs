@@ -60,8 +60,8 @@ impl NativeLoadGuard {
         NATIVE_LOAD_STACK.with(|stack| stack.borrow_mut().push(frame));
         crate::bridge::set_active_bridge_context(ctx);
         unsafe {
-            raster_v8_set_current_context(context_state as *mut _);
-            raster_v8_set_current_isolate(isolate as *mut _);
+            lexe_v8_set_current_context(context_state as *mut _);
+            lexe_v8_set_current_isolate(isolate as *mut _);
         }
         Self { frame }
     }
@@ -80,14 +80,14 @@ impl Drop for NativeLoadGuard {
             s.pop();
             if let Some(prev) = s.last() {
                 unsafe {
-                    raster_v8_set_current_context(prev.context_state as *mut _);
-                    raster_v8_set_current_isolate(prev.isolate as *mut _);
+                    lexe_v8_set_current_context(prev.context_state as *mut _);
+                    lexe_v8_set_current_isolate(prev.isolate as *mut _);
                 }
                 crate::bridge::set_active_bridge_context(prev.ctx);
             } else {
                 unsafe {
-                    raster_v8_set_current_context(ptr::null_mut());
-                    raster_v8_set_current_isolate(ptr::null_mut());
+                    lexe_v8_set_current_context(ptr::null_mut());
+                    lexe_v8_set_current_isolate(ptr::null_mut());
                 }
                 crate::bridge::clear_active_bridge_context();
             }
@@ -130,19 +130,19 @@ pub struct V8ModuleRecord {
 }
 
 extern "C" {
-    fn raster_v8_set_current_context(ctx: *mut ContextState);
-    fn raster_v8_set_current_isolate(isolate: *mut IsolateState);
-    fn raster_v8_current_context() -> *mut ContextState;
-    fn raster_v8_current_isolate() -> *mut IsolateState;
-    fn raster_v8_create_isolate() -> *mut IsolateState;
-    fn raster_v8_destroy_isolate(isolate: *mut IsolateState);
-    fn raster_v8_create_context() -> *mut ContextState;
-    fn raster_v8_destroy_context(ctx: *mut ContextState);
-    fn raster_v8_open_handle_scope(ctx: *mut ContextState);
-    fn raster_v8_close_handle_scope(ctx: *mut ContextState);
-    fn raster_v8_set_context_root_id(ctx: *mut ContextState, root_id: u64);
-    fn raster_v8_set_context_quickjs_key(ctx: *mut ContextState, key: usize);
-    fn raster_v8_run_module_init(
+    fn lexe_v8_set_current_context(ctx: *mut ContextState);
+    fn lexe_v8_set_current_isolate(isolate: *mut IsolateState);
+    fn lexe_v8_current_context() -> *mut ContextState;
+    fn lexe_v8_current_isolate() -> *mut IsolateState;
+    fn lexe_v8_create_isolate() -> *mut IsolateState;
+    fn lexe_v8_destroy_isolate(isolate: *mut IsolateState);
+    fn lexe_v8_create_context() -> *mut ContextState;
+    fn lexe_v8_destroy_context(ctx: *mut ContextState);
+    fn lexe_v8_open_handle_scope(ctx: *mut ContextState);
+    fn lexe_v8_close_handle_scope(ctx: *mut ContextState);
+    fn lexe_v8_set_context_root_id(ctx: *mut ContextState, root_id: u64);
+    fn lexe_v8_set_context_quickjs_key(ctx: *mut ContextState, key: usize);
+    fn lexe_v8_run_module_init(
         ctx: *mut ContextState,
         module: *mut NodeModule,
         exports_root_id: u64,
@@ -177,13 +177,13 @@ pub(crate) unsafe fn activate_v8_context_for_teardown(ctx: *mut JSContext) -> Re
         .ok_or_else(|| "V8 teardown isolate is not registered".to_string())?;
 
     unsafe {
-        raster_v8_set_current_context(context_state as *mut ContextState);
-        raster_v8_set_current_isolate(isolate as *mut IsolateState);
+        lexe_v8_set_current_context(context_state as *mut ContextState);
+        lexe_v8_set_current_isolate(isolate as *mut IsolateState);
     }
     crate::bridge::set_active_bridge_context(ctx);
 
-    let active_ctx = unsafe { raster_v8_current_context() };
-    let active_iso = unsafe { raster_v8_current_isolate() };
+    let active_ctx = unsafe { lexe_v8_current_context() };
+    let active_iso = unsafe { lexe_v8_current_isolate() };
     if active_ctx != context_state as *mut ContextState
         || active_iso != isolate as *mut IsolateState
     {
@@ -234,7 +234,7 @@ pub fn ensure_isolate_for_runtime(rt: *mut qjs::JSRuntime) -> *mut IsolateState 
     if let Some(isolate) = guard.get(&key) {
         return *isolate as *mut IsolateState;
     }
-    let isolate = unsafe { raster_v8_create_isolate() };
+    let isolate = unsafe { lexe_v8_create_isolate() };
     guard.insert(key, isolate as usize);
     crate::runtime_state::isolate_key(isolate as usize);
     isolate
@@ -256,20 +256,20 @@ pub fn ensure_context_for_ctx(ctx: *mut JSContext) -> *mut ContextState {
     let key = ctx as usize;
     let mut guard = contexts().lock();
     if let Some(record) = guard.get(&key) {
-        unsafe { raster_v8_set_context_quickjs_key(record.state_ptr as *mut ContextState, key) };
+        unsafe { lexe_v8_set_context_quickjs_key(record.state_ptr as *mut ContextState, key) };
         return record.state_ptr as *mut ContextState;
     }
-    let state = unsafe { raster_v8_create_context() };
+    let state = unsafe { lexe_v8_create_context() };
     let rt = unsafe { qjs::JS_GetRuntime(ctx) };
     let context_root = with_bridge_roots(|ctx, roots| {
         let obj = unsafe { qjs::JS_NewObject(ctx) };
         let root =
             roots.insert_owned(unsafe { crate::owned_js_value::OwnedJsValue::new(ctx, obj) });
-        unsafe { raster_v8_set_context_root_id(state, root) };
+        unsafe { lexe_v8_set_context_root_id(state, root) };
         root
     });
     let _ = context_root;
-    unsafe { raster_v8_set_context_quickjs_key(state, key) };
+    unsafe { lexe_v8_set_context_quickjs_key(state, key) };
     guard.insert(
         key,
         ContextRecord {
@@ -327,7 +327,7 @@ pub unsafe fn shutdown_context(ctx: *mut JSContext) -> Result<(), String> {
     let ctx_key = ctx as usize;
     if let Some(record) = contexts().lock().remove(&ctx_key) {
         unsafe {
-            raster_v8_destroy_context(record.state_ptr as *mut ContextState);
+            lexe_v8_destroy_context(record.state_ptr as *mut ContextState);
         }
         crate::runtime_state::forget_context(record.state_ptr);
     }
@@ -408,7 +408,7 @@ pub unsafe fn shutdown_runtime(rt: *mut qjs::JSRuntime) -> Result<(), String> {
 
     if let Some(isolate) = isolates().lock().remove(&rt_key) {
         crate::runtime_state::run_cleanup_hooks(isolate);
-        raster_v8_destroy_isolate(isolate as *mut IsolateState);
+        lexe_v8_destroy_isolate(isolate as *mut IsolateState);
         crate::runtime_state::forget_isolate(isolate);
     }
 
@@ -443,12 +443,12 @@ pub fn drain_pending_v8_modules() -> Vec<*mut NodeModule> {
 
 pub fn drain_pending_v8_modules_since(start: usize) -> Vec<*mut NodeModule> {
     extern "C" {
-        fn raster_v8_pending_modules_count() -> usize;
-        fn raster_v8_take_pending_module(index: usize) -> *mut NodeModule;
+        fn lexe_v8_pending_modules_count() -> usize;
+        fn lexe_v8_take_pending_module(index: usize) -> *mut NodeModule;
     }
     let mut out = Vec::new();
-    while unsafe { raster_v8_pending_modules_count() } > start {
-        let module = unsafe { raster_v8_take_pending_module(start) };
+    while unsafe { lexe_v8_pending_modules_count() } > start {
+        let module = unsafe { lexe_v8_take_pending_module(start) };
         if !module.is_null() {
             out.push(module);
         }
@@ -458,9 +458,9 @@ pub fn drain_pending_v8_modules_since(start: usize) -> Vec<*mut NodeModule> {
 
 fn pending_modules_count() -> usize {
     extern "C" {
-        fn raster_v8_pending_modules_count() -> usize;
+        fn lexe_v8_pending_modules_count() -> usize;
     }
-    unsafe { raster_v8_pending_modules_count() }
+    unsafe { lexe_v8_pending_modules_count() }
 }
 
 pub fn clear_pending_v8_modules() {
@@ -497,7 +497,7 @@ pub unsafe fn run_v8_module_init(
     });
 
     let mut out_exports = exports_root;
-    let status = raster_v8_run_module_init(
+    let status = lexe_v8_run_module_init(
         context_state,
         module,
         exports_root,

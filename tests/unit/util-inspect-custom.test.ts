@@ -147,7 +147,7 @@ describe("util.inspect dispatches to custom inspect", () => {
   it("keeps Headers on its existing rendering", () => {
     // Headers uses the getter form of the protocol and is untouched here; its
     // output is asserted so a future change to the dispatch cannot alter it
-    // silently. (Node quotes the header names; Raster does not — pre-existing.)
+    // silently. (Node quotes the header names; Lexe does not — pre-existing.)
     expect(util.inspect(new Headers({ "x-a": "1" }))).toBe("Headers { x-a: '1' }");
   });
 });

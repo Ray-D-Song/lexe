@@ -1,6 +1,6 @@
-import hex from "raster_runtime:hex";
+import hex from "lexe:hex";
 
-describe("raster_runtime:hex", () => {
+describe("lexe:hex", () => {
   it("should encode/decode text", () => {
     let hello = "hello";
     const encoded = new TextEncoder().encode(hello);

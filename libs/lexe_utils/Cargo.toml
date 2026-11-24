@@ -1,0 +1,35 @@
+[package]
+name = "lexe_utils"
+description = "lexe utilities"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[features]
+default = ["all"]
+all = ["fs", "bytearray-buffer"]
+
+fs = ["tokio/fs"]
+bytearray-buffer = ["tokio/sync"]
+
+[dependencies]
+rquickjs = { version = "=0.12.1", features = ["macro"], default-features = false }
+tokio = { version = "1", features = ["sync", "io-util"], default-features = false }
+tracing = { version = "0.1", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+], default-features = false }
+
+[dev-dependencies]
+lexe_test = { version = "0.1.0", path = "../lexe_test" }
+tokio = { version = "1", features = ["full"] }
+
+[build-dependencies]
+lexe_build = { version = "0.1.0", path = "../lexe_build" }

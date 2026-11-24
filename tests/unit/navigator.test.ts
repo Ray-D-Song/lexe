@@ -1,5 +1,5 @@
 describe("navigator.userAgent", () => {
-  it('should start with "raster_runtime "', () => {
-    expect(navigator.userAgent.startsWith("raster_runtime ")).toBeTruthy();
+  it('should start with "lexe "', () => {
+    expect(navigator.userAgent.startsWith("lexe ")).toBeTruthy();
   });
 });

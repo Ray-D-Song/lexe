@@ -2,26 +2,40 @@ import {
   access,
   constants,
   mkdtemp,
-  readFile,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
-import { platform, tmpdir } from "node:os";
+import { arch, platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnCapture } from "./test-utils";
 
 const TIMEOUT = 30000;
 const IS_WINDOWS = platform() === "win32";
 
+const currentLexePlatform = (): string => {
+  const os = platform();
+  const cpu = arch();
+  if (os === "linux") return cpu === "arm64" ? "linux-arm64" : "linux-x64";
+  if (os === "darwin") return cpu === "arm64" ? "darwin-arm64" : "darwin-x64";
+  if (os === "win32") return cpu === "arm64" ? "windows-arm64" : "windows-x64";
+  throw new Error(`Unsupported test platform: ${os}-${cpu}`);
+};
+
 const compile = async (
   filename: string,
-  outputFilename: string
+  outputFilename: string,
+  extraArgs: string[] = []
 ): Promise<void> => {
-  const args = ["compile", filename, outputFilename, "--executable"];
-  const { code: compileResult } = await spawnCapture(process.argv0, args);
+  const args = ["compile", filename, outputFilename, "--executable", ...extraArgs];
+  const { code: compileResult, stdout, stderr } = await spawnCapture(
+    process.argv0,
+    args
+  );
   if (compileResult !== 0) {
-    throw new Error(`Compilation failed with exit code ${compileResult}`);
+    throw new Error(
+      `Compilation failed with exit code ${compileResult}: ${stdout}${stderr}`
+    );
   }
 };
 
@@ -44,12 +58,12 @@ describe("executable compilation", () => {
   };
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), "raster_runtime-test-compile"));
+    tmpDir = await mkdtemp(join(tmpdir(), "lexe-test-compile"));
     exePath = join(tmpDir, "exe_test");
   });
 
   afterEach(async () => {
-    //await rm(tmpDir, { force: true, recursive: true });
+    await rm(tmpDir, { force: true, recursive: true });
   });
 
   it(
@@ -117,6 +131,90 @@ describe("executable compilation", () => {
       }
       if (execResult !== 1) {
         throw new Error(`Expected exit code 1, got ${execResult}`);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    "should forward --version and --help to user script instead of lexe CLI",
+    async () => {
+      const scriptPath = await createTestScript(
+        "console.log(JSON.stringify(process.argv.slice(1)));"
+      );
+      await compile(scriptPath, exePath);
+
+      const { code: execResult, output } = await run(exePath, [
+        "--version",
+        "--help",
+        "arg3",
+      ]);
+      if (execResult !== 0) {
+        throw new Error(`Expected exit code 0, got ${execResult}: ${output}`);
+      }
+      if (output.trim() !== '["--version","--help","arg3"]') {
+        throw new Error(`Unexpected argv output: '${output}'`);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    "should support explicit -p and -d flags for current platform",
+    async () => {
+      const targetPlatform = currentLexePlatform();
+      const scriptPath = await createTestScript("console.log('platform-ok');");
+      const { code: compileResult, stdout, stderr } = await spawnCapture(
+        process.argv0,
+        [
+          "compile",
+          scriptPath,
+          "--executable",
+          "-o",
+          "custom",
+          "-d",
+          tmpDir,
+          "-p",
+          targetPlatform,
+        ]
+      );
+      if (compileResult !== 0) {
+        throw new Error(
+          `Compilation failed (${compileResult}): ${stdout}${stderr}`
+        );
+      }
+
+      const outName = IS_WINDOWS
+        ? `custom-${targetPlatform}.exe`
+        : `custom-${targetPlatform}`;
+      const packagedPath = join(tmpDir, outName);
+      const { code: execResult, output } = await run(packagedPath);
+      if (execResult !== 0 || output.trim() !== "platform-ok") {
+        throw new Error(`Unexpected run result (${execResult}): ${output}`);
+      }
+    },
+    TIMEOUT
+  );
+
+  it(
+    "should fail cleanly on invalid platform",
+    async () => {
+      const scriptPath = await createTestScript("console.log('nope');");
+      const { code, stdout, stderr } = await spawnCapture(process.argv0, [
+        "compile",
+        scriptPath,
+        "--executable",
+        "-p",
+        "invalid-platform",
+        "-d",
+        tmpDir,
+      ]);
+      if (code === 0) {
+        throw new Error("Expected non-zero exit code for invalid platform");
+      }
+      const combined = stdout + stderr;
+      if (!combined.includes("Unknown platform")) {
+        throw new Error(`Expected 'Unknown platform' in error, got: ${combined}`);
       }
     },
     TIMEOUT

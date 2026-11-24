@@ -1,11 +1,11 @@
 [package]
 name = "v8_compat"
-description = "QuickJS-backed V8/Node C++ ABI shim for raster_runtime"
+description = "QuickJS-backed V8/Node C++ ABI shim for lexe"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/ray-d-song/raster_runtime"
-links = "raster_v8"
+repository = "https://github.com/Ray-D-Song/lexe"
+links = "lexe_v8"
 build = "build.rs"
 
 [lib]

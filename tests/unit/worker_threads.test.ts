@@ -151,7 +151,7 @@ describe("worker_threads MessageChannel", () => {
   });
 
   it("isolates environment data via clone on get", () => {
-    const key = "raster-env-test-key";
+    const key = "lexe-env-test-key";
     const value = { x: 1, nested: { y: 2 } };
     setEnvironmentData(key, value);
     const a = getEnvironmentData(key) as typeof value;
@@ -221,7 +221,7 @@ describe("worker_threads Worker spawn", () => {
       "node:worker_threads"
     );
     const { join } = await import("node:path");
-    setEnvironmentData("raster-worker-env-key", { v: 42 });
+    setEnvironmentData("lexe-worker-env-key", { v: 42 });
     const workerPath = join(
       process.cwd(),
       "tests/unit/worker_threads_worker.fixture.mjs"
@@ -235,7 +235,7 @@ describe("worker_threads Worker spawn", () => {
     expect(await reply).toEqual({ envV: 42 });
     worker.terminate();
     await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
-    expect(getEnvironmentData("raster-worker-env-key")).toEqual({ v: 42 });
+    expect(getEnvironmentData("lexe-worker-env-key")).toEqual({ v: 42 });
   });
 
   it("shares SharedArrayBuffer and Atomics across workers", async () => {

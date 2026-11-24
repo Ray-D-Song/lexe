@@ -91,7 +91,7 @@ describe("Hashing", () => {
 });
 
 describe("publicEncrypt", () => {
-  const LIMITED_CRYPTO = process.env.RASTER_RUNTIME_LIMITED_CRYPTO === "1";
+  const LIMITED_CRYPTO = process.env.LEXE_LIMITED_CRYPTO === "1";
 
   // Static 2048-bit RSA public key (SPKI PEM).
   const SPKI_PEM = `-----BEGIN PUBLIC KEY-----

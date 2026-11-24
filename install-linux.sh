@@ -1,19 +1,19 @@
 #!/bin/sh
 set -eu
 
-repo=Ray-D-Song/raster
+repo=Ray-D-Song/lexe
 case "$(uname -m)" in
   x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; esac
-install_dir=${RASTER_INSTALL_DIR:-"$HOME/.local/bin"}
-asset="raster_runtime-linux-$arch"
+install_dir=${LEXE_INSTALL_DIR:-"$HOME/.local/bin"}
+asset="lexe-linux-$arch"
 base="https://github.com/$repo/releases/latest/download"
-target="$install_dir/raster"
+target="$install_dir/lexe"
 
-if [ -L "$target" ] || { [ -e "$target" ] && ! "$target" --version 2>/dev/null | grep -q '^raster_runtime v'; }; then
-  echo "Refusing to replace non-Raster file: $target" >&2; exit 1
+if [ -L "$target" ] || { [ -e "$target" ] && ! "$target" --version 2>/dev/null | grep -q '^lexe v'; }; then
+  echo "Refusing to replace non-Lexe file: $target" >&2; exit 1
 fi
 mkdir -p "$install_dir"
-tmp=$(mktemp -d "$install_dir/.raster.XXXXXX")
+tmp=$(mktemp -d "$install_dir/.lexe.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 curl -fsSL "$base/$asset" -o "$tmp/$asset"
 curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
@@ -21,14 +21,14 @@ curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
 chmod 755 "$tmp/$asset"
 mv -f "$tmp/$asset" "$target"
 
-path_line="export PATH=\"$install_dir:\$PATH\" # Raster"
+path_line="export PATH=\"$install_dir:\$PATH\" # Lexe"
 case "${SHELL##*/}" in
   bash) profile="$HOME/.bashrc" ;;
   zsh) profile="$HOME/.zshrc" ;;
-  fish) profile="$HOME/.config/fish/conf.d/raster.fish"; path_line="set -gx PATH \"$install_dir\" \$PATH # Raster" ;;
+  fish) profile="$HOME/.config/fish/conf.d/lexe.fish"; path_line="set -gx PATH \"$install_dir\" \$PATH # Lexe" ;;
   *) profile="$HOME/.profile" ;;
 esac
 mkdir -p "$(dirname "$profile")"
 touch "$profile"
 grep -Fqx "$path_line" "$profile" || printf '%s\n' "$path_line" >> "$profile"
-echo "Installed Raster to $target. Reopen your terminal or run: exec \"\$SHELL\" -l"
+echo "Installed Lexe to $target. Reopen your terminal or run: exec \"\$SHELL\" -l"

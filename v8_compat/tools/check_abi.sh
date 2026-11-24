@@ -24,12 +24,12 @@ assert_node_version_header() {
 }
 
 node_include_dirs() {
-  if [[ -n "${RASTER_NODE24_INCLUDE:-}" ]]; then
-    echo "${RASTER_NODE24_INCLUDE}"
-    if [[ -f "${RASTER_NODE24_INCLUDE}/v8.h" ]]; then
-      echo "${RASTER_NODE24_INCLUDE}"
+  if [[ -n "${LEXE_NODE24_INCLUDE:-}" ]]; then
+    echo "${LEXE_NODE24_INCLUDE}"
+    if [[ -f "${LEXE_NODE24_INCLUDE}/v8.h" ]]; then
+      echo "${LEXE_NODE24_INCLUDE}"
     else
-      echo "${RASTER_NODE24_INCLUDE}/../deps/v8/include"
+      echo "${LEXE_NODE24_INCLUDE}/../deps/v8/include"
     fi
     return
   fi
@@ -48,7 +48,7 @@ node_include_dirs() {
     echo "$v8_include"
     return
   fi
-  echo "Node 24.3.0 headers not found. Install via nvm, set RASTER_NODE24_INCLUDE, or init refs/node." >&2
+  echo "Node 24.3.0 headers not found. Install via nvm, set LEXE_NODE24_INCLUDE, or init refs/node." >&2
   exit 1
 }
 
@@ -130,15 +130,15 @@ json_int() {
   echo "$ABI_JSON" | sed -n "s/.*\"$key\": \\([0-9-]*\\).*/\\1/p" | head -1
 }
 
-expect_macro RASTER_V8_K_UNDEFINED_VALUE_ROOT_INDEX "$(json_int kUndefinedValueRootIndex)"
-expect_macro RASTER_V8_K_THE_HOLE_VALUE_ROOT_INDEX "$(json_int kTheHoleValueRootIndex)"
-expect_macro RASTER_V8_K_NULL_VALUE_ROOT_INDEX "$(json_int kNullValueRootIndex)"
-expect_macro RASTER_V8_K_TRUE_VALUE_ROOT_INDEX "$(json_int kTrueValueRootIndex)"
-expect_macro RASTER_V8_K_FALSE_VALUE_ROOT_INDEX "$(json_int kFalseValueRootIndex)"
-expect_macro RASTER_V8_K_EMPTY_STRING_ROOT_INDEX "$(json_int kEmptyStringRootIndex)"
-expect_macro RASTER_V8_FUNCTION_CALLBACK_K_RETURN_VALUE_INDEX "$(json_int function_callback_k_return_value_index)"
-expect_macro RASTER_V8_PROPERTY_CALLBACK_K_RETURN_VALUE_INDEX "$(json_int property_callback_k_return_value_index)"
-expect_macro RASTER_V8_PROPERTY_CALLBACK_K_THIS_INDEX "$(json_int property_callback_k_this_index)"
+expect_macro LEXE_V8_K_UNDEFINED_VALUE_ROOT_INDEX "$(json_int kUndefinedValueRootIndex)"
+expect_macro LEXE_V8_K_THE_HOLE_VALUE_ROOT_INDEX "$(json_int kTheHoleValueRootIndex)"
+expect_macro LEXE_V8_K_NULL_VALUE_ROOT_INDEX "$(json_int kNullValueRootIndex)"
+expect_macro LEXE_V8_K_TRUE_VALUE_ROOT_INDEX "$(json_int kTrueValueRootIndex)"
+expect_macro LEXE_V8_K_FALSE_VALUE_ROOT_INDEX "$(json_int kFalseValueRootIndex)"
+expect_macro LEXE_V8_K_EMPTY_STRING_ROOT_INDEX "$(json_int kEmptyStringRootIndex)"
+expect_macro LEXE_V8_FUNCTION_CALLBACK_K_RETURN_VALUE_INDEX "$(json_int function_callback_k_return_value_index)"
+expect_macro LEXE_V8_PROPERTY_CALLBACK_K_RETURN_VALUE_INDEX "$(json_int property_callback_k_return_value_index)"
+expect_macro LEXE_V8_PROPERTY_CALLBACK_K_THIS_INDEX "$(json_int property_callback_k_this_index)"
 
 if git -C "$ROOT/refs/node" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   actual="$(git -C "$ROOT/refs/node" rev-parse HEAD)"

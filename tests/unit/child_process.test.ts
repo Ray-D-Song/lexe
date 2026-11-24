@@ -120,7 +120,7 @@ describe("spawn", () => {
     child.on("exit", (code, signal) => {
       try {
         if (IS_WINDOWS) {
-          // raster_runtime on Windows returns exit code 1 when killed
+          // lexe on Windows returns exit code 1 when killed
           expect(code).toEqual(1);
         } else {
           expect(code).toBeNull();

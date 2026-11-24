@@ -1,0 +1,18 @@
+[package]
+name = "lexe_encoding"
+description = "lexe encoding helpers"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[dependencies]
+base64-simd = { version = "0.8", features = [
+    "alloc",
+], default-features = false }
+hex-simd = { version = "0.8", features = ["alloc"], default-features = false }
+phf = { version = "0.13", features = ["macros"], default-features = false }
+memchr = { version = "2", default-features = false }
+
+[build-dependencies]
+lexe_build = { version = "0.1.0", path = "../lexe_build" }

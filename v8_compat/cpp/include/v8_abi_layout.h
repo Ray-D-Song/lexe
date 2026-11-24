@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 namespace abi137 {
 
 constexpr size_t kIsolateHandleScopeDataOffset = 560;
@@ -15,4 +15,4 @@ constexpr size_t kHandleScopeDataSize = 24;
 constexpr size_t kRootSlotCount = 10;
 
 }  // namespace abi137
-}  // namespace raster_v8
+}  // namespace lexe_v8

@@ -10,9 +10,9 @@ function getConfig() {
   return {
     host: process.env.MYSQL_HOST || "127.0.0.1",
     port: Number(process.env.MYSQL_PORT || 3306),
-    database: process.env.MYSQL_DATABASE || "raster_compat",
-    user: process.env.MYSQL_USER || "raster",
-    password: process.env.MYSQL_PASSWORD || "raster",
+    database: process.env.MYSQL_DATABASE || "lexe_compat",
+    user: process.env.MYSQL_USER || "lexe",
+    password: process.env.MYSQL_PASSWORD || "lexe",
   };
 }
 
@@ -53,9 +53,9 @@ async function main() {
     assert(fields[0].name === "value", 'field name should be "value"');
 
     // Case 3: prepare test table
-    await connection.execute("DROP TABLE IF EXISTS raster_mysql2_compat");
+    await connection.execute("DROP TABLE IF EXISTS lexe_mysql2_compat");
     await connection.execute(`
-      CREATE TABLE raster_mysql2_compat (
+      CREATE TABLE lexe_mysql2_compat (
         id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(64) NOT NULL UNIQUE,
         score INT NOT NULL
@@ -64,14 +64,14 @@ async function main() {
 
     // Case 4: parameterized execute()
     const [insertResult] = await connection.execute(
-      "INSERT INTO raster_mysql2_compat (name, score) VALUES (?, ?)",
+      "INSERT INTO lexe_mysql2_compat (name, score) VALUES (?, ?)",
       ["alpha", 7]
     );
     assert(insertResult.affectedRows === 1, "insert affectedRows should be 1");
     assert(insertResult.insertId === 1, "insertId should be 1");
 
     const [alphaRows] = await connection.execute(
-      "SELECT id, name, score FROM raster_mysql2_compat WHERE id = ?",
+      "SELECT id, name, score FROM lexe_mysql2_compat WHERE id = ?",
       [insertResult.insertId]
     );
     assert(alphaRows.length === 1, "should find one row by id");
@@ -86,7 +86,7 @@ async function main() {
     await connection.beginTransaction();
     try {
       await connection.execute(
-        "INSERT INTO raster_mysql2_compat (name, score) VALUES (?, ?)",
+        "INSERT INTO lexe_mysql2_compat (name, score) VALUES (?, ?)",
         ["beta", 8]
       );
       await connection.commit();
@@ -96,7 +96,7 @@ async function main() {
     }
 
     const [betaRows] = await connection.execute(
-      "SELECT name FROM raster_mysql2_compat WHERE name = ?",
+      "SELECT name FROM lexe_mysql2_compat WHERE name = ?",
       ["beta"]
     );
     assert(
@@ -105,7 +105,7 @@ async function main() {
     );
 
     const [countAfterCommit] = await connection.execute(
-      "SELECT COUNT(*) AS c FROM raster_mysql2_compat"
+      "SELECT COUNT(*) AS c FROM lexe_mysql2_compat"
     );
     assert(countAfterCommit[0].c === 2, "should have 2 rows after commit");
 
@@ -113,7 +113,7 @@ async function main() {
     await connection.beginTransaction();
     try {
       await connection.execute(
-        "INSERT INTO raster_mysql2_compat (name, score) VALUES (?, ?)",
+        "INSERT INTO lexe_mysql2_compat (name, score) VALUES (?, ?)",
         ["rollback-row", 9]
       );
       await connection.rollback();
@@ -123,13 +123,13 @@ async function main() {
     }
 
     const [rollbackRows] = await connection.execute(
-      "SELECT name FROM raster_mysql2_compat WHERE name = ?",
+      "SELECT name FROM lexe_mysql2_compat WHERE name = ?",
       ["rollback-row"]
     );
     assert(rollbackRows.length === 0, "rollback row should not be visible");
 
     const [countAfterRollback] = await connection.execute(
-      "SELECT COUNT(*) AS c FROM raster_mysql2_compat"
+      "SELECT COUNT(*) AS c FROM lexe_mysql2_compat"
     );
     assert(
       countAfterRollback[0].c === 2,
@@ -139,7 +139,7 @@ async function main() {
     // Case 7: Promise error propagation
     let sawError = false;
     try {
-      await connection.execute("SELECT * FROM raster_mysql2_missing_table");
+      await connection.execute("SELECT * FROM lexe_mysql2_missing_table");
     } catch (error) {
       sawError = true;
       assert(error instanceof Error, "error should be an Error");
@@ -173,7 +173,7 @@ async function main() {
 
     await new Promise((resolve, reject) => {
       callbackConnection.query(
-        "SELECT name, score FROM raster_mysql2_compat ORDER BY id",
+        "SELECT name, score FROM lexe_mysql2_compat ORDER BY id",
         (error, rows, fields) => {
           if (error) {
             reject(error);
@@ -244,11 +244,11 @@ async function main() {
 
     const [gammaResult, deltaResult] = await Promise.all([
       pool.execute(
-        "INSERT INTO raster_mysql2_compat (name, score) VALUES (?, ?)",
+        "INSERT INTO lexe_mysql2_compat (name, score) VALUES (?, ?)",
         ["gamma", 10]
       ),
       pool.execute(
-        "INSERT INTO raster_mysql2_compat (name, score) VALUES (?, ?)",
+        "INSERT INTO lexe_mysql2_compat (name, score) VALUES (?, ?)",
         ["delta", 11]
       ),
     ]);
@@ -262,12 +262,12 @@ async function main() {
     );
 
     const [countRows] = await pool.query(
-      "SELECT COUNT(*) AS c FROM raster_mysql2_compat"
+      "SELECT COUNT(*) AS c FROM lexe_mysql2_compat"
     );
     assert(countRows[0].c === 4, "should have 4 rows total");
 
     const [nameRows] = await pool.query(
-      "SELECT name FROM raster_mysql2_compat ORDER BY name"
+      "SELECT name FROM lexe_mysql2_compat ORDER BY name"
     );
     const names = nameRows.map((row) => row.name);
     assert(
@@ -279,7 +279,7 @@ async function main() {
       `names should be alpha,beta,delta,gamma, got ${names.join(",")}`
     );
 
-    await pool.query("DROP TABLE IF EXISTS raster_mysql2_compat");
+    await pool.query("DROP TABLE IF EXISTS lexe_mysql2_compat");
   } finally {
     await pool.end();
   }

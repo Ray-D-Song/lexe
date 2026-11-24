@@ -2,15 +2,14 @@
 .idea
 .yarn
 .pnp*
-.tmp-llrt-aws-sdk
 
 /lib
 /target
 /target-sanitizer-*/
-/llrt_core/target
-/llrt_core/src/bytecode_cache.rs
+/lexe_core/target
+/lexe_core/src/bytecode_cache.rs
 /example/functions/build
-/example/raster-wasm/dist
+/example/lexe-wasm/dist
 /slask
 /VERSION
 /bundle
@@ -22,7 +21,7 @@ cdk.out
 flamegraph.svg
 out.stacks
 yarn-error.log
-llrt-container-*
+lexe-container-*
 bootstrap
 
 node_modules

@@ -1,0 +1,15 @@
+[package]
+name = "lexe_navigator"
+description = "lexe Module navigator"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_navigator"
+path = "src/lib.rs"
+
+[dependencies]
+rquickjs = { version = "=0.12.1", default-features = false }

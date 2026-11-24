@@ -62,7 +62,7 @@ assert(
 memory.close();
 
 // File-backed database with pragma
-const dbPath = path.join(os.tmpdir(), `raster-better-sqlite3-${process.pid}.db`);
+const dbPath = path.join(os.tmpdir(), `lexe-better-sqlite3-${process.pid}.db`);
 if (fs.existsSync(dbPath)) {
   fs.unlinkSync(dbPath);
 }

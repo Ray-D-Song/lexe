@@ -107,7 +107,7 @@ describe("dns/promises", () => {
   });
 
   it("should not leak internal DNS cache keys onto globalThis", () => {
-    expect((globalThis as any).__rasterDnsPromisesLookup).toBeUndefined();
-    expect(Object.keys(globalThis).includes("__rasterDnsPromisesLookup")).toBeFalsy();
+    expect((globalThis as any).__lexeDnsPromisesLookup).toBeUndefined();
+    expect(Object.keys(globalThis).includes("__lexeDnsPromisesLookup")).toBeFalsy();
   });
 });

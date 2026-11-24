@@ -4,7 +4,7 @@ registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier === "fs") {
       return {
-        url: "raster_runtime-polyfill:fs",
+        url: "lexe-polyfill:fs",
         shortCircuit: true,
       };
     } else if (specifier.startsWith("internal:")) {
@@ -13,7 +13,7 @@ registerHooks({
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
-    if (url === "raster_runtime-polyfill:fs") {
+    if (url === "lexe-polyfill:fs") {
       const code = `
         export * from "internal:fs";
         import fs from "internal:fs";

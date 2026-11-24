@@ -1,7 +1,7 @@
 #pragma once
 
 #include "abi_137_generated.h"
-#include "raster_v8_bridge.h"
+#include "lexe_v8_bridge.h"
 #include "shim_types.h"
 #include "v8_abi_layout.h"
 
@@ -10,7 +10,7 @@
 #include <v8-internal.h>
 #include <vector>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 struct CallbackHandleFrame {
   std::vector<shim::ObjectLayout> layouts;
@@ -136,20 +136,20 @@ void clear_pending_v8_modules();
 size_t pending_v8_modules_count();
 node::node_module* take_pending_v8_module(size_t index);
 
-ContextImpl* ctx_impl(RasterV8ContextState* ctx);
-IsolateImpl* iso_impl(RasterV8IsolateState* isolate);
+ContextImpl* ctx_impl(LexeV8ContextState* ctx);
+IsolateImpl* iso_impl(LexeV8IsolateState* isolate);
 
-shim::HandleSlot* alloc_handle_slot(RasterV8ContextState* ctx);
-void rewind_handle_arena(RasterV8ContextState* ctx, size_t watermark);
+shim::HandleSlot* alloc_handle_slot(LexeV8ContextState* ctx);
+void rewind_handle_arena(LexeV8ContextState* ctx, size_t watermark);
 
-uintptr_t local_from_root(RasterV8ContextState* ctx, uint64_t root_id, const shim::Map* map);
+uintptr_t local_from_root(LexeV8ContextState* ctx, uint64_t root_id, const shim::Map* map);
 uint64_t root_from_local(uintptr_t tagged);
 
-void register_handle_repr(RasterV8ContextState* ctx, uintptr_t repr, uint64_t root_id);
-void unregister_handle_repr(RasterV8ContextState* ctx, uintptr_t repr);
-uint64_t resolve_root_from_repr(RasterV8ContextState* ctx, uintptr_t repr);
+void register_handle_repr(LexeV8ContextState* ctx, uintptr_t repr, uint64_t root_id);
+void unregister_handle_repr(LexeV8ContextState* ctx, uintptr_t repr);
+uint64_t resolve_root_from_repr(LexeV8ContextState* ctx, uintptr_t repr);
 /// Callback/accessor return-value slot: handles Smi including Set(0) (raw 0).
-uint64_t resolve_return_value_repr(RasterV8ContextState* ctx, uintptr_t repr);
+uint64_t resolve_return_value_repr(LexeV8ContextState* ctx, uintptr_t repr);
 
 void init_isolate_roots(IsolateImpl* isolate);
 int oddball_root_index(IsolateImpl* isolate, const shim::ObjectLayout* layout);
@@ -167,7 +167,7 @@ size_t dispose_strong_context_persistents(IsolateImpl* isolate, uintptr_t contex
 /// Removes weak persistent cells for `context_key` after shutdown-time weak dispatch.
 size_t dispose_weak_context_persistents(IsolateImpl* isolate, uintptr_t context_key);
 
-RasterV8Status dispatch_v8_callback(uint32_t function_id,
+LexeV8Status dispatch_v8_callback(uint32_t function_id,
                                     uint64_t receiver_root,
                                     uint64_t new_target_root,
                                     const uint64_t* arg_roots,
@@ -177,4 +177,4 @@ RasterV8Status dispatch_v8_callback(uint32_t function_id,
 // Set for the duration of a V8 callback dispatch; used by GetFunctionTemplateData.
 extern thread_local uint32_t g_active_callback_template_id;
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

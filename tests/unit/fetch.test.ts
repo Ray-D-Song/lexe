@@ -9,7 +9,7 @@ let url: string;
 let streamingUrl: string;
 let echoUrl: string;
 
-const { RASTER_RUNTIME_LOG, ...TEST_ENV } = process.env;
+const { LEXE_LOG, ...TEST_ENV } = process.env;
 
 const spawnAndCollectOutput = async (
   deniedUrl: URL,
@@ -155,7 +155,7 @@ describe("fetch", () => {
   it("is not allowed to fetch", async () => {
     const deniedUrl = new URL("https://www.example.com");
     const { stdout, stderr } = await spawnAndCollectOutput(deniedUrl, {
-      RASTER_RUNTIME_NET_DENY: "example.com",
+      LEXE_NET_DENY: "example.com",
     });
 
     expect(stderr.trim()).toEqual(`Error: URL denied: ${deniedUrl.hostname}`);
@@ -165,7 +165,7 @@ describe("fetch", () => {
   it("is only allowed to fetch", async () => {
     const deniedUrl = new URL("https://www.example.com");
     const { stdout, stderr } = await spawnAndCollectOutput(deniedUrl, {
-      RASTER_RUNTIME_NET_ALLOW: url,
+      LEXE_NET_ALLOW: url,
     });
 
     expect(stderr.trim()).toEqual(
@@ -463,7 +463,7 @@ describe("fetch", () => {
       },
     });
 
-    // raster_runtime's HTTP client may error on empty streams - this documents current behavior
+    // lexe's HTTP client may error on empty streams - this documents current behavior
     try {
       const res = await fetch(echoUrl, {
         method: "POST",

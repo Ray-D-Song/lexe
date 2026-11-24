@@ -184,7 +184,7 @@ describe("ERR_SQLITE_ERROR metadata", () => {
   it("includes code, message, errcode, and errstr", () => {
     const dbPath = path.join(
       os.tmpdir(),
-      `raster-sqlite-err-${process.pid}-${Date.now()}.db`
+      `lexe-sqlite-err-${process.pid}-${Date.now()}.db`
     );
     const db = new DatabaseSync(dbPath);
     try {
@@ -551,11 +551,11 @@ describe("backup", () => {
   it("copies a database to a new file", async () => {
     const sourcePath = path.join(
       os.tmpdir(),
-      `raster-sqlite-src-${process.pid}-${Date.now()}.db`
+      `lexe-sqlite-src-${process.pid}-${Date.now()}.db`
     );
     const targetPath = path.join(
       os.tmpdir(),
-      `raster-sqlite-dst-${process.pid}-${Date.now()}.db`
+      `lexe-sqlite-dst-${process.pid}-${Date.now()}.db`
     );
     const source = new DatabaseSync(sourcePath);
     source.exec(`
@@ -577,7 +577,7 @@ describe("backup", () => {
     source.exec("CREATE TABLE t(x INTEGER);");
     const targetPath = path.join(
       os.tmpdir(),
-      `raster-sqlite-backup-getter-${process.pid}-${Date.now()}.db`
+      `lexe-sqlite-backup-getter-${process.pid}-${Date.now()}.db`
     );
     let message = "";
     try {

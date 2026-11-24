@@ -27,7 +27,7 @@ import { createServer as createTcpServer } from "node:net";
  *
  * Performance Report:
  *
- * <raster_runtime>
+ * <lexe>
  * % bombardier -d 10s --fasthttp http://localhost:3000/
  *
  * Bombarding http://localhost:3000/ for 10s using 125 connection(s)

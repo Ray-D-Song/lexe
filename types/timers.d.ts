@@ -11,7 +11,7 @@ declare module "timers" {
      * This object is created internally and is returned from `setTimeout()` and `setInterval()`. It can be passed to either `clearTimeout()` or `clearInterval()` in order to cancel the
      * scheduled actions.
      *
-     * Raster returns a `Timeout` handle object (Node-compatible). Use `ref()` / `unref()` to
+     * Lexe returns a `Timeout` handle object (Node-compatible). Use `ref()` / `unref()` to
      * control whether the timer alone keeps the process alive; `{ ref: false }` on
      * `timers/promises` schedules an unref'd timer.
      */

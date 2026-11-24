@@ -1,7 +1,7 @@
 import defaultImport from "node:zlib";
 import legacyImport from "zlib";
 
-const data = "Hello raster_runtime!!";
+const data = "Hello lexe!!";
 
 it("node:zlib should be the same as zlib", () => {
   expect(defaultImport).toStrictEqual(legacyImport);

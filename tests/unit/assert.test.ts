@@ -28,7 +28,7 @@ describe(`ok`, () => {
     // Node 24 behaviour: the thrown value is an AssertionError whose `name` is
     // "AssertionError" and whose `code` is ERR_ASSERTION. The message body is
     // "The expression evaluated to a falsy value: ..." with no "AssertionError: "
-    // prefix (Raster's old private format added one). Assert the semantics and a
+    // prefix (Lexe's old private format added one). Assert the semantics and a
     // stable message fragment rather than the exact wording, so future phrasing
     // tweaks do not fail this test.
     for (const falsy of [false, 0, "", null] as any[]) {

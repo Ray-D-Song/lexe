@@ -10,12 +10,12 @@ BUILD_ARG = $(TOOLCHAIN) build -r
 BUILD_DIR = ./target/release
 BUNDLE_DIR = bundle
 # Ignore CARGO_TARGET_DIR so metadata and builds agree on the artifact path (sandbox may redirect it).
-# RASTER_RUNTIME requires jq; without jq the fallback path is wrong — install jq for compat-napi.
+# LEXE_BIN requires jq; without jq the fallback path is wrong — install jq for compat-napi.
 CARGO ?= env -u CARGO_TARGET_DIR cargo
-RASTER_RUNTIME ?= $(shell $(CARGO) metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.target_directory')/debug/raster_runtime
+LEXE_BIN ?= $(shell $(CARGO) metadata --format-version 1 --no-deps 2>/dev/null | jq -r '.target_directory')/debug/lexe
 
-TS_SOURCES = $(wildcard raster_runtime_core/src/modules/js/*.ts) $(wildcard raster_runtime_core/src/modules/js/@raster_runtime/test/*.ts) $(wildcard raster_runtime_core/src/modules/js/@raster_runtime/*.ts) $(wildcard tests/unit/*.ts)
-STD_JS_FILE = $(BUNDLE_DIR)/js/@raster_runtime/std.js
+TS_SOURCES = $(wildcard lexe_core/src/modules/js/*.ts) $(wildcard lexe_core/src/modules/js/@lexe/test/*.ts) $(wildcard lexe_core/src/modules/js/@lexe/*.ts) $(wildcard tests/unit/*.ts)
+STD_JS_FILE = $(BUNDLE_DIR)/js/@lexe/test/index.js
 
 RELEASE_ARCH_NAME_x64 = x86_64
 RELEASE_ARCH_NAME_arm64 = arm64
@@ -53,35 +53,35 @@ export CXX_x86_64_unknown_linux_musl = $(CURDIR)/linker/cxx-x86_64-linux-musl
 export AR_x86_64_unknown_linux_musl = $(CURDIR)/linker/ar
 
 define alias_template
-release${1}: raster_runtime-$(DETECTED_OS)-$(ARCH)${1}.zip
+release${1}: lexe-$(DETECTED_OS)-$(ARCH)${1}.zip
 
-raster_runtime-linux-x86_64${1}.zip: raster_runtime-linux-x64${1}.zip
-raster_runtime-windows-x86_64${1}.zip: raster_runtime-windows-x64${1}.zip
-raster_runtime-darwin-x86_64${1}.zip: raster_runtime-darwin-x64${1}.zip
+lexe-linux-x86_64${1}.zip: lexe-linux-x64${1}.zip
+lexe-windows-x86_64${1}.zip: lexe-windows-x64${1}.zip
+lexe-darwin-x86_64${1}.zip: lexe-darwin-x64${1}.zip
 endef
 
 $(eval $(call alias_template,))
 
 define release_template
-release-${1}: | raster_runtime-linux-${1}.zip
+release-${1}: | lexe-linux-${1}.zip
 
-raster_runtime-container-${1}: | clean-js js
+lexe-container-${1}: | clean-js js
 	cargo $$(BUILD_ARG) --target $$(TARGET_linux_$$(RELEASE_ARCH_NAME_${1})) --features uncompressed
-	mv target/$$(TARGET_linux_$$(RELEASE_ARCH_NAME_${1}))/release/raster_runtime $$@
+	mv target/$$(TARGET_linux_$$(RELEASE_ARCH_NAME_${1}))/release/lexe $$@
 
-raster_runtime-linux-${1}.zip: | clean-js js
+lexe-linux-${1}.zip: | clean-js js
 	cargo $$(BUILD_ARG) --target $$(TARGET_linux_$$(RELEASE_ARCH_NAME_${1}))
 	@rm -rf $$@
-	zip -j $$@ target/$$(TARGET_linux_$$(RELEASE_ARCH_NAME_${1}))/release/raster_runtime
+	zip -j $$@ target/$$(TARGET_linux_$$(RELEASE_ARCH_NAME_${1}))/release/lexe
 
-raster_runtime-darwin-${1}.zip: | clean-js js
+lexe-darwin-${1}.zip: | clean-js js
 	cargo $$(BUILD_ARG) --target $$(TARGET_darwin_$$(RELEASE_ARCH_NAME_${1}))
 	@rm -rf $$@
-	zip -j $$@ target/$$(TARGET_darwin_$$(RELEASE_ARCH_NAME_${1}))/release/raster_runtime
+	zip -j $$@ target/$$(TARGET_darwin_$$(RELEASE_ARCH_NAME_${1}))/release/lexe
 
-raster_runtime-windows-${1}.zip: | clean-js js
+lexe-windows-${1}.zip: | clean-js js
 	cargo $$(BUILD_ARG) --target $$(TARGET_windows_$$(RELEASE_ARCH_NAME_${1}))
-	zip -j $$@ target/$$(TARGET_windows_$$(RELEASE_ARCH_NAME_${1}))/release/raster_runtime.exe
+	zip -j $$@ target/$$(TARGET_windows_$$(RELEASE_ARCH_NAME_${1}))/release/lexe.exe
 endef
 
 $(foreach target,$(RELEASE_TARGETS),$(eval $(call release_template,$(target))))
@@ -122,6 +122,9 @@ clean: clean-js
 
 js: $(STD_JS_FILE)
 
+update-dict: clean-js js
+	LEXE_UPDATE_DICT=1 $(CARGO) check -p lexe_core --features base
+
 bundle/js/%.js: $(TS_SOURCES)
 	node build.mjs
 
@@ -137,13 +140,13 @@ bloat: js
 
 run: export _EXIT_ITERATIONS = 1
 run: export JS_MINIFY = 0
-run: export RUST_LOG = raster_runtime=trace
+run: export RUST_LOG = lexe=trace
 run:
 	cargo run -vv
 
 run-ssr: js
 	cargo build
-	cd example/functions && yarn build && cd build && ../../../target/debug/raster_runtime
+	cd example/functions && yarn build && cd build && ../../../target/debug/lexe
 
 compat: compat-next compat-vite-plus compat-better-sqlite3 compat-mysql compat-node-postgres compat-napi compat-v8 compat-node-sqlite
 
@@ -152,33 +155,33 @@ compat-v8-hello: compat-v8
 compat-napi-hello: compat-napi
 
 compat-v8: js
-	$(CARGO) build -p raster_runtime --features v8-compat
+	$(CARGO) build -p lexe --features v8-compat
 	cd compat/v8-hello && npm run build
-	RASTER_RUNTIME=$(RASTER_RUNTIME) node compat/run.mjs v8-hello $(RASTER_RUNTIME)
+	LEXE_BIN=$(LEXE_BIN) node compat/run.mjs v8-hello $(LEXE_BIN)
 
 compat-next: js
 	cd compat/next && yarn install --frozen-lockfile
-	node compat/run.mjs next $(RASTER_RUNTIME)
+	node compat/run.mjs next $(LEXE_BIN)
 
 compat-vite-plus: js
-	$(CARGO) build -p raster_runtime --features napi
+	$(CARGO) build -p lexe --features napi
 	# Install baseline must satisfy vite-plus engines (^20.19 || ^22.18 || >=24.11).
-	# Raster process identity is 24.3.0; do not use system Node 24.3 for yarn install.
+	# Lexe process identity is 24.3.0; do not use system Node 24.3 for yarn install.
 	cd compat/vite-plus && yarn install --frozen-lockfile
-	node compat/run.mjs vite-plus $(RASTER_RUNTIME)
+	node compat/run.mjs vite-plus $(LEXE_BIN)
 
 compat-better-sqlite3: js
-	$(CARGO) build -p raster_runtime --features v8-compat
+	$(CARGO) build -p lexe --features v8-compat
 	cd compat/better-sqlite3 && yarn install --frozen-lockfile
-	RASTER_RUNTIME=$(RASTER_RUNTIME) node compat/run.mjs better-sqlite3 $(RASTER_RUNTIME)
+	LEXE_BIN=$(LEXE_BIN) node compat/run.mjs better-sqlite3 $(LEXE_BIN)
 
 compat-mysql: js
 	cd compat/mysql2 && yarn install --frozen-lockfile
-	node compat/run.mjs mysql2 $(RASTER_RUNTIME)
+	node compat/run.mjs mysql2 $(LEXE_BIN)
 
 compat-node-postgres: js
 	cd compat/node-postgres && yarn install --frozen-lockfile
-	node compat/run.mjs node-postgres $(RASTER_RUNTIME)
+	node compat/run.mjs node-postgres $(LEXE_BIN)
 
 check-v8-abi:
 	bash v8_compat/tools/check_abi.sh
@@ -188,13 +191,13 @@ sanitizer-ci:
 	bash v8_compat/tools/run_sanitizer_ci.sh undefined
 
 compat-napi: js
-	$(CARGO) build -p raster_runtime --features napi
+	$(CARGO) build -p lexe --features napi
 	cd compat/napi-hello && yarn install
-	RASTER_RUNTIME=$(RASTER_RUNTIME) node compat/run.mjs napi-hello $(RASTER_RUNTIME)
+	LEXE_BIN=$(LEXE_BIN) node compat/run.mjs napi-hello $(LEXE_BIN)
 
 compat-node-sqlite: js
-	$(CARGO) build -p raster_runtime
-	RASTER_RUNTIME=$(RASTER_RUNTIME) node compat/run.mjs node-sqlite $(RASTER_RUNTIME)
+	$(CARGO) build -p lexe
+	LEXE_BIN=$(LEXE_BIN) node compat/run.mjs node-sqlite $(LEXE_BIN)
 
 compat-node-sqlite-asan:
 	bash compat/node-sqlite/run-asan.sh
@@ -202,13 +205,13 @@ compat-node-sqlite-asan:
 flame:
 	cargo flamegraph --profile flame -- index.mjs
 
-run-cli: export RUST_LOG = raster_runtime=trace
+run-cli: export RUST_LOG = lexe=trace
 run-cli: js
 	cargo run
 
 test: export JS_MINIFY = 0
 test: export TEST_SUB_DIR = unit
-test: export RASTER_RUNTIME_ASYNC_HOOKS = 1
+test: export LEXE_ASYNC_HOOKS = 1
 test: js
 	cargo run -- test -d bundle/js/__tests__/$(TEST_SUB_DIR)
 
@@ -255,7 +258,7 @@ tidyup-wpt:
 test-ci: export JS_MINIFY = 0
 test-ci: export RUST_BACKTRACE = 1
 test-ci: export TEST_SUB_DIR = unit
-test-ci: export RASTER_RUNTIME_ASYNC_HOOKS = 1
+test-ci: export LEXE_ASYNC_HOOKS = 1
 test-ci: clean-js | toolchain js types-pack-check types-smoke
 ifdef CARGO_FEATURES
 	cargo $(TOOLCHAIN) test --target $(CURRENT_TARGET) $(CARGO_FEATURES) -- --nocapture --show-output
@@ -290,7 +293,7 @@ lib/x64/libzstd.a:
 
 bench:
 	cargo build -r
-	hyperfine -N --warmup=100 "node fixtures/hello.js" "deno run fixtures/hello.js" "bun fixtures/hello.js" "$(BUILD_DIR)/raster_runtime fixtures/hello.js" "qjs fixtures/hello.js"
+	hyperfine -N --warmup=100 "node fixtures/hello.js" "deno run fixtures/hello.js" "bun fixtures/hello.js" "$(BUILD_DIR)/lexe fixtures/hello.js" "qjs fixtures/hello.js"
 
 deploy:
 	cd example/infrastructure && yarn deploy --require-approval never
@@ -318,6 +321,6 @@ wasm: js
 	AR_wasm32_wasip1=$(WASI_SDK)/bin/llvm-ar \
 	CFLAGS_wasm32_wasip1=--sysroot=$(WASI_SDK)/share/wasi-sysroot \
 	WASI_SDK=$(WASI_SDK) \
-	$(CARGO) build -p raster_runtime --target $(WASM_TARGET) --no-default-features --features wasi
+	$(CARGO) build -p lexe --target $(WASM_TARGET) --no-default-features --features wasi
 
-.PHONY: libs check check-all check-crates libs-arm64 libs-x64 toolchain clean-js release-linux release-darwin release-windows stdlib stdlib-x64 stdlib-arm64 test test-ci run js run-release build release clean flame deploy compat compat-next compat-vite-plus compat-better-sqlite3 compat-mysql compat-node-postgres compat-napi compat-v8 compat-v8-hello compat-napi-hello compat-node-sqlite compat-node-sqlite-asan check-v8-abi types-pack-check types-smoke wasm
+.PHONY: libs check check-all check-crates libs-arm64 libs-x64 toolchain clean-js release-linux release-darwin release-windows stdlib stdlib-x64 stdlib-arm64 test test-ci run js update-dict run-release build release clean flame deploy compat compat-next compat-vite-plus compat-better-sqlite3 compat-mysql compat-node-postgres compat-napi compat-v8 compat-v8-hello compat-napi-hello compat-node-sqlite compat-node-sqlite-asan check-v8-abi types-pack-check types-smoke wasm

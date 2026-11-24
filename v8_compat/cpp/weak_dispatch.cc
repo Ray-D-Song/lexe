@@ -20,7 +20,7 @@ void invoke_erased_weak_callback(ErasedWeakCallback callback,
 
 }  // namespace
 
-extern "C" int raster_v8_invoke_weak_callback_first_pass(void* callback_opaque,
+extern "C" int lexe_v8_invoke_weak_callback_first_pass(void* callback_opaque,
                                                         void* parameter,
                                                         void** out_second_pass) {
   if (!callback_opaque) {
@@ -30,7 +30,7 @@ extern "C" int raster_v8_invoke_weak_callback_first_pass(void* callback_opaque,
     *out_second_pass = nullptr;
   }
   auto callback = reinterpret_cast<v8::WeakCallbackInfo<void>::Callback>(callback_opaque);
-  auto* isolate = reinterpret_cast<v8::Isolate*>(raster_v8_current_isolate());
+  auto* isolate = reinterpret_cast<v8::Isolate*>(lexe_v8_current_isolate());
   if (!isolate) {
     return 0;
   }
@@ -45,12 +45,12 @@ extern "C" int raster_v8_invoke_weak_callback_first_pass(void* callback_opaque,
   return 0;
 }
 
-extern "C" void raster_v8_invoke_weak_callback_second_pass(void* callback_opaque, void* parameter) {
+extern "C" void lexe_v8_invoke_weak_callback_second_pass(void* callback_opaque, void* parameter) {
   if (!callback_opaque) {
     return;
   }
   auto callback = reinterpret_cast<v8::WeakCallbackInfo<void>::Callback>(callback_opaque);
-  auto* isolate = reinterpret_cast<v8::Isolate*>(raster_v8_current_isolate());
+  auto* isolate = reinterpret_cast<v8::Isolate*>(lexe_v8_current_isolate());
   if (!isolate) {
     return;
   }
@@ -61,9 +61,9 @@ extern "C" void raster_v8_invoke_weak_callback_second_pass(void* callback_opaque
 }
 
 // Legacy single-shot dispatcher (first + inline second pass).
-extern "C" void raster_v8_invoke_weak_callback(void* callback_opaque, void* parameter) {
+extern "C" void lexe_v8_invoke_weak_callback(void* callback_opaque, void* parameter) {
   void* second_pass = nullptr;
-  if (raster_v8_invoke_weak_callback_first_pass(callback_opaque, parameter, &second_pass) && second_pass) {
-    raster_v8_invoke_weak_callback_second_pass(second_pass, parameter);
+  if (lexe_v8_invoke_weak_callback_first_pass(callback_opaque, parameter, &second_pass) && second_pass) {
+    lexe_v8_invoke_weak_callback_second_pass(second_pass, parameter);
   }
 }

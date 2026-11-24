@@ -9,7 +9,7 @@ import os from "node:os";
 // `fs` (callback style) and on `FileHandle` (promise style). **`fs.promises.read`
 // and friends do not exist** — measured on Node 24, all ten are `undefined`.
 //
-// `fs.read` and `fs.write` are absent from Raster and not covered here.
+// `fs.read` and `fs.write` are absent from Lexe and not covered here.
 
 const F = fs as any;
 

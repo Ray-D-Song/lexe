@@ -1,0 +1,37 @@
+[package]
+name = "lexe_zlib"
+description = "lexe Module zlib"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_zlib"
+path = "src/lib.rs"
+
+[features]
+default = ["compression-c"]
+
+compression-c = [
+  "lexe_compression/brotli-c",
+  "lexe_compression/flate2-c",
+  "lexe_compression/zstd-c",
+]
+
+compression-rust = [
+  "lexe_compression/brotli-rust",
+  "lexe_compression/flate2-rust",
+  "lexe_compression/zstd-rust",
+]
+
+[dependencies]
+lexe_buffer = { version = "0.1.0", path = "../lexe_buffer" }
+lexe_compression = { version = "0.1.0", path = "../../libs/lexe_compression", default-features = false }
+lexe_context = { version = "0.1.0", path = "../../libs/lexe_context" }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }

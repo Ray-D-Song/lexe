@@ -1,0 +1,18 @@
+[package]
+name = "lexe_intl"
+description = "lexe Intl module - minimal internationalization support"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_intl"
+path = "src/lib.rs"
+
+[dependencies]
+itoa = "1.0"
+jiff = { version = "0.2" }
+rquickjs = { version = "=0.12.1", default-features = false }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils" }

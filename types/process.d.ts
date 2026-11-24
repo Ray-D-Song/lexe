@@ -38,7 +38,7 @@ declare module "process" {
     name: string;
   }
   interface ProcessVersions extends Dict<string> {
-    raster_runtime: string;
+    lexe: string;
     /** Node-compat identity for ecosystem semver gates. */
     node: string;
     sqlite: string;
@@ -52,7 +52,7 @@ declare module "process" {
     /** Standard error stream (`tty.WriteStream` when fd 2 is a TTY). */
     stderr: import("tty").WriteStream;
     /**
-     * The `process.cwd()` method returns the current working directory of the raster_runtime
+     * The `process.cwd()` method returns the current working directory of the lexe
      * process.
      *
      * ```js
@@ -64,7 +64,7 @@ declare module "process" {
     cwd(): string;
     /**
      * The `process.chdir()` method changes the current working directory of the
-     * raster_runtime process or throws an exception if doing so fails (for instance, if
+     * lexe process or throws an exception if doing so fails (for instance, if
      * the specified `directory` does not exist).
      *
      * ```js
@@ -81,13 +81,13 @@ declare module "process" {
      */
     chdir(directory: string): void;
     /**
-     * The `process.argv0` property stores a read-only copy of the original value of`argv[0]` passed when raster_runtime starts.
+     * The `process.argv0` property stores a read-only copy of the original value of`argv[0]` passed when lexe starts.
      *
      * ```console
-     * $ ./raster_runtime -e 'console.log(process.argv[0])'
-     * ./raster_runtime
-     * $ ./raster_runtime -e 'console.log(process.argv0)'
-     * ./raster_runtime
+     * $ ./lexe -e 'console.log(process.argv[0])'
+     * ./lexe
+     * $ ./lexe -e 'console.log(process.argv0)'
+     * ./lexe
      * ```
      */
     argv0: string;
@@ -96,7 +96,7 @@ declare module "process" {
      */
     readonly pid: number;
     /**
-     * Raster-legacy PID property, initialized to the same value as {@link Process.pid}.
+     * Lexe-legacy PID property, initialized to the same value as {@link Process.pid}.
      * It remains a normal writable data property for backward compatibility and is
      * **not** a live alias of `pid` (later writes to `id` do not change `pid`).
      * Prefer `pid`.
@@ -105,7 +105,7 @@ declare module "process" {
     id: number;
     /**
      * The `process.argv` property returns an array containing the command-line
-     * arguments passed when the raster_runtime process was launched. The first element will
+     * arguments passed when the lexe process was launched. The first element will
      * be {@link execPath}. See `process.argv0` if access to the original value
      * of `argv[0]` is needed. The second element will be the path to the JavaScript
      * file being executed. The remaining elements will be any additional command-line
@@ -125,7 +125,7 @@ declare module "process" {
      */
     argv: string[];
     /**
-     * The operating system CPU architecture for which the raster_runtime binary was compiled.
+     * The operating system CPU architecture for which the lexe binary was compiled.
      * Possible values are: `'arm64'` and `'x64'`.
      *
      * ```js
@@ -137,7 +137,7 @@ declare module "process" {
     readonly arch: Architecture;
     /**
      * The `process.platform` property returns a string identifying the operating
-     * system platform for which the raster_runtime binary was compiled.
+     * system platform for which the lexe binary was compiled.
      *
      * Currently possible values are:
      *
@@ -162,7 +162,7 @@ declare module "process" {
      *
      * ```js
      * {
-     *   name: 'raster_runtime',
+     *   name: 'lexe',
      * }
      * ```
      *
@@ -172,8 +172,8 @@ declare module "process" {
     readonly release: ProcessRelease;
     /**
      * The `process.version` property contains the Node-compat version string
-     * (`v24.3.0`). The real Raster runtime version remains in
-     * `process.versions.raster_runtime` and in the CLI `--version` output.
+     * (`v24.3.0`). The real Lexe runtime version remains in
+     * `process.versions.lexe` and in the CLI `--version` output.
      *
      * ```js
      * import { version } from 'process';
@@ -185,7 +185,7 @@ declare module "process" {
     readonly version: string;
     /**
      * The `process.versions` property returns an object listing the version strings of
-     * raster_runtime and its Node-compat identity.
+     * lexe and its Node-compat identity.
      *
      * ```js
      * import { versions } from 'process';
@@ -197,17 +197,17 @@ declare module "process" {
      *
      * ```console
      * {
-     *   raster_runtime: '0.1.0',
+     *   lexe: '0.1.0',
      *   node: '24.3.0'
      * }
      * ```
      */
     readonly versions: ProcessVersions;
     /**
-     * The `process.exit()` method instructs raster_runtime to terminate the process
+     * The `process.exit()` method instructs lexe to terminate the process
      * synchronously with an exit status of `code`. If `code` is omitted, exit uses
      * either the 'success' code `0` or the value of `process.exitCode` if it has been
-     * set. raster_runtime will not terminate until all the `'exit'` event listeners are
+     * set. lexe will not terminate until all the `'exit'` event listeners are
      * called.
      *
      * To exit with a 'failure' code:
@@ -260,7 +260,7 @@ declare module "process" {
 
     /**
      * The `process.exitCode` property indicates the exit code that will be used
-     * when the raster_runtime process eventually exits. If it is not specified, the default
+     * when the lexe process eventually exits. If it is not specified, the default
      * exit code is `undefined` and will be 0 on exit.
      *
      * ```js
@@ -270,7 +270,7 @@ declare module "process" {
      * exit();
      * ```
      *
-     * This will cause the raster_runtime process to exit with the exit code `42`.
+     * This will cause the lexe process to exit with the exit code `42`.
      */
     exitCode: number | null;
 

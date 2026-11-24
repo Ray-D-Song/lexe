@@ -1,5 +1,5 @@
 // Fixture: close(cb) 之后立刻 closeAllConnections()，回调应立即触发。
-// 用回调本身作为完成信号，不靠 setTimeout 轮询，避开 Raster 在
+// 用回调本身作为完成信号，不靠 setTimeout 轮询，避开 Lexe 在
 // close + keep-alive 场景下既有的 timer 停摆竞态（pristine 同样复现）。
 import http from "node:http";
 import net from "node:net";

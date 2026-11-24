@@ -1,6 +1,6 @@
 // Fixture: close() 在在飞请求上等待（方案 2 与方案 1 的分界）。
 // 只做一次 300ms 等待后立刻断言退出，避免依赖后续 timer 推进 ——
-// Raster 在 close + keep-alive 场景下存在既有的 timer 停摆竞态
+// Lexe 在 close + keep-alive 场景下存在既有的 timer 停摆竞态
 // （pristine 同样复现），修它不在本项范围内。
 import http from "node:http";
 import net from "node:net";

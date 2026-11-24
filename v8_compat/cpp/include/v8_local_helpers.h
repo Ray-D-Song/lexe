@@ -14,7 +14,7 @@ class HandleScopeHelper : public HandleScope {
 };
 
 template <typename T>
-inline Local<T> MakeLocalFromObject(Isolate* isolate, raster_v8::shim::ObjectLayout* object) {
+inline Local<T> MakeLocalFromObject(Isolate* isolate, lexe_v8::shim::ObjectLayout* object) {
   internal::Address* slot =
       HandleScopeHelper::MakeHandle(isolate, reinterpret_cast<internal::Address>(object));
   return *reinterpret_cast<Local<T>*>(&slot);

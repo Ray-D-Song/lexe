@@ -7,7 +7,7 @@
 
 #include <v8.h>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 struct NativeDataProperty {
   uint64_t name_root_id = 0;
@@ -58,4 +58,4 @@ class TemplateRegistry {
   std::unordered_map<uint32_t, FunctionTemplateRecord> function_templates_;
 };
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

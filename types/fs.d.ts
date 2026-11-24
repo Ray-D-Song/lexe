@@ -571,7 +571,7 @@ declare module "fs" {
     end?: number | undefined;
     highWaterMark?: number | undefined;
     /**
-     * Must be `true` or omitted. `false` is rejected: Raster returns a plain
+     * Must be `true` or omitted. `false` is rejected: Lexe returns a plain
      * `stream.Readable` without Node's `ReadStream.close()`/`fd` API.
      */
     autoClose?: true | undefined;

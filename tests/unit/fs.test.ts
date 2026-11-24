@@ -1055,7 +1055,7 @@ describe("callback access/stat/lstat and existsSync", () => {
 
 describe("createReadStream", () => {
   it("reads a small file fully", async () => {
-    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "raster-crs-"));
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lexe-crs-"));
     const filePath = path.join(tmpDir, "small.txt");
     writeFileSync(filePath, "hello-createReadStream");
     try {
@@ -1072,7 +1072,7 @@ describe("createReadStream", () => {
   });
 
   it("reads multiple chunks for large highWaterMark-limited files", async () => {
-    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "raster-crs-"));
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lexe-crs-"));
     const filePath = path.join(tmpDir, "large.bin");
     const payload = Buffer.alloc(200, 0x61);
     writeFileSync(filePath, payload);
@@ -1090,7 +1090,7 @@ describe("createReadStream", () => {
   });
 
   it("supports start/end range and encoding", async () => {
-    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "raster-crs-"));
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lexe-crs-"));
     const filePath = path.join(tmpDir, "range.txt");
     writeFileSync(filePath, "0123456789");
     try {
@@ -1110,7 +1110,7 @@ describe("createReadStream", () => {
   });
 
   it("emits error for missing files", async () => {
-    const stream = createReadStream(path.join(os.tmpdir(), "no-such-raster-crs-file"));
+    const stream = createReadStream(path.join(os.tmpdir(), "no-such-lexe-crs-file"));
     await expect(
       (async () => {
         for await (const _ of stream) {
@@ -1133,7 +1133,7 @@ describe("createReadStream", () => {
   });
 
   it("accepts Buffer and file URL paths", async () => {
-    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "raster-crs-"));
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lexe-crs-"));
     const filePath = path.join(tmpDir, "pathlike.txt");
     writeFileSync(filePath, "pathlike-ok");
     try {
@@ -1198,7 +1198,7 @@ const join = path.join;
 const tmpdir = os.tmpdir;
 
 describe("createWriteStream", () => {
-  const tmp = (name: string) => join(tmpdir(), `raster-ws-${process.pid}-${name}`);
+  const tmp = (name: string) => join(tmpdir(), `lexe-ws-${process.pid}-${name}`);
 
   it("writes string and Buffer chunks and closes the handle", async () => {
     const file = tmp("basic.txt");

@@ -97,7 +97,7 @@ declare module "module" {
     }
     function getSourceMapsSupport(): SourceMapsSupport;
     /**
-     * Governs what {@link findSourceMap} returns. Raster does not rewrite
+     * Governs what {@link findSourceMap} returns. Lexe does not rewrite
      * `Error.prepareStackTrace`.
      */
     function setSourceMapsSupport(
@@ -116,7 +116,7 @@ declare module "module" {
       directory?: string;
     }
     /**
-     * Raster has no on-disk compile cache: this validates its argument and
+     * Lexe has no on-disk compile cache: this validates its argument and
      * reports `constants.compileCacheStatus.FAILED`.
      */
     function enableCompileCache(cacheDir?: string): EnableCompileCacheResult;

@@ -9,7 +9,7 @@ import path from "node:path";
 
 let dir = "";
 
-const makeDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "raster-fs-streams-"));
+const makeDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "lexe-fs-streams-"));
 
 beforeAll(() => {
   dir = makeDir();

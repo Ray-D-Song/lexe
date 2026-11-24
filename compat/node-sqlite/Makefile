@@ -1,4 +1,4 @@
-VENDOR_SQLITE := ../../modules/raster_runtime_sqlite/vendor
+VENDOR_SQLITE := ../../modules/lexe_sqlite/vendor
 BUILD_DIR := build
 TARGET := $(BUILD_DIR)/sqlite_extension
 

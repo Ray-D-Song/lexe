@@ -316,7 +316,7 @@ fn buffer_copy_zero_length_allows_null_data() {
     let status = unsafe {
         crate::value_ops::buffer_new_copy(std::ptr::null_mut(), std::ptr::null(), 0, &mut root)
     };
-    assert!(matches!(status, crate::bridge::RasterV8Status::Ok));
+    assert!(matches!(status, crate::bridge::LexeV8Status::Ok));
     assert_ne!(root, 0);
 
     unsafe { crate::shutdown_context(ctx_ptr).unwrap() };
@@ -329,10 +329,10 @@ fn current_thread_locals_cleared_after_teardown() {
     use rquickjs::{Context, Runtime};
 
     extern "C" {
-        fn raster_v8_current_context() -> *mut crate::bridge::RasterV8ContextState;
-        fn raster_v8_current_isolate() -> *mut crate::bridge::RasterV8IsolateState;
-        fn raster_v8_set_current_context(ctx: *mut crate::bridge::RasterV8ContextState);
-        fn raster_v8_set_current_isolate(isolate: *mut crate::bridge::RasterV8IsolateState);
+        fn lexe_v8_current_context() -> *mut crate::bridge::LexeV8ContextState;
+        fn lexe_v8_current_isolate() -> *mut crate::bridge::LexeV8IsolateState;
+        fn lexe_v8_set_current_context(ctx: *mut crate::bridge::LexeV8ContextState);
+        fn lexe_v8_set_current_isolate(isolate: *mut crate::bridge::LexeV8IsolateState);
     }
 
     let runtime = Runtime::new().expect("runtime");
@@ -344,17 +344,17 @@ fn current_thread_locals_cleared_after_teardown() {
     let context_state = crate::ensure_context_for_ctx(ctx_ptr);
 
     unsafe {
-        raster_v8_set_current_context(context_state as *mut crate::bridge::RasterV8ContextState);
-        raster_v8_set_current_isolate(isolate as *mut crate::bridge::RasterV8IsolateState);
+        lexe_v8_set_current_context(context_state as *mut crate::bridge::LexeV8ContextState);
+        lexe_v8_set_current_isolate(isolate as *mut crate::bridge::LexeV8IsolateState);
     }
-    assert!(!unsafe { raster_v8_current_context().is_null() });
-    assert!(!unsafe { raster_v8_current_isolate().is_null() });
+    assert!(!unsafe { lexe_v8_current_context().is_null() });
+    assert!(!unsafe { lexe_v8_current_isolate().is_null() });
 
     unsafe { crate::shutdown_context(ctx_ptr).unwrap() };
-    assert!(unsafe { raster_v8_current_context().is_null() });
+    assert!(unsafe { lexe_v8_current_context().is_null() });
 
     unsafe { crate::shutdown_runtime(qrt).unwrap() };
-    assert!(unsafe { raster_v8_current_isolate().is_null() });
+    assert!(unsafe { lexe_v8_current_isolate().is_null() });
 }
 
 #[test]
@@ -469,21 +469,21 @@ fn objectwrap_fixture_teardown_clears_all_counts() {
     use rquickjs::{Context, Runtime};
 
     extern "C" {
-        fn raster_v8_test_objectwrap_fixture_setup(
-            ctx: *mut crate::bridge::RasterV8ContextState,
+        fn lexe_v8_test_objectwrap_fixture_setup(
+            ctx: *mut crate::bridge::LexeV8ContextState,
         ) -> *mut std::ffi::c_void;
-        fn raster_v8_test_objectwrap_fixture_release_bridge_roots(
-            ctx: *mut crate::bridge::RasterV8ContextState,
+        fn lexe_v8_test_objectwrap_fixture_release_bridge_roots(
+            ctx: *mut crate::bridge::LexeV8ContextState,
             counters: *mut std::ffi::c_void,
         );
-        fn raster_v8_test_objectwrap_fixture_cleanup_hook(arg: *mut std::ffi::c_void);
-        fn raster_v8_test_objectwrap_fixture_read_counts(
+        fn lexe_v8_test_objectwrap_fixture_cleanup_hook(arg: *mut std::ffi::c_void);
+        fn lexe_v8_test_objectwrap_fixture_read_counts(
             counters: *const std::ffi::c_void,
             cleanup_out: *mut i32,
             weak_out: *mut i32,
             destructor_out: *mut i32,
         );
-        fn raster_v8_test_objectwrap_fixture_destroy(counters: *mut std::ffi::c_void);
+        fn lexe_v8_test_objectwrap_fixture_destroy(counters: *mut std::ffi::c_void);
     }
 
     let runtime = Runtime::new().expect("runtime");
@@ -496,28 +496,28 @@ fn objectwrap_fixture_teardown_clears_all_counts() {
     crate::bridge::set_active_bridge_context(ctx_ptr);
 
     extern "C" {
-        fn raster_v8_set_current_context(ctx: *mut crate::bridge::RasterV8ContextState);
-        fn raster_v8_set_current_isolate(isolate: *mut crate::bridge::RasterV8IsolateState);
+        fn lexe_v8_set_current_context(ctx: *mut crate::bridge::LexeV8ContextState);
+        fn lexe_v8_set_current_isolate(isolate: *mut crate::bridge::LexeV8IsolateState);
     }
     unsafe {
-        raster_v8_set_current_context(context_state as *mut crate::bridge::RasterV8ContextState);
-        raster_v8_set_current_isolate(_isolate as *mut crate::bridge::RasterV8IsolateState);
+        lexe_v8_set_current_context(context_state as *mut crate::bridge::LexeV8ContextState);
+        lexe_v8_set_current_isolate(_isolate as *mut crate::bridge::LexeV8IsolateState);
     }
 
     let counters = unsafe {
-        raster_v8_test_objectwrap_fixture_setup(
-            context_state as *mut crate::bridge::RasterV8ContextState,
+        lexe_v8_test_objectwrap_fixture_setup(
+            context_state as *mut crate::bridge::LexeV8ContextState,
         )
     };
     assert!(!counters.is_null());
     unsafe {
         crate::runtime_state::add_cleanup_hook(
             context_state as usize,
-            raster_v8_test_objectwrap_fixture_cleanup_hook,
+            lexe_v8_test_objectwrap_fixture_cleanup_hook,
             counters,
         );
-        raster_v8_test_objectwrap_fixture_release_bridge_roots(
-            context_state as *mut crate::bridge::RasterV8ContextState,
+        lexe_v8_test_objectwrap_fixture_release_bridge_roots(
+            context_state as *mut crate::bridge::LexeV8ContextState,
             counters,
         );
     }
@@ -535,7 +535,7 @@ fn objectwrap_fixture_teardown_clears_all_counts() {
     let mut weak = 0;
     let mut dtor = 0;
     unsafe {
-        raster_v8_test_objectwrap_fixture_read_counts(counters, &mut cleanup, &mut weak, &mut dtor);
+        lexe_v8_test_objectwrap_fixture_read_counts(counters, &mut cleanup, &mut weak, &mut dtor);
     }
     assert_eq!(cleanup, 1, "cleanup hook should run once");
     assert_eq!(weak, 1, "weak ObjectWrap callback should run once");
@@ -546,10 +546,10 @@ fn objectwrap_fixture_teardown_clears_all_counts() {
     );
 
     unsafe {
-        raster_v8_test_objectwrap_fixture_destroy(counters);
+        lexe_v8_test_objectwrap_fixture_destroy(counters);
         crate::shutdown_runtime(qrt).unwrap();
-        raster_v8_set_current_context(std::ptr::null_mut());
-        raster_v8_set_current_isolate(std::ptr::null_mut());
+        lexe_v8_set_current_context(std::ptr::null_mut());
+        lexe_v8_set_current_isolate(std::ptr::null_mut());
     }
     drop(context);
     drop(runtime);
@@ -563,19 +563,19 @@ fn objectwrap_is_destroyed_when_teardown_starts_without_cpp_tls() {
     use rquickjs::{Context, Runtime};
 
     extern "C" {
-        fn raster_v8_test_objectwrap_shutdown_counters_new() -> *mut std::ffi::c_void;
-        fn raster_v8_test_objectwrap_shutdown_counters_read(
+        fn lexe_v8_test_objectwrap_shutdown_counters_new() -> *mut std::ffi::c_void;
+        fn lexe_v8_test_objectwrap_shutdown_counters_read(
             counters: *const std::ffi::c_void,
             constructed_out: *mut i32,
             destroyed_out: *mut i32,
         );
-        fn raster_v8_test_objectwrap_shutdown_counters_destroy(counters: *mut std::ffi::c_void);
-        fn raster_v8_test_setup_shutdown_object_wrap(
-            ctx: *mut crate::bridge::RasterV8ContextState,
+        fn lexe_v8_test_objectwrap_shutdown_counters_destroy(counters: *mut std::ffi::c_void);
+        fn lexe_v8_test_setup_shutdown_object_wrap(
+            ctx: *mut crate::bridge::LexeV8ContextState,
             counters: *mut std::ffi::c_void,
         ) -> i32;
-        fn raster_v8_set_current_context(ctx: *mut crate::bridge::RasterV8ContextState);
-        fn raster_v8_set_current_isolate(isolate: *mut crate::bridge::RasterV8IsolateState);
+        fn lexe_v8_set_current_context(ctx: *mut crate::bridge::LexeV8ContextState);
+        fn lexe_v8_set_current_isolate(isolate: *mut crate::bridge::LexeV8IsolateState);
     }
 
     let runtime = Runtime::new().expect("runtime");
@@ -587,15 +587,15 @@ fn objectwrap_is_destroyed_when_teardown_starts_without_cpp_tls() {
     let context_state = crate::ensure_context_for_ctx(ctx_ptr);
     crate::bridge::set_active_bridge_context(ctx_ptr);
     unsafe {
-        raster_v8_set_current_context(context_state as *mut crate::bridge::RasterV8ContextState);
-        raster_v8_set_current_isolate(isolate as *mut crate::bridge::RasterV8IsolateState);
+        lexe_v8_set_current_context(context_state as *mut crate::bridge::LexeV8ContextState);
+        lexe_v8_set_current_isolate(isolate as *mut crate::bridge::LexeV8IsolateState);
     }
 
-    let counters = unsafe { raster_v8_test_objectwrap_shutdown_counters_new() };
+    let counters = unsafe { lexe_v8_test_objectwrap_shutdown_counters_new() };
     assert!(!counters.is_null());
     let setup_ok = unsafe {
-        raster_v8_test_setup_shutdown_object_wrap(
-            context_state as *mut crate::bridge::RasterV8ContextState,
+        lexe_v8_test_setup_shutdown_object_wrap(
+            context_state as *mut crate::bridge::LexeV8ContextState,
             counters,
         )
     };
@@ -604,19 +604,15 @@ fn objectwrap_is_destroyed_when_teardown_starts_without_cpp_tls() {
     let mut constructed = 0;
     let mut destroyed = 0;
     unsafe {
-        raster_v8_test_objectwrap_shutdown_counters_read(
-            counters,
-            &mut constructed,
-            &mut destroyed,
-        );
+        lexe_v8_test_objectwrap_shutdown_counters_read(counters, &mut constructed, &mut destroyed);
     }
     assert_eq!(constructed, 1);
     assert_eq!(destroyed, 0);
 
     // Exact CI risk: teardown must not rely on TLS from a prior callback.
     unsafe {
-        raster_v8_set_current_context(std::ptr::null_mut());
-        raster_v8_set_current_isolate(std::ptr::null_mut());
+        lexe_v8_set_current_context(std::ptr::null_mut());
+        lexe_v8_set_current_isolate(std::ptr::null_mut());
     }
     crate::bridge::clear_active_bridge_context();
 
@@ -625,11 +621,7 @@ fn objectwrap_is_destroyed_when_teardown_starts_without_cpp_tls() {
     }
 
     unsafe {
-        raster_v8_test_objectwrap_shutdown_counters_read(
-            counters,
-            &mut constructed,
-            &mut destroyed,
-        );
+        lexe_v8_test_objectwrap_shutdown_counters_read(counters, &mut constructed, &mut destroyed);
     }
     assert_eq!(
         destroyed, 1,
@@ -643,9 +635,9 @@ fn objectwrap_is_destroyed_when_teardown_starts_without_cpp_tls() {
     unsafe {
         crate::shutdown_context(ctx_ptr).unwrap();
         crate::shutdown_runtime(qrt).unwrap();
-        raster_v8_test_objectwrap_shutdown_counters_destroy(counters);
-        raster_v8_set_current_context(std::ptr::null_mut());
-        raster_v8_set_current_isolate(std::ptr::null_mut());
+        lexe_v8_test_objectwrap_shutdown_counters_destroy(counters);
+        lexe_v8_set_current_context(std::ptr::null_mut());
+        lexe_v8_set_current_isolate(std::ptr::null_mut());
     }
     drop(context);
     drop(runtime);
@@ -657,19 +649,19 @@ fn teardown_activation_uses_the_owner_context_and_isolate() {
     use rquickjs::{Context, Runtime};
 
     extern "C" {
-        fn raster_v8_test_objectwrap_shutdown_counters_new() -> *mut std::ffi::c_void;
-        fn raster_v8_test_objectwrap_shutdown_counters_read(
+        fn lexe_v8_test_objectwrap_shutdown_counters_new() -> *mut std::ffi::c_void;
+        fn lexe_v8_test_objectwrap_shutdown_counters_read(
             counters: *const std::ffi::c_void,
             constructed_out: *mut i32,
             destroyed_out: *mut i32,
         );
-        fn raster_v8_test_objectwrap_shutdown_counters_destroy(counters: *mut std::ffi::c_void);
-        fn raster_v8_test_setup_shutdown_object_wrap(
-            ctx: *mut crate::bridge::RasterV8ContextState,
+        fn lexe_v8_test_objectwrap_shutdown_counters_destroy(counters: *mut std::ffi::c_void);
+        fn lexe_v8_test_setup_shutdown_object_wrap(
+            ctx: *mut crate::bridge::LexeV8ContextState,
             counters: *mut std::ffi::c_void,
         ) -> i32;
-        fn raster_v8_set_current_context(ctx: *mut crate::bridge::RasterV8ContextState);
-        fn raster_v8_set_current_isolate(isolate: *mut crate::bridge::RasterV8IsolateState);
+        fn lexe_v8_set_current_context(ctx: *mut crate::bridge::LexeV8ContextState);
+        fn lexe_v8_set_current_isolate(isolate: *mut crate::bridge::LexeV8IsolateState);
     }
 
     let runtime = Runtime::new().expect("runtime");
@@ -690,14 +682,14 @@ fn teardown_activation_uses_the_owner_context_and_isolate() {
     // Wire A and create ObjectWrap on A.
     crate::bridge::set_active_bridge_context(ptr_a);
     unsafe {
-        raster_v8_set_current_context(state_a as *mut crate::bridge::RasterV8ContextState);
-        raster_v8_set_current_isolate(isolate as *mut crate::bridge::RasterV8IsolateState);
+        lexe_v8_set_current_context(state_a as *mut crate::bridge::LexeV8ContextState);
+        lexe_v8_set_current_isolate(isolate as *mut crate::bridge::LexeV8IsolateState);
     }
-    let counters_a = unsafe { raster_v8_test_objectwrap_shutdown_counters_new() };
+    let counters_a = unsafe { lexe_v8_test_objectwrap_shutdown_counters_new() };
     assert_eq!(
         unsafe {
-            raster_v8_test_setup_shutdown_object_wrap(
-                state_a as *mut crate::bridge::RasterV8ContextState,
+            lexe_v8_test_setup_shutdown_object_wrap(
+                state_a as *mut crate::bridge::LexeV8ContextState,
                 counters_a,
             )
         },
@@ -707,14 +699,14 @@ fn teardown_activation_uses_the_owner_context_and_isolate() {
     // Wire B and create ObjectWrap on B.
     crate::bridge::set_active_bridge_context(ptr_b);
     unsafe {
-        raster_v8_set_current_context(state_b as *mut crate::bridge::RasterV8ContextState);
-        raster_v8_set_current_isolate(isolate as *mut crate::bridge::RasterV8IsolateState);
+        lexe_v8_set_current_context(state_b as *mut crate::bridge::LexeV8ContextState);
+        lexe_v8_set_current_isolate(isolate as *mut crate::bridge::LexeV8IsolateState);
     }
-    let counters_b = unsafe { raster_v8_test_objectwrap_shutdown_counters_new() };
+    let counters_b = unsafe { lexe_v8_test_objectwrap_shutdown_counters_new() };
     assert_eq!(
         unsafe {
-            raster_v8_test_setup_shutdown_object_wrap(
-                state_b as *mut crate::bridge::RasterV8ContextState,
+            lexe_v8_test_setup_shutdown_object_wrap(
+                state_b as *mut crate::bridge::LexeV8ContextState,
                 counters_b,
             )
         },
@@ -727,12 +719,12 @@ fn teardown_activation_uses_the_owner_context_and_isolate() {
     let mut constructed = 0;
     unsafe {
         crate::run_pre_bridge_teardown_gc(ptr_a).unwrap();
-        raster_v8_test_objectwrap_shutdown_counters_read(
+        lexe_v8_test_objectwrap_shutdown_counters_read(
             counters_a,
             &mut constructed,
             &mut destroyed_a,
         );
-        raster_v8_test_objectwrap_shutdown_counters_read(
+        lexe_v8_test_objectwrap_shutdown_counters_read(
             counters_b,
             &mut constructed,
             &mut destroyed_b,
@@ -760,7 +752,7 @@ fn teardown_activation_uses_the_owner_context_and_isolate() {
     unsafe {
         crate::shutdown_context(ptr_a).unwrap();
         crate::run_pre_bridge_teardown_gc(ptr_b).unwrap();
-        raster_v8_test_objectwrap_shutdown_counters_read(
+        lexe_v8_test_objectwrap_shutdown_counters_read(
             counters_b,
             &mut constructed,
             &mut destroyed_b,
@@ -792,10 +784,10 @@ fn teardown_activation_uses_the_owner_context_and_isolate() {
 
     unsafe {
         crate::shutdown_runtime(qrt).unwrap();
-        raster_v8_test_objectwrap_shutdown_counters_destroy(counters_a);
-        raster_v8_test_objectwrap_shutdown_counters_destroy(counters_b);
-        raster_v8_set_current_context(std::ptr::null_mut());
-        raster_v8_set_current_isolate(std::ptr::null_mut());
+        lexe_v8_test_objectwrap_shutdown_counters_destroy(counters_a);
+        lexe_v8_test_objectwrap_shutdown_counters_destroy(counters_b);
+        lexe_v8_set_current_context(std::ptr::null_mut());
+        lexe_v8_set_current_isolate(std::ptr::null_mut());
     }
     drop(ctx_a);
     drop(ctx_b);
@@ -807,18 +799,17 @@ fn objectwrap_wrapped_from_callback_receiver_registers_weak_callback() {
     let _lock = abi_test_lock();
     let mut fixture = WiredTestContext::new();
     extern "C" {
-        fn raster_v8_test_objectwrap_shutdown_counters_new() -> *mut std::ffi::c_void;
-        fn raster_v8_test_objectwrap_shutdown_counters_read(
+        fn lexe_v8_test_objectwrap_shutdown_counters_new() -> *mut std::ffi::c_void;
+        fn lexe_v8_test_objectwrap_shutdown_counters_read(
             counters: *const std::ffi::c_void,
             constructed_out: *mut i32,
             destroyed_out: *mut i32,
         );
-        fn raster_v8_test_objectwrap_shutdown_counters_destroy(counters: *mut std::ffi::c_void);
-        fn raster_v8_test_register_objectwrap_ctor_template(counters: *mut std::ffi::c_void)
-            -> u32;
+        fn lexe_v8_test_objectwrap_shutdown_counters_destroy(counters: *mut std::ffi::c_void);
+        fn lexe_v8_test_register_objectwrap_ctor_template(counters: *mut std::ffi::c_void) -> u32;
     }
-    let counters = unsafe { raster_v8_test_objectwrap_shutdown_counters_new() };
-    let function_id = unsafe { raster_v8_test_register_objectwrap_ctor_template(counters) };
+    let counters = unsafe { lexe_v8_test_objectwrap_shutdown_counters_new() };
+    let function_id = unsafe { lexe_v8_test_register_objectwrap_ctor_template(counters) };
     let func_root = fixture.get_function(function_id);
 
     let mut instance_root = 0u64;
@@ -831,14 +822,14 @@ fn objectwrap_wrapped_from_callback_receiver_registers_weak_callback() {
             &mut instance_root,
         )
     };
-    assert!(matches!(status, crate::bridge::RasterV8Status::Ok));
+    assert!(matches!(status, crate::bridge::LexeV8Status::Ok));
     assert_ne!(instance_root, 0);
 
     let mut instance_ptr = std::ptr::null_mut();
     let ptr_status = unsafe {
         crate::js_ops::object_ptr_for_root(fixture.context_state, instance_root, &mut instance_ptr)
     };
-    assert!(matches!(ptr_status, crate::bridge::RasterV8Status::Ok));
+    assert!(matches!(ptr_status, crate::bridge::LexeV8Status::Ok));
     assert!(!instance_ptr.is_null());
     assert!(
         crate::context_tables::with_context_tables(fixture.ctx_ptr, |t| {
@@ -859,11 +850,7 @@ fn objectwrap_wrapped_from_callback_receiver_registers_weak_callback() {
     let mut constructed = 0;
     let mut destroyed = 0;
     unsafe {
-        raster_v8_test_objectwrap_shutdown_counters_read(
-            counters,
-            &mut constructed,
-            &mut destroyed,
-        );
+        lexe_v8_test_objectwrap_shutdown_counters_read(counters, &mut constructed, &mut destroyed);
     }
     assert_eq!(constructed, 1);
     assert_eq!(
@@ -877,7 +864,7 @@ fn objectwrap_wrapped_from_callback_receiver_registers_weak_callback() {
     assert!(crate::bridge::teardown_counts_for_ctx(fixture.ctx_ptr).is_zero());
     fixture.shutdown_bridge_and_drop_runtime();
     unsafe {
-        raster_v8_test_objectwrap_shutdown_counters_destroy(counters);
+        lexe_v8_test_objectwrap_shutdown_counters_destroy(counters);
     }
 }
 
@@ -887,10 +874,10 @@ fn teardown_activation_rejects_registered_context_without_isolate() {
     use rquickjs::{Context, Runtime};
 
     extern "C" {
-        fn raster_v8_current_context() -> *mut crate::bridge::RasterV8ContextState;
-        fn raster_v8_current_isolate() -> *mut crate::bridge::RasterV8IsolateState;
-        fn raster_v8_set_current_context(ctx: *mut crate::bridge::RasterV8ContextState);
-        fn raster_v8_set_current_isolate(isolate: *mut crate::bridge::RasterV8IsolateState);
+        fn lexe_v8_current_context() -> *mut crate::bridge::LexeV8ContextState;
+        fn lexe_v8_current_isolate() -> *mut crate::bridge::LexeV8IsolateState;
+        fn lexe_v8_set_current_context(ctx: *mut crate::bridge::LexeV8ContextState);
+        fn lexe_v8_set_current_isolate(isolate: *mut crate::bridge::LexeV8IsolateState);
     }
 
     let runtime = Runtime::new().unwrap();
@@ -902,8 +889,8 @@ fn teardown_activation_rejects_registered_context_without_isolate() {
     crate::ensure_context_for_ctx(ctx);
 
     unsafe {
-        raster_v8_set_current_context(std::ptr::null_mut());
-        raster_v8_set_current_isolate(std::ptr::null_mut());
+        lexe_v8_set_current_context(std::ptr::null_mut());
+        lexe_v8_set_current_isolate(std::ptr::null_mut());
     }
 
     let error = unsafe { crate::module_loader::activate_v8_context_for_teardown(ctx) }.unwrap_err();
@@ -913,8 +900,8 @@ fn teardown_activation_rejects_registered_context_without_isolate() {
         "unexpected error: {error}"
     );
     // Failed activation must not mutate C++ TLS (all fallible lookups first).
-    assert!(unsafe { raster_v8_current_context().is_null() });
-    assert!(unsafe { raster_v8_current_isolate().is_null() });
+    assert!(unsafe { lexe_v8_current_context().is_null() });
+    assert!(unsafe { lexe_v8_current_isolate().is_null() });
 
     crate::ensure_isolate_for_runtime(qrt);
     unsafe {
@@ -975,7 +962,7 @@ struct WiredTestContext {
     context: rquickjs::Context,
     ctx_ptr: *mut rquickjs::qjs::JSContext,
     rt_ptr: *mut rquickjs::qjs::JSRuntime,
-    context_state: *mut crate::bridge::RasterV8ContextState,
+    context_state: *mut crate::bridge::LexeV8ContextState,
     pending_missing_key: bool,
 }
 
@@ -988,15 +975,15 @@ impl WiredTestContext {
         let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx_ptr) };
         let _isolate = crate::ensure_isolate_for_runtime(rt_ptr);
         let context_state =
-            crate::ensure_context_for_ctx(ctx_ptr) as *mut crate::bridge::RasterV8ContextState;
+            crate::ensure_context_for_ctx(ctx_ptr) as *mut crate::bridge::LexeV8ContextState;
         crate::bridge::set_active_bridge_context(ctx_ptr);
         extern "C" {
-            fn raster_v8_set_current_context(ctx: *mut crate::bridge::RasterV8ContextState);
-            fn raster_v8_set_current_isolate(isolate: *mut crate::bridge::RasterV8IsolateState);
+            fn lexe_v8_set_current_context(ctx: *mut crate::bridge::LexeV8ContextState);
+            fn lexe_v8_set_current_isolate(isolate: *mut crate::bridge::LexeV8IsolateState);
         }
         unsafe {
-            raster_v8_set_current_context(context_state);
-            raster_v8_set_current_isolate(_isolate as *mut crate::bridge::RasterV8IsolateState);
+            lexe_v8_set_current_context(context_state);
+            lexe_v8_set_current_isolate(_isolate as *mut crate::bridge::LexeV8IsolateState);
         }
         Self {
             runtime,
@@ -1014,12 +1001,12 @@ impl WiredTestContext {
 
     fn register_function_template(&mut self) -> u32 {
         extern "C" {
-            fn raster_v8_test_register_function_template() -> u32;
-            fn raster_v8_test_register_template_property_with_missing_key(function_id: u32);
+            fn lexe_v8_test_register_function_template() -> u32;
+            fn lexe_v8_test_register_template_property_with_missing_key(function_id: u32);
         }
-        let function_id = unsafe { raster_v8_test_register_function_template() };
+        let function_id = unsafe { lexe_v8_test_register_function_template() };
         if self.pending_missing_key {
-            unsafe { raster_v8_test_register_template_property_with_missing_key(function_id) };
+            unsafe { lexe_v8_test_register_template_property_with_missing_key(function_id) };
             self.pending_missing_key = false;
         }
         function_id
@@ -1027,21 +1014,17 @@ impl WiredTestContext {
 
     fn get_function(&mut self, function_id: u32) -> u64 {
         extern "C" {
-            fn raster_v8_test_function_template_get_function(
-                ctx_state: *mut crate::bridge::RasterV8ContextState,
+            fn lexe_v8_test_function_template_get_function(
+                ctx_state: *mut crate::bridge::LexeV8ContextState,
                 function_id: u32,
                 out_root: *mut u64,
-            ) -> crate::bridge::RasterV8Status;
+            ) -> crate::bridge::LexeV8Status;
         }
         let mut root = 0u64;
         let status = unsafe {
-            raster_v8_test_function_template_get_function(
-                self.context_state,
-                function_id,
-                &mut root,
-            )
+            lexe_v8_test_function_template_get_function(self.context_state, function_id, &mut root)
         };
-        assert!(matches!(status, crate::bridge::RasterV8Status::Ok));
+        assert!(matches!(status, crate::bridge::LexeV8Status::Ok));
         root
     }
 
@@ -1053,15 +1036,15 @@ impl WiredTestContext {
 
     fn template_prototype(&self, function_id: u32) -> rquickjs::qjs::JSValue {
         extern "C" {
-            fn raster_v8_function_template_id(function_id: u32) -> u32;
-            fn raster_v8_function_template_prototype_root(template_id: u32) -> u64;
+            fn lexe_v8_function_template_id(function_id: u32) -> u32;
+            fn lexe_v8_function_template_prototype_root(template_id: u32) -> u64;
         }
-        let template_id = unsafe { raster_v8_function_template_id(function_id) };
+        let template_id = unsafe { lexe_v8_function_template_id(function_id) };
         assert_ne!(
             template_id, 0,
             "function_id must map to a function template"
         );
-        let proto_root = unsafe { raster_v8_function_template_prototype_root(template_id) };
+        let proto_root = unsafe { lexe_v8_function_template_prototype_root(template_id) };
         assert_ne!(proto_root, 0);
         crate::bridge::with_state_ref_for_ctx(self.ctx_ptr, |state| {
             state.roots.get(proto_root).expect("prototype root")
@@ -1078,13 +1061,13 @@ impl WiredTestContext {
     /// Must not `mem::forget` handles: ASan CI runs with `detect_leaks=1`.
     fn shutdown_bridge_and_drop_runtime(self) {
         extern "C" {
-            fn raster_v8_set_current_context(ctx: *mut crate::bridge::RasterV8ContextState);
-            fn raster_v8_set_current_isolate(isolate: *mut crate::bridge::RasterV8IsolateState);
+            fn lexe_v8_set_current_context(ctx: *mut crate::bridge::LexeV8ContextState);
+            fn lexe_v8_set_current_isolate(isolate: *mut crate::bridge::LexeV8IsolateState);
         }
         unsafe {
             crate::shutdown_runtime(self.rt_ptr).unwrap();
-            raster_v8_set_current_context(std::ptr::null_mut());
-            raster_v8_set_current_isolate(std::ptr::null_mut());
+            lexe_v8_set_current_context(std::ptr::null_mut());
+            lexe_v8_set_current_isolate(std::ptr::null_mut());
         }
         drop(self.context);
         drop(self.runtime);
@@ -1268,11 +1251,11 @@ fn persistent_binds_to_requested_local_not_last_materialized() {
 
     let fixture = WiredTestContext::new();
     extern "C" {
-        fn raster_v8_test_persistent_binds_to_requested_local(
-            ctx_state: *mut crate::bridge::RasterV8ContextState,
+        fn lexe_v8_test_persistent_binds_to_requested_local(
+            ctx_state: *mut crate::bridge::LexeV8ContextState,
         ) -> i32;
     }
-    let ok = unsafe { raster_v8_test_persistent_binds_to_requested_local(fixture.context_state) };
+    let ok = unsafe { lexe_v8_test_persistent_binds_to_requested_local(fixture.context_state) };
     assert_eq!(
         ok, 1,
         "Persistent::Reset must globalize the requested Local, not g_last_materialized_layout"
@@ -1289,12 +1272,12 @@ fn persistent_reset_scrubs_layout_index_maps() {
 
     let fixture = WiredTestContext::new();
     extern "C" {
-        fn raster_v8_test_objectwrap_strong_reset_scrubs_layout_maps(
-            ctx_state: *mut crate::bridge::RasterV8ContextState,
+        fn lexe_v8_test_objectwrap_strong_reset_scrubs_layout_maps(
+            ctx_state: *mut crate::bridge::LexeV8ContextState,
         ) -> i32;
     }
     let ok =
-        unsafe { raster_v8_test_objectwrap_strong_reset_scrubs_layout_maps(fixture.context_state) };
+        unsafe { lexe_v8_test_objectwrap_strong_reset_scrubs_layout_maps(fixture.context_state) };
     assert_eq!(
         ok, 1,
         "Persistent::Reset should scrub layout_to_root/layout_to_function_id"
@@ -1311,11 +1294,11 @@ fn resolve_root_repr_smi_to_number_and_known_layouts() {
 
     let fixture = WiredTestContext::new();
     extern "C" {
-        fn raster_v8_test_resolve_root_repr_smi_and_tagged(
-            ctx_state: *mut crate::bridge::RasterV8ContextState,
+        fn lexe_v8_test_resolve_root_repr_smi_and_tagged(
+            ctx_state: *mut crate::bridge::LexeV8ContextState,
         ) -> i32;
     }
-    let ok = unsafe { raster_v8_test_resolve_root_repr_smi_and_tagged(fixture.context_state) };
+    let ok = unsafe { lexe_v8_test_resolve_root_repr_smi_and_tagged(fixture.context_state) };
     assert_eq!(
         ok, 1,
         "general resolver rejects Smi/unknown addrs; return-value path materializes Smi"

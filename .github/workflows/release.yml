@@ -27,7 +27,7 @@ jobs:
       - name: Require tag to match Cargo version
         shell: bash
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' raster_runtime/Cargo.toml)
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' lexe/Cargo.toml)
           test -n "$version"
           test "$RELEASE_TAG" = "v$version" || {
             echo "tag $RELEASE_TAG must equal v$version" >&2
@@ -42,37 +42,37 @@ jobs:
         include:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-musl
-            asset: raster_runtime-linux-x64
+            asset: lexe-linux-x64
             platform: linux
             arch: x64
             zig: true
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-            asset: raster_runtime-linux-arm64
+            asset: lexe-linux-arm64
             platform: linux
             arch: arm64
             zig: true
           - runner: macos-15-intel
             target: x86_64-apple-darwin
-            asset: raster_runtime-macos-x64
+            asset: lexe-macos-x64
             platform: darwin
             arch: x64
             zig: false
           - runner: macos-15
             target: aarch64-apple-darwin
-            asset: raster_runtime-macos-arm64
+            asset: lexe-macos-arm64
             platform: darwin
             arch: arm64
             zig: false
           - runner: windows-2022
             target: x86_64-pc-windows-msvc
-            asset: raster_runtime-windows-x64.exe
+            asset: lexe-windows-x64.exe
             platform: win32
             arch: x64
             zig: false
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
-            asset: raster_runtime-windows-arm64.exe
+            asset: lexe-windows-arm64.exe
             platform: win32
             arch: arm64
             zig: false
@@ -110,13 +110,19 @@ jobs:
           echo "AR_x86_64_unknown_linux_musl=$GITHUB_WORKSPACE/linker/ar" >> "$GITHUB_ENV"
       - run: make js
       - name: Build release binary
-        run: cargo build --locked --release -p raster_runtime --target ${{ matrix.target }}
+        run: cargo build --locked --release -p lexe --target ${{ matrix.target }}
       - name: Verify binary and stage release asset
         shell: bash
         run: |
-          cp "target/${{ matrix.target }}/release/raster_runtime${{ endsWith(matrix.asset, '.exe') && '.exe' || '' }}" "${{ matrix.asset }}"
-          expected="raster_runtime v${RELEASE_TAG#v} (${{ matrix.platform }}, ${{ matrix.arch }})"
+          cp "target/${{ matrix.target }}/release/lexe${{ endsWith(matrix.asset, '.exe') && '.exe' || '' }}" "${{ matrix.asset }}"
+          expected="lexe v${RELEASE_TAG#v} (${{ matrix.platform }}, ${{ matrix.arch }})"
           test "$(./${{ matrix.asset }} --version)" = "$expected"
+          smoke_tmp=$(mktemp -d)
+          printf 'console.log("smoke-ok", process.argv[1]);\n' > "$smoke_tmp/app.js"
+          smoke_out="$smoke_tmp/app${{ endsWith(matrix.asset, '.exe') && '.exe' || '' }}"
+          ./${{ matrix.asset }} compile "$smoke_tmp/app.js" "$smoke_out" --executable
+          test "$("$smoke_out" arg1)" = "smoke-ok arg1"
+          rm -rf "$smoke_tmp"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
@@ -138,10 +144,10 @@ jobs:
         shell: bash
         run: |
           cd release
-          sha256sum raster_runtime-* > SHA256SUMS
+          sha256sum lexe-* > SHA256SUMS
           prerelease=()
           [[ "$RELEASE_TAG" == *-* ]] && prerelease+=(--prerelease)
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${prerelease[@]}"
           fi
-          gh release upload "$RELEASE_TAG" raster_runtime-* SHA256SUMS --clobber
+          gh release upload "$RELEASE_TAG" lexe-* SHA256SUMS --clobber

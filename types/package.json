@@ -1,13 +1,13 @@
 {
-  "name": "raster_runtime-types",
+  "name": "lexe-types",
   "license": "Apache-2.0",
   "version": "0.0.1",
   "main": "",
   "types": "index.d.ts",
-  "description": "Type definitions for raster_runtime",
+  "description": "Type definitions for lexe",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Ray-D-Song/raster",
+    "url": "https://github.com/Ray-D-Song/lexe",
     "directory": "types"
   },
   "files": [
@@ -24,7 +24,7 @@
     "pack:check": "node ./scripts/pack-check.mjs"
   },
   "keywords": [
-    "raster_runtime",
+    "lexe",
     "types"
   ]
 }

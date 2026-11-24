@@ -47,7 +47,7 @@ declare module "os" {
    */
   function availableParallelism(): number;
   /**
-   * Returns the operating system CPU architecture for which the raster_runtime binary was compiled.
+   * Returns the operating system CPU architecture for which the lexe binary was compiled.
    * Possible values are 'arm64', 'x64'. The return value is equivalent to `process.arch`.
    */
   function arch(): string;

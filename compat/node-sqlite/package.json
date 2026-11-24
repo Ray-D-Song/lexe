@@ -1,5 +1,5 @@
 {
-  "name": "raster-compat-node-sqlite",
+  "name": "lexe-compat-node-sqlite",
   "private": true,
   "type": "module",
   "scripts": {

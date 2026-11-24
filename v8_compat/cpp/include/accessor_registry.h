@@ -6,7 +6,7 @@
 
 #include <v8.h>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 struct AccessorRecord {
   v8::AccessorNameGetterCallback getter = nullptr;
@@ -27,4 +27,4 @@ class AccessorRegistry {
   std::unordered_map<uint32_t, AccessorRecord> accessors_;
 };
 
-}  // namespace raster_v8
+}  // namespace lexe_v8

@@ -1,0 +1,30 @@
+[package]
+name = "lexe_dns"
+description = "lexe Module dns"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_dns"
+path = "src/lib.rs"
+
+[dependencies]
+either = { version = "1", default-features = false }
+lexe_context = { version = "0.1.0", path = "../../libs/lexe_context" }
+lexe_hooking = { version = "0.1.0", path = "../../libs/lexe_hooking" }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", features = [
+  "macro",
+  "either",
+], default-features = false }
+tokio = { version = "1", features = ["net"], default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+tokio = { version = "1", features = [
+  "macros",
+  "test-util",
+], default-features = false }

@@ -1,0 +1,28 @@
+[package]
+name = "lexe_net"
+description = "lexe Module net"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_net"
+path = "src/lib.rs"
+
+[dependencies]
+itoa = { version = "1", default-features = false }
+lexe_buffer = { version = "0.1.0", path = "../lexe_buffer" }
+lexe_context = { version = "0.1.0", path = "../../libs/lexe_context" }
+lexe_events = { version = "0.1.0", path = "../lexe_events" }
+lexe_stream = { version = "0.1.0", path = "../lexe_stream" }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", default-features = false }
+socket2 = { version = "0.6", default-features = false }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "time"], default-features = false }
+tracing = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+rand = { version = "0.10.1", features = ["alloc"], default-features = false }

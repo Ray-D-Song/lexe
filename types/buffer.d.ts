@@ -1,9 +1,9 @@
 /**
  * `Buffer` objects are used to represent a fixed-length sequence of bytes. Many
- * raster_runtime APIs support `Buffer`s.
+ * lexe APIs support `Buffer`s.
  *
  * The `Buffer` class is a subclass of JavaScript's [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) class and
- * extends it with methods that cover additional use cases. raster_runtime APIs accept
+ * extends it with methods that cover additional use cases. lexe APIs accept
  * plain [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) s wherever `Buffer`s are supported as well.
  *
  * While the `Buffer` class is available within the global scope, it is still
@@ -1251,4 +1251,28 @@ declare module "buffer" {
   function resolveObjectURL(url: string): Blob | undefined;
 
   export { Buffer, Blob, File, SlowBuffer, transcode, isUtf8, isAscii, resolveObjectURL, atob, btoa };
+
+  interface BufferModule {
+    Buffer: typeof Buffer;
+    Blob: typeof Blob;
+    File: typeof File;
+    SlowBuffer: typeof SlowBuffer;
+    transcode: typeof transcode;
+    isUtf8: typeof isUtf8;
+    isAscii: typeof isAscii;
+    resolveObjectURL: typeof resolveObjectURL;
+    atob: typeof atob;
+    btoa: typeof btoa;
+    constants: typeof constants;
+    kMaxLength: number;
+    kStringMaxLength: number;
+    INSPECT_MAX_BYTES: number;
+  }
+  const _default: BufferModule;
+  export default _default;
+}
+
+declare module "node:buffer" {
+  export * from "buffer";
+  export { default } from "buffer";
 }

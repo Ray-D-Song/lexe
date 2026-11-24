@@ -17,7 +17,7 @@ declare module "perf_hooks" {
      */
     readonly timeOrigin: number;
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Performance/toJSON) */
-    toJSON(): { timeOrigin: number }; // TODO: raster_runtime currently has only one field
+    toJSON(): { timeOrigin: number }; // TODO: lexe currently has only one field
   }
   var performance: Performance
 }

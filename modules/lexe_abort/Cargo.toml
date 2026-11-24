@@ -1,0 +1,34 @@
+[package]
+name = "lexe_abort"
+description = "lexe Module abort"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[lib]
+name = "lexe_abort"
+path = "src/lib.rs"
+
+[features]
+default = ["sleep-timers"]
+
+sleep-timers = ["lexe_timers"]
+sleep-tokio = ["tokio"]
+
+[dependencies]
+lexe_async_hooks = { version = "0.1.0", path = "../lexe_async_hooks" }
+lexe_exceptions = { version = "0.1.0", path = "../lexe_exceptions" }
+lexe_events = { version = "0.1.0", path = "../lexe_events" }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", default-features = false }
+
+# Optional
+lexe_timers = { version = "0.1.0", path = "../lexe_timers", optional = true }
+tokio = { version = "1", features = [
+    "time",
+], default-features = false, optional = true }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+tokio = { version = "1", features = ["test-util"], default-features = false }

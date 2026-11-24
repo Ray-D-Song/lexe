@@ -21,10 +21,10 @@ assertEq(sharedBuf.toString('utf8', 0, 4), '5678', 'bufferExternalShared native 
 assertEq(hello.bufferProbe(Buffer.from('probe')), 'buffer-probe-ok', 'bufferProbe()');
 assertEq(hello.escapableOnce(), 'escapable-once-ok', 'escapableOnce()');
 const escapableTwice = hello.escapableTwice();
-if (process.versions.raster_runtime) {
+if (process.versions.lexe) {
   if (escapableTwice !== 'escapable-twice-ok' && escapableTwice !== undefined) {
     console.error(
-      `escapableTwice(): expected raster rejection, got ${JSON.stringify(escapableTwice)}`
+      `escapableTwice(): expected lexe rejection, got ${JSON.stringify(escapableTwice)}`
     );
     process.exit(1);
   }

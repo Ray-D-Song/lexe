@@ -42,7 +42,7 @@ fn include_dir_of_node_on_path() -> Option<PathBuf> {
 }
 
 fn node24_include_dir() -> PathBuf {
-    if let Ok(path) = env::var("RASTER_NODE24_INCLUDE") {
+    if let Ok(path) = env::var("LEXE_NODE24_INCLUDE") {
         return PathBuf::from(path);
     }
     if let Ok(home) = env::var("HOME") {
@@ -68,7 +68,7 @@ fn apply_sanitizer_flags(build: &mut cc::Build) {
         .ok()
         .filter(|value| !value.is_empty());
 
-    let fallback_sanitizer = env::var("RASTER_SANITIZE")
+    let fallback_sanitizer = env::var("LEXE_SANITIZE")
         .ok()
         .filter(|value| !value.is_empty());
 
@@ -179,15 +179,15 @@ fn main() {
         build.file(manifest_dir.join("cpp").join(file));
     }
 
-    // Single owner of libraster_v8_shim.a: disable cc's default link metadata
+    // Single owner of liblexe_v8_shim.a: disable cc's default link metadata
     // (which packs the archive into libv8_compat.rlib) and emit whole-archive
     // ourselves so downstream crates do not re-link the same objects.
     build.cargo_metadata(false);
-    build.compile("raster_v8_shim");
+    build.compile("lexe_v8_shim");
 
     let out_dir = env::var("OUT_DIR").unwrap();
     println!("cargo:rustc-link-search=native={out_dir}");
-    println!("cargo:rustc-link-lib=static:+whole-archive=raster_v8_shim");
+    println!("cargo:rustc-link-lib=static:+whole-archive=lexe_v8_shim");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target_os.as_str() {
@@ -199,6 +199,6 @@ fn main() {
     println!("cargo:OUT_DIR={out_dir}");
     println!("cargo:rerun-if-changed=cpp/");
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=RASTER_NODE24_INCLUDE");
-    println!("cargo:rerun-if-env-changed=RASTER_SANITIZE");
+    println!("cargo:rerun-if-env-changed=LEXE_NODE24_INCLUDE");
+    println!("cargo:rerun-if-env-changed=LEXE_SANITIZE");
 }

@@ -13,7 +13,7 @@ registerHooks({
   load(url, context, nextLoad) {
     if (url === "v8") {
       const code = `
-        import { ComputeMemoryUsage } from "raster_runtime:qjs";
+        import { ComputeMemoryUsage } from "lexe:qjs";
 
         export function getHeapStatistics() {
           const usage = ComputeMemoryUsage();

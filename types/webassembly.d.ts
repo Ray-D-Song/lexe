@@ -177,7 +177,7 @@ declare global {
 
       /**
        * Sets the element at `index`. `funcref`/`anyfunc` tables only
-       * accept `null` or a Raster-wrapped Wasm function (an arbitrary JS
+       * accept `null` or a Lexe-wrapped Wasm function (an arbitrary JS
        * function is rejected with `TypeError`); `externref` tables accept
        * any JS value. Throws `RangeError` if `index` is out of bounds.
        */

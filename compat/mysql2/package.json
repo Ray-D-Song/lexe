@@ -1,5 +1,5 @@
 {
-  "name": "@raster-runtime/compat-mysql2",
+  "name": "@lexe/compat-mysql2",
   "private": true,
   "version": "0.0.0",
   "engines": {

@@ -5,16 +5,16 @@
 namespace v8 {
 
 Local<External> External::New(Isolate* isolate, void* value) {
-  const RasterV8BridgeV1* b = raster_v8::bridge();
-  auto* ctx = raster_v8::bridge_ctx();
+  const LexeV8BridgeV1* b = lexe_v8::bridge();
+  auto* ctx = lexe_v8::bridge_ctx();
   if (!b || !ctx || !b->external_new) {
     return Local<External>();
   }
   uint64_t root_id = 0;
-  if (b->external_new(ctx, value, &root_id) != RASTER_V8_OK) {
+  if (b->external_new(ctx, value, &root_id) != LEXE_V8_OK) {
     return Local<External>();
   }
-  return raster_v8::local_from_root<External>(isolate, root_id, &raster_v8::shim::Map::object_map());
+  return lexe_v8::local_from_root<External>(isolate, root_id, &lexe_v8::shim::Map::object_map());
 }
 
 }  // namespace v8

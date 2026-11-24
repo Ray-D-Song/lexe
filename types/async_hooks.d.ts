@@ -50,7 +50,7 @@ declare module "async_hooks" {
   function executionAsyncId(): number;
   /**
    * Resource objects returned by `executionAsyncResource()` are most often internal
-   * raster_runtime handle objects with undocumented APIs. Using any functions or properties
+   * lexe handle objects with undocumented APIs. Using any functions or properties
    * on the object is likely to crash your application and should be avoided.
    *
    * Using `executionAsyncResource()` in the top-level execution context will
@@ -311,9 +311,9 @@ declare module "async_hooks" {
   /**
    * This class creates stores that stay coherent through asynchronous operations.
    *
-   * Raster propagates stores across Promises, `await`, microtasks, and timers when
+   * Lexe propagates stores across Promises, `await`, microtasks, and timers when
    * an `AsyncLocalStorage` instance is active. Public `createHook()` callbacks still
-   * require `RASTER_RUNTIME_ASYNC_HOOKS=1`.
+   * require `LEXE_ASYNC_HOOKS=1`.
    *
    * @see [source](https://nodejs.org/docs/latest-v22.x/api/async_context.html#class-asynclocalstorage)
    */

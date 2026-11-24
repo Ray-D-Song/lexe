@@ -2,12 +2,12 @@ import { spawnCapture } from "./test-utils";
 
 /**
  * HOOKING_MODE is a process-level once_cell Lazy. These behaviors must be
- * verified in separate Raster processes so the first env read is controlled.
+ * verified in separate Lexe processes so the first env read is controlled.
  */
 
 const runner = process.argv0;
 
-it("ALS works without RASTER_RUNTIME_ASYNC_HOOKS", async () => {
+it("ALS works without LEXE_ASYNC_HOOKS", async () => {
   const script = `
     import { AsyncLocalStorage } from "async_hooks";
     const als = new AsyncLocalStorage();
@@ -23,7 +23,7 @@ it("ALS works without RASTER_RUNTIME_ASYNC_HOOKS", async () => {
     console.log("ALS_OK");
   `;
   const env = { ...process.env };
-  delete env.RASTER_RUNTIME_ASYNC_HOOKS;
+  delete env.LEXE_ASYNC_HOOKS;
   const { code, stdout, stderr } = await spawnCapture(
     runner,
     ["-e", script],
@@ -34,7 +34,7 @@ it("ALS works without RASTER_RUNTIME_ASYNC_HOOKS", async () => {
   expect(code).toBe(0);
 });
 
-it("createHook does not receive events without RASTER_RUNTIME_ASYNC_HOOKS", async () => {
+it("createHook does not receive events without LEXE_ASYNC_HOOKS", async () => {
   const script = `
     import { createHook } from "async_hooks";
     let hits = 0;
@@ -54,7 +54,7 @@ it("createHook does not receive events without RASTER_RUNTIME_ASYNC_HOOKS", asyn
     console.log("HOOKS_QUIET");
   `;
   const env = { ...process.env };
-  delete env.RASTER_RUNTIME_ASYNC_HOOKS;
+  delete env.LEXE_ASYNC_HOOKS;
   const { code, stdout, stderr } = await spawnCapture(
     runner,
     ["-e", script],
@@ -65,7 +65,7 @@ it("createHook does not receive events without RASTER_RUNTIME_ASYNC_HOOKS", asyn
   expect(code).toBe(0);
 });
 
-it("createHook receives events with RASTER_RUNTIME_ASYNC_HOOKS=1", async () => {
+it("createHook receives events with LEXE_ASYNC_HOOKS=1", async () => {
   const script = `
     import { createHook } from "async_hooks";
     let hits = 0;
@@ -85,7 +85,7 @@ it("createHook receives events with RASTER_RUNTIME_ASYNC_HOOKS=1", async () => {
   `;
   const env = {
     ...process.env,
-    RASTER_RUNTIME_ASYNC_HOOKS: "1",
+    LEXE_ASYNC_HOOKS: "1",
   };
   const { code, stdout, stderr } = await spawnCapture(
     runner,

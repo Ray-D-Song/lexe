@@ -1,5 +1,5 @@
 {
-  "name": "@raster-runtime/compat-better-sqlite3",
+  "name": "@lexe/compat-better-sqlite3",
   "private": true,
   "version": "0.0.0",
   "engines": {

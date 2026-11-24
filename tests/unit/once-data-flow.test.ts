@@ -10,8 +10,8 @@ import net from "node:net";
 // when a test leaves any handle behind, which swallows the result of the tests
 // below (it reports "Worker process exited with a non-zero exit code" instead).
 // That is the long-standing harness exit-watchdog issue, independent of this
-// fix — see internal/raster-test-harness-exit-diagnosis.md and
-// https://github.com/Ray-D-Song/raster/pull/48. The assertions are kept intact
+// fix — see internal/lexe-test-harness-exit-diagnosis.md and
+// https://github.com/Ray-D-Song/lexe/pull/48. The assertions are kept intact
 // and verified by the standalone scripts recorded in PR "Known blocker";
 // remove the `skip` once that harness bug is fixed.
 

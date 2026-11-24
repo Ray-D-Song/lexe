@@ -1,0 +1,167 @@
+[package]
+name = "lexe_core"
+version = "0.1.0"
+edition = "2021"
+license-file = "LICENSE"
+
+[features]
+default = ["macro", "tls-ring", "crypto-rust"]
+uncompressed = []
+macro = ["rquickjs/macro"]
+bindgen = ["rquickjs/bindgen"]
+
+# Node.js-compatible module feature forwards
+base = [
+  "lexe_modules/base",
+  "abort",
+  "assert",
+  "async-hooks",
+  "buffer",
+  "child-process",
+  "console",
+  "constants",
+  "crypto",
+  "dgram",
+  "dns",
+  "events",
+  "exceptions",
+  "fetch",
+  "fs",
+  "http",
+  "https",
+  "inspector",
+  "intl",
+  "navigator",
+  "net",
+  "os",
+  "path",
+  "perf-hooks",
+  "process",
+  "stream-web",
+  "string-decoder",
+  "temporal",
+  "timers",
+  "tls",
+  "tty",
+  "url",
+  "util",
+  "v8",
+  "vm",
+  "webassembly",
+  "zlib",
+]
+abort = ["lexe_modules/abort"]
+assert = ["lexe_modules/assert"]
+async-hooks = ["lexe_modules/async-hooks"]
+buffer = ["lexe_modules/buffer"]
+child-process = ["lexe_modules/child-process"]
+console = ["lexe_modules/console"]
+constants = ["lexe_modules/constants"]
+crypto = ["lexe_modules/crypto"]
+dgram = ["lexe_modules/dgram"]
+dns = ["lexe_modules/dns"]
+events = ["lexe_modules/events"]
+exceptions = ["lexe_modules/exceptions"]
+fetch = ["lexe_modules/fetch", "dep:hyper"]
+fs = ["lexe_modules/fs"]
+http = ["lexe_modules/http", "dep:hyper"]
+https = ["lexe_modules/https", "dep:hyper"]
+inspector = ["lexe_modules/inspector"]
+intl = ["lexe_modules/intl"]
+navigator = ["lexe_modules/navigator"]
+net = ["lexe_modules/net"]
+os = ["lexe_modules/os"]
+path = ["lexe_modules/path"]
+perf-hooks = ["lexe_modules/perf-hooks"]
+process = ["lexe_modules/process"]
+stream-web = ["lexe_modules/stream-web"]
+string-decoder = ["lexe_modules/string-decoder"]
+temporal = ["lexe_modules/temporal"]
+timers = ["lexe_modules/timers"]
+tls = ["lexe_modules/tls"]
+tty = ["lexe_modules/tty"]
+url = ["lexe_modules/url"]
+util = ["lexe_modules/util"]
+v8 = ["lexe_modules/v8"]
+vm = ["lexe_modules/vm"]
+webassembly = ["lexe_modules/webassembly"]
+zlib = ["lexe_modules/zlib"]
+sqlite = ["lexe_modules/sqlite"]
+napi = ["lexe_modules/napi"]
+v8-compat = ["lexe_modules/v8-compat"]
+compression-c = ["lexe_modules/compression-c"]
+compression-rust = ["lexe_modules/compression-rust"]
+
+# TLS crypto backend features
+tls-ring = ["rustls/ring", "lexe_modules/tls-ring", "tls"]
+tls-aws-lc = ["rustls/aws_lc_rs", "lexe_modules/tls-aws-lc"]
+tls-graviola = ["lexe_modules/tls-graviola"]
+tls-openssl = ["lexe_modules/tls-openssl", "dep:openssl"]
+
+# Crypto provider features
+crypto-rust = ["lexe_modules/crypto-rust"]
+crypto-ring = ["lexe_modules/crypto-ring"]
+crypto-ring-rust = ["lexe_modules/crypto-ring-rust"]
+crypto-graviola = ["lexe_modules/crypto-graviola"]
+crypto-graviola-rust = ["lexe_modules/crypto-graviola-rust"]
+crypto-openssl = ["lexe_modules/crypto-openssl"]
+
+# OpenSSL vendored (builds OpenSSL from source)
+openssl-vendored = ["openssl/vendored"]
+
+[dependencies]
+bytes = { version = "1", default-features = false }
+http-body-util = { version = "0.1", default-features = false }
+hyper = { version = "1", default-features = false, optional = true }
+itoa = { version = "1", default-features = false }
+jiff = { version = "0.2" }
+libc = { version = "0.2", default-features = false }
+lexe_context = { path = "../libs/lexe_context" }
+lexe_encoding = { path = "../libs/lexe_encoding" }
+lexe_hooking = { path = "../libs/lexe_hooking" }
+lexe_json = { path = "../libs/lexe_json" }
+lexe_logging = { path = "../libs/lexe_logging" }
+lexe_modules = { path = "../lexe_modules", default-features = false }
+lexe_numbers = { path = "../libs/lexe_numbers" }
+lexe_utils = { path = "../libs/lexe_utils", default-features = false, features = ["bytearray-buffer"] }
+once_cell = { version = "1", features = ["std"], default-features = false }
+phf = { version = "0.13", default-features = false }
+quick-xml = { version = "0.40", default-features = false }
+rand = { version = "0.10.1", features = [
+  "alloc",
+  "thread_rng",
+], default-features = false }
+rquickjs = { version = "=0.12.1", features = [
+  "futures",
+  "rust-alloc",
+], default-features = false }
+rustls = { version = "0.23", features = ["tls12"], default-features = false }
+rustls-pemfile = { version = "2", features = ["std"], default-features = false }
+ryu = { version = "1", default-features = false }
+simd-json = { version = "0.17", default-features = false }
+terminal_size = { version = "0.4", default-features = false }
+unicode-width = { version = "0.2", default-features = false }
+tokio = { version = "1", features = ["sync", "time"], default-features = false }
+tracing = { version = "0.1", features = ["log"], default-features = false }
+zstd = { version = "0.13", default-features = false }
+openssl = { version = "0.10", optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+rquickjs = { version = "=0.12.1", features = ["parallel"], default-features = false }
+lexe_utils = { path = "../libs/lexe_utils", features = ["fs"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+md-5 = { version = "0.11.0", default-features = false }
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+md-5 = { version = "0.11.0", default-features = false }
+
+[build-dependencies]
+rquickjs = { version = "=0.12.1", default-features = false }
+phf_codegen = { version = "0.13", default-features = false }
+lexe_build = { path = "../libs/lexe_build" }
+uuid = { version = "1", features = ["v4"], default-features = false }
+walkdir = { version = "2", default-features = false }
+
+[dev-dependencies]
+wiremock = { version = "0.6", default-features = false }
+lexe_test = { path = "../libs/lexe_test" }

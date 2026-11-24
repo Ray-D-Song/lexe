@@ -1,5 +1,5 @@
 {
-  "name": "@raster-runtime/compat-vite-plus",
+  "name": "@lexe/compat-vite-plus",
   "private": true,
   "version": "0.0.0",
   "engines": {

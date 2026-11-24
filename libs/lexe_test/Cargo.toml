@@ -1,0 +1,19 @@
+[package]
+name = "lexe_test"
+description = "lexe test helpers"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[lib]
+name = "lexe_test"
+path = "src/lib.rs"
+
+[dependencies]
+rquickjs = { version = "=0.12.1", features = [
+  "futures",
+  "loader",
+  "parallel",
+], default-features = false }
+uuid = { version = "1", features = ["v4"], default-features = false }

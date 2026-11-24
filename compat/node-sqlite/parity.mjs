@@ -16,7 +16,7 @@ const { DatabaseSync, StatementSync, backup, constants } =
 
 const tmpRoot =
   process.env.PARITY_TMP_ROOT ??
-  fs.mkdtempSync(path.join(os.tmpdir(), "raster-node-sqlite-"));
+  fs.mkdtempSync(path.join(os.tmpdir(), "lexe-node-sqlite-"));
 const lifecycleLoops = Number.parseInt(process.env.LIFECYCLE_LOOPS ?? "1", 10);
 const backupLoops = Number.parseInt(process.env.BACKUP_LOOPS ?? "1", 10);
 const extensionPath = process.env.SQLITE_EXTENSION_PATH ?? "";
@@ -489,7 +489,7 @@ await record("database.session_and_iterator", async () => {
   }
 });
 
-// Extension differential coverage is tracked separately until Raster
+// Extension differential coverage is tracked separately until Lexe
 // loadExtension parity is complete.
 if (
   extensionPath &&

@@ -1,14 +1,14 @@
 #include "abi_137_generated.h"
 #include "accessor_registry.h"
 #include "internal.h"
-#include "raster_v8_bridge.h"
+#include "lexe_v8_bridge.h"
 
 #include <v8-function-callback.h>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 struct FakePropertyCallbackInfo {
-  v8::internal::Address args_[RASTER_V8_PROPERTY_CALLBACK_K_ARGS_LENGTH];
+  v8::internal::Address args_[LEXE_V8_PROPERTY_CALLBACK_K_ARGS_LENGTH];
 };
 
 static_assert(sizeof(FakePropertyCallbackInfo) ==
@@ -20,14 +20,14 @@ static v8::internal::Address encode_smi(int32_t value) {
       static_cast<uintptr_t>(shim::TaggedPointer::Tag::Smi));
 }
 
-static uint64_t root_id_from_accessor_return(RasterV8ContextState* ctx,
+static uint64_t root_id_from_accessor_return(LexeV8ContextState* ctx,
                                              uintptr_t repr) {
   // Same Smi / Set(0) handling as function callback return values.
   uint64_t root = resolve_return_value_repr(ctx, repr);
   if (root != 0) {
     return root;
   }
-  auto* isolate = raster_v8_current_isolate();
+  auto* isolate = lexe_v8_current_isolate();
   if (!isolate) {
     return 0;
   }
@@ -52,7 +52,7 @@ static uint64_t root_id_from_accessor_return(RasterV8ContextState* ctx,
     return 0;
   }
   uint64_t root_id = 0;
-  if (raster_v8_oddball_root(ctx, root_index, &root_id) != RASTER_V8_OK) {
+  if (lexe_v8_oddball_root(ctx, root_index, &root_id) != LEXE_V8_OK) {
     return 0;
   }
   return root_id;
@@ -62,7 +62,7 @@ static v8::internal::Address layout_slot(shim::ObjectLayout* layout) {
   return static_cast<v8::internal::Address>(shim::TaggedPointer(layout).value);
 }
 
-static shim::ObjectLayout* layout_for_root(RasterV8ContextState* ctx, uint64_t root_id) {
+static shim::ObjectLayout* layout_for_root(LexeV8ContextState* ctx, uint64_t root_id) {
   auto* slot = alloc_handle_slot(ctx);
   slot->object =
       shim::ObjectLayout(const_cast<shim::Map*>(&shim::Map::object_map()), root_id);
@@ -74,19 +74,19 @@ static shim::ObjectLayout* layout_for_root(RasterV8ContextState* ctx, uint64_t r
   return &slot->object;
 }
 
-RasterV8Status dispatch_v8_accessor(uint32_t accessor_id,
+LexeV8Status dispatch_v8_accessor(uint32_t accessor_id,
                                     uint64_t receiver_root,
                                     void* embedder_override,
                                     uint64_t* out_result_root) {
   auto* acc_rec = AccessorRegistry::instance().accessor_at(accessor_id);
   if (!acc_rec || !acc_rec->getter) {
-    return RASTER_V8_ERROR;
+    return LEXE_V8_ERROR;
   }
 
-  auto* ctx = raster_v8_current_context();
-  auto* isolate = raster_v8_current_isolate();
+  auto* ctx = lexe_v8_current_context();
+  auto* isolate = lexe_v8_current_isolate();
   if (!ctx || !isolate) {
-    return RASTER_V8_ERROR;
+    return LEXE_V8_ERROR;
   }
 
   g_callback_handle_stack.emplace_back();
@@ -98,11 +98,11 @@ RasterV8Status dispatch_v8_accessor(uint32_t accessor_id,
   callback_frame.borrowed_layouts.push_back(holder_layout);
   shim::ObjectLayout data_layout(const_cast<shim::Map*>(&shim::Map::object_map()), acc_rec->data_root_id);
   auto& undefined_layout =
-      iso_impl(reinterpret_cast<RasterV8IsolateState*>(isolate))->undefined_value.layout;
+      iso_impl(reinterpret_cast<LexeV8IsolateState*>(isolate))->undefined_value.layout;
 
   void* embedder = embedder_override;
   if (!embedder) {
-    raster_v8_internal_field_get(ctx, receiver_root, 0, &embedder);
+    lexe_v8_internal_field_get(ctx, receiver_root, 0, &embedder);
   }
   if (embedder != nullptr) {
     this_layout->embedder_slot_0 = embedder;
@@ -110,38 +110,38 @@ RasterV8Status dispatch_v8_accessor(uint32_t accessor_id,
   }
 
   FakePropertyCallbackInfo frame{};
-  frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_SHOULD_THROW_ON_ERROR_INDEX] = encode_smi(0);
-  frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_HOLDER_INDEX] = layout_slot(holder_layout);
-  frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_ISOLATE_INDEX] =
+  frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_SHOULD_THROW_ON_ERROR_INDEX] = encode_smi(0);
+  frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_HOLDER_INDEX] = layout_slot(holder_layout);
+  frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_ISOLATE_INDEX] =
       reinterpret_cast<v8::internal::Address>(isolate);
-  frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_HOLDER_V2_INDEX] = layout_slot(holder_layout);
-  frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_RETURN_VALUE_INDEX] =
+  frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_HOLDER_V2_INDEX] = layout_slot(holder_layout);
+  frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_RETURN_VALUE_INDEX] =
       layout_slot(&undefined_layout);
-  frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_DATA_INDEX] = layout_slot(&data_layout);
-  frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_THIS_INDEX] = layout_slot(this_layout);
+  frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_DATA_INDEX] = layout_slot(&data_layout);
+  frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_THIS_INDEX] = layout_slot(this_layout);
 
   auto& info = reinterpret_cast<v8::PropertyCallbackInfo<v8::Value>&>(frame);
 
-  raster_v8_open_handle_scope(ctx);
+  lexe_v8_open_handle_scope(ctx);
   acc_rec->getter(v8::Local<v8::Name>(), info);
   const uintptr_t repr = static_cast<uintptr_t>(
-      frame.args_[RASTER_V8_PROPERTY_CALLBACK_K_RETURN_VALUE_INDEX]);
+      frame.args_[LEXE_V8_PROPERTY_CALLBACK_K_RETURN_VALUE_INDEX]);
   *out_result_root = root_id_from_accessor_return(ctx, repr);
-  raster_v8_close_handle_scope(ctx);
-  raster_v8_dispatch_pending_weak_callbacks();
+  lexe_v8_close_handle_scope(ctx);
+  lexe_v8_dispatch_pending_weak_callbacks();
   g_callback_handle_stack.pop_back();
   if (g_callback_handle_stack.empty()) {
     g_callback_handle_frame = {};
   }
-  return RASTER_V8_OK;
+  return LEXE_V8_OK;
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8
 
-extern "C" RasterV8Status raster_v8_dispatch_accessor(uint32_t accessor_id,
+extern "C" LexeV8Status lexe_v8_dispatch_accessor(uint32_t accessor_id,
                                                       uint64_t receiver_root,
                                                       void* embedder_override,
                                                       uint64_t* out_result_root) {
-  return raster_v8::dispatch_v8_accessor(accessor_id, receiver_root, embedder_override,
+  return lexe_v8::dispatch_v8_accessor(accessor_id, receiver_root, embedder_override,
                                         out_result_root);
 }

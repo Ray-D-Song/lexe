@@ -1,0 +1,43 @@
+[package]
+name = "lexe_os"
+description = "lexe Module OS"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[features]
+default = ["network", "statistics", "system"]
+
+network = ["sysinfo/network", "system"]
+statistics = ["system"]
+system = ["sysinfo/system"]
+
+[dependencies]
+home = { version = "0.5", default-features = false }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+num_cpus = { version = "1", default-features = false }
+once_cell = { version = "1", features = ["std"], default-features = false }
+rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
+
+# Optional
+sysinfo = { version = "0.39", default-features = false, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", default-features = false }
+users = { version = "0.11", features = ["cache"], default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+whoami = { version = "2", default-features = false }
+windows-registry = { version = "0.6", features = [
+  "std",
+], default-features = false }
+windows-result = { version = "0.4", features = [
+  "std",
+], default-features = false }
+windows-version = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+tokio = { version = "1", features = ["test-util"], default-features = false }

@@ -6,7 +6,7 @@ const TEST_MESSAGE = "This is test message.";
 const ENCODED_DATA = ENCODER.encode(TEST_MESSAGE);
 
 // Limited crypto providers (crypto-ring, crypto-graviola) only support digest
-const LIMITED_CRYPTO = process.env.RASTER_RUNTIME_LIMITED_CRYPTO === "1";
+const LIMITED_CRYPTO = process.env.LEXE_LIMITED_CRYPTO === "1";
 const fullCrypto = LIMITED_CRYPTO ? describe.skip : describe;
 
 describe("SubtleCrypto digest", () => {

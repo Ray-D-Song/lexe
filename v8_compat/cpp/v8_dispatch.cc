@@ -1,6 +1,6 @@
 #include "abi_137_generated.h"
 #include "function_registry.h"
-#include "raster_v8_bridge.h"
+#include "lexe_v8_bridge.h"
 #include "template_registry.h"
 #include "internal.h"
 
@@ -10,7 +10,7 @@
 #include <v8-internal.h>
 #include <v8-local-handle.h>
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 thread_local uint32_t g_active_callback_template_id = 0;
 
@@ -24,25 +24,25 @@ static_assert(sizeof(FakeFunctionCallbackInfo) == sizeof(v8::FunctionCallbackInf
 
 static const shim::Map* map_for_layout_kind(uint8_t kind) {
   switch (kind) {
-    case RASTER_V8_LAYOUT_STRING:
+    case LEXE_V8_LAYOUT_STRING:
       return &shim::Map::string_map();
-    case RASTER_V8_LAYOUT_ODDBALL:
+    case LEXE_V8_LAYOUT_ODDBALL:
       return &shim::Map::oddball_map();
-    case RASTER_V8_LAYOUT_HEAP_NUMBER:
+    case LEXE_V8_LAYOUT_HEAP_NUMBER:
       return &shim::Map::heap_number_map();
-    case RASTER_V8_LAYOUT_OBJECT:
+    case LEXE_V8_LAYOUT_OBJECT:
     default:
       return &shim::Map::object_map();
   }
 }
 
-static shim::ObjectLayout layout_for_value_root(RasterV8ContextState* ctx, uint64_t root_id) {
-  uint8_t kind = RASTER_V8_LAYOUT_OBJECT;
+static shim::ObjectLayout layout_for_value_root(LexeV8ContextState* ctx, uint64_t root_id) {
+  uint8_t kind = LEXE_V8_LAYOUT_OBJECT;
   int32_t smi = 0;
-  if (raster_v8_value_layout_kind(ctx, root_id, &kind, &smi) != RASTER_V8_OK) {
+  if (lexe_v8_value_layout_kind(ctx, root_id, &kind, &smi) != LEXE_V8_OK) {
     return shim::ObjectLayout(const_cast<shim::Map*>(&shim::Map::object_map()), root_id);
   }
-  if (kind == RASTER_V8_LAYOUT_INT32_SMI) {
+  if (kind == LEXE_V8_LAYOUT_INT32_SMI) {
     shim::ObjectLayout layout;
     layout.tagged_map = shim::TaggedPointer(smi);
     layout.contents.root_id = root_id;
@@ -51,7 +51,7 @@ static shim::ObjectLayout layout_for_value_root(RasterV8ContextState* ctx, uint6
   return shim::ObjectLayout(const_cast<shim::Map*>(map_for_layout_kind(kind)), root_id);
 }
 
-static shim::ObjectLayout* layout_for_root(RasterV8ContextState* ctx, uint64_t root_id) {
+static shim::ObjectLayout* layout_for_root(LexeV8ContextState* ctx, uint64_t root_id) {
   auto* slot = alloc_handle_slot(ctx);
   slot->object = layout_for_value_root(ctx, root_id);
   slot->object.tagged_map = shim::TaggedPointer(&slot->object);
@@ -62,12 +62,12 @@ static shim::ObjectLayout* layout_for_root(RasterV8ContextState* ctx, uint64_t r
   return &slot->object;
 }
 
-static uint64_t root_id_from_return_value(RasterV8ContextState* ctx,
+static uint64_t root_id_from_return_value(LexeV8ContextState* ctx,
                                           v8::internal::Address repr) {
   return resolve_return_value_repr(ctx, static_cast<uintptr_t>(repr));
 }
 
-RasterV8Status dispatch_v8_callback(uint32_t function_id,
+LexeV8Status dispatch_v8_callback(uint32_t function_id,
                                     uint64_t receiver_root,
                                     uint64_t new_target_root,
                                     const uint64_t* arg_roots,
@@ -75,17 +75,17 @@ RasterV8Status dispatch_v8_callback(uint32_t function_id,
                                     uint64_t* out_result_root) {
   auto* fn_rec = FunctionRegistry::instance().function_at(function_id);
   if (!fn_rec) {
-    return RASTER_V8_ERROR;
+    return LEXE_V8_ERROR;
   }
   auto* tmpl_rec = FunctionRegistry::instance().template_at(fn_rec->template_id);
   if (!tmpl_rec || !tmpl_rec->callback) {
-    return RASTER_V8_ERROR;
+    return LEXE_V8_ERROR;
   }
 
-  auto* ctx = raster_v8_current_context();
-  auto* isolate = raster_v8_current_isolate();
+  auto* ctx = lexe_v8_current_context();
+  auto* isolate = lexe_v8_current_isolate();
   if (!ctx || !isolate) {
-    return RASTER_V8_ERROR;
+    return LEXE_V8_ERROR;
   }
 
   g_callback_handle_stack.emplace_back();
@@ -93,7 +93,7 @@ RasterV8Status dispatch_v8_callback(uint32_t function_id,
 
   auto store_layout = [&](uint64_t root_id, shim::ObjectLayout layout) -> v8::internal::Address {
     void* embedder = nullptr;
-    if (raster_v8_internal_field_get(ctx, root_id, 0, &embedder) != RASTER_V8_OK) {
+    if (lexe_v8_internal_field_get(ctx, root_id, 0, &embedder) != LEXE_V8_OK) {
       embedder = nullptr;
     }
     if (embedder != nullptr) {
@@ -125,28 +125,28 @@ RasterV8Status dispatch_v8_callback(uint32_t function_id,
   auto* context_layout = layout_for_root(ctx, ctx_impl(ctx)->context_root_id);
   frame.borrowed_layouts.push_back(context_layout);
   auto& undefined_layout =
-      iso_impl(reinterpret_cast<RasterV8IsolateState*>(isolate))->undefined_value.layout;
+      iso_impl(reinterpret_cast<LexeV8IsolateState*>(isolate))->undefined_value.layout;
 
   shim::ObjectLayout target_layout(
       const_cast<shim::Map*>(&shim::Map::object_map()), fn_rec->template_id);
 
-  v8::internal::Address implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_ARGS_LENGTH] = {};
-  implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_UNUSED_INDEX] = 0;
-  implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_ISOLATE_INDEX] =
+  v8::internal::Address implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_ARGS_LENGTH] = {};
+  implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_UNUSED_INDEX] = 0;
+  implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_ISOLATE_INDEX] =
       reinterpret_cast<v8::internal::Address>(isolate);
-  implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_CONTEXT_INDEX] =
+  implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_CONTEXT_INDEX] =
       reinterpret_cast<v8::internal::Address>(context_layout);
-  implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_RETURN_VALUE_INDEX] =
+  implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_RETURN_VALUE_INDEX] =
       static_cast<v8::internal::Address>(shim::TaggedPointer(&undefined_layout).value);
-  implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_TARGET_INDEX] =
+  implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_TARGET_INDEX] =
       reinterpret_cast<v8::internal::Address>(&target_layout);
   if (new_target_root != 0) {
     auto* new_target_layout = layout_for_root(ctx, new_target_root);
     frame.borrowed_layouts.push_back(new_target_layout);
-    implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_NEW_TARGET_INDEX] =
+    implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_NEW_TARGET_INDEX] =
         reinterpret_cast<v8::internal::Address>(new_target_layout);
   } else {
-    implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_NEW_TARGET_INDEX] =
+    implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_NEW_TARGET_INDEX] =
         static_cast<v8::internal::Address>(shim::TaggedPointer(&undefined_layout).value);
   }
 
@@ -155,29 +155,29 @@ RasterV8Status dispatch_v8_callback(uint32_t function_id,
   FakeFunctionCallbackInfo fake{implicit_args, values,
                                 static_cast<v8::internal::Address>(argc)};
   auto& info = reinterpret_cast<v8::FunctionCallbackInfo<v8::Value>&>(fake);
-  raster_v8_open_handle_scope(ctx);
+  lexe_v8_open_handle_scope(ctx);
   g_active_callback_template_id = fn_rec->template_id;
   tmpl_rec->callback(info);
   g_active_callback_template_id = 0;
   *out_result_root = root_id_from_return_value(
-      ctx, implicit_args[RASTER_V8_FUNCTION_CALLBACK_K_RETURN_VALUE_INDEX]);
-  raster_v8_close_handle_scope(ctx);
-  raster_v8_dispatch_pending_weak_callbacks();
+      ctx, implicit_args[LEXE_V8_FUNCTION_CALLBACK_K_RETURN_VALUE_INDEX]);
+  lexe_v8_close_handle_scope(ctx);
+  lexe_v8_dispatch_pending_weak_callbacks();
   g_callback_handle_stack.pop_back();
   if (g_callback_handle_stack.empty()) {
     g_callback_handle_frame = {};
   }
-  return RASTER_V8_OK;
+  return LEXE_V8_OK;
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8
 
-extern "C" RasterV8Status raster_v8_dispatch_callback(uint32_t function_id,
+extern "C" LexeV8Status lexe_v8_dispatch_callback(uint32_t function_id,
                                                       uint64_t receiver_root,
                                                       uint64_t new_target_root,
                                                       const uint64_t* arg_roots,
                                                       int argc,
                                                       uint64_t* out_result_root) {
-  return raster_v8::dispatch_v8_callback(function_id, receiver_root, new_target_root, arg_roots,
+  return lexe_v8::dispatch_v8_callback(function_id, receiver_root, new_target_root, arg_roots,
                                          argc, out_result_root);
 }

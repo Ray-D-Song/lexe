@@ -81,7 +81,7 @@ describe("test runner timeout and exit regressions", () => {
     15000
   );
 
-  it("raster_runtime --version exits cleanly", async () => {
+  it("lexe --version exits cleanly", async () => {
     const { code, stdout, stderr } = await spawnCapture(process.argv0, [
       "--version",
     ]);
@@ -91,7 +91,7 @@ describe("test runner timeout and exit regressions", () => {
     expect(output).not.toContain("JS_FreeRuntime");
   });
 
-  it("raster_runtime -e exits cleanly", async () => {
+  it("lexe -e exits cleanly", async () => {
     const { code, stdout, stderr } = await spawnCapture(process.argv0, [
       "-e",
       "console.log('ok')",
@@ -104,7 +104,7 @@ describe("test runner timeout and exit regressions", () => {
   });
 
   it("empty test directory exits cleanly", async () => {
-    const emptyDir = await mkdtemp(join(tmpdir(), "raster-empty-tests-"));
+    const emptyDir = await mkdtemp(join(tmpdir(), "lexe-empty-tests-"));
     try {
       const { code, stdout, stderr } = await spawnCapture(process.argv0, [
         "test",

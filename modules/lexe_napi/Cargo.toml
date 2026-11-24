@@ -1,0 +1,32 @@
+[package]
+name = "lexe_napi"
+description = "Node-API (N-API) native addon support for lexe"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[lib]
+name = "lexe_napi"
+path = "src/lib.rs"
+
+[features]
+default = []
+v8-compat = ["dep:v8_compat"]
+
+[dependencies]
+v8_compat = { path = "../../v8_compat", optional = true }
+libc = { version = "0.2", default-features = false }
+libloading = { version = "0.8", default-features = false }
+once_cell = { version = "1", features = ["std"], default-features = false }
+parking_lot = { version = "0.12", default-features = false }
+lexe_context = { path = "../../libs/lexe_context", default-features = false }
+lexe_utils = { path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", features = ["std", "futures", "parallel"], default-features = false }
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread"], default-features = false }
+tracing = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+# `time` for bounded driver teardown waits in unit tests (tokio::time::timeout).
+tokio = { version = "1", features = ["macros", "rt", "time"], default-features = false }

@@ -22,7 +22,7 @@ parentPort.on("message", (msg) => {
     return;
   }
   if (workerData?.askEnv) {
-    const env = getEnvironmentData("raster-worker-env-key");
+    const env = getEnvironmentData("lexe-worker-env-key");
     parentPort.postMessage({ envV: env?.v });
     return;
   }

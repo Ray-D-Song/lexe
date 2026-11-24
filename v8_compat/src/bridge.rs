@@ -14,7 +14,7 @@ use crate::root::RootTable;
 
 #[repr(C)]
 #[derive(PartialEq)]
-pub enum RasterV8Status {
+pub enum LexeV8Status {
     Ok = 0,
     Exception = 1,
     Unsupported = 2,
@@ -23,127 +23,111 @@ pub enum RasterV8Status {
 }
 
 #[repr(C)]
-pub struct RasterV8ContextState {
+pub struct LexeV8ContextState {
     _private: [u8; 0],
 }
 
 #[repr(C)]
-pub struct RasterV8IsolateState {
+pub struct LexeV8IsolateState {
     _private: [u8; 0],
 }
 
-type RootDupFn = unsafe extern "C" fn(u64, *mut u64) -> RasterV8Status;
-type RootDropFn = unsafe extern "C" fn(u64) -> RasterV8Status;
-type RootMakeWeakFn = unsafe extern "C" fn(u64) -> RasterV8Status;
-type RootFromJsFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, *mut u64) -> RasterV8Status;
-type RootToJsFn = unsafe extern "C" fn(*mut RasterV8ContextState, u64, *mut u64) -> RasterV8Status;
+type RootDupFn = unsafe extern "C" fn(u64, *mut u64) -> LexeV8Status;
+type RootDropFn = unsafe extern "C" fn(u64) -> LexeV8Status;
+type RootMakeWeakFn = unsafe extern "C" fn(u64) -> LexeV8Status;
+type RootFromJsFn = unsafe extern "C" fn(*mut LexeV8ContextState, u64, *mut u64) -> LexeV8Status;
+type RootToJsFn = unsafe extern "C" fn(*mut LexeV8ContextState, u64, *mut u64) -> LexeV8Status;
 type ThrowTypeErrorFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, *const c_char) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, *const c_char) -> LexeV8Status;
 type FatalFn = unsafe extern "C" fn(*const c_char, *const c_char);
 type StringNewUtf8Fn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, *const c_char, i32, *mut u64) -> RasterV8Status;
-type ObjectNewFn = unsafe extern "C" fn(*mut RasterV8ContextState, *mut u64) -> RasterV8Status;
-type ObjectSetFn = unsafe extern "C" fn(*mut RasterV8ContextState, u64, u64, u64) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, *const c_char, i32, *mut u64) -> LexeV8Status;
+type ObjectNewFn = unsafe extern "C" fn(*mut LexeV8ContextState, *mut u64) -> LexeV8Status;
+type ObjectSetFn = unsafe extern "C" fn(*mut LexeV8ContextState, u64, u64, u64) -> LexeV8Status;
 type FunctionTemplateNewFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
+    *mut LexeV8ContextState,
     u32,
     *mut std::ffi::c_void,
     u64,
     *mut u32,
-) -> RasterV8Status;
+) -> LexeV8Status;
 type FunctionTemplateGetFunctionFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u32, *mut u64) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u32, *mut u64) -> LexeV8Status;
 type DispatchFunctionFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
+    *mut LexeV8ContextState,
     u32,
     u64,
     u64,
     *const u64,
     i32,
     *mut u64,
-) -> RasterV8Status;
+) -> LexeV8Status;
 type RunModuleInitFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
+    *mut LexeV8ContextState,
     unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void, *mut std::ffi::c_void),
     u64,
     u64,
     *mut u64,
-) -> RasterV8Status;
+) -> LexeV8Status;
 type ObjectGetFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, u64, *mut u64) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, u64, *mut u64) -> LexeV8Status;
 type ObjectGetIndexFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, u32, *mut u64) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, u32, *mut u64) -> LexeV8Status;
 type ObjectSetIndexFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, u32, u64) -> RasterV8Status;
-type ObjectDefineOwnPropertyFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
-    u64,
-    u64,
-    u64,
-    i32,
-    *mut bool,
-) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, u32, u64) -> LexeV8Status;
+type ObjectDefineOwnPropertyFn =
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, u64, u64, i32, *mut bool) -> LexeV8Status;
 type ObjectHasOwnPropertyFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, u64, *mut bool) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, u64, *mut bool) -> LexeV8Status;
 type ObjectGetPrototypeFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, *mut u64) -> RasterV8Status;
-type ArrayNewFn = unsafe extern "C" fn(*mut RasterV8ContextState, i32, *mut u64) -> RasterV8Status;
-type NumberNewFn = unsafe extern "C" fn(*mut RasterV8ContextState, f64, *mut u64) -> RasterV8Status;
-type BigIntNewFn = unsafe extern "C" fn(*mut RasterV8ContextState, i64, *mut u64) -> RasterV8Status;
-type IntegerNewFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, i32, *mut u64) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, *mut u64) -> LexeV8Status;
+type ArrayNewFn = unsafe extern "C" fn(*mut LexeV8ContextState, i32, *mut u64) -> LexeV8Status;
+type NumberNewFn = unsafe extern "C" fn(*mut LexeV8ContextState, f64, *mut u64) -> LexeV8Status;
+type BigIntNewFn = unsafe extern "C" fn(*mut LexeV8ContextState, i64, *mut u64) -> LexeV8Status;
+type IntegerNewFn = unsafe extern "C" fn(*mut LexeV8ContextState, i32, *mut u64) -> LexeV8Status;
 type StringNewLatin1Fn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, *const u8, i32, *mut u64) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, *const u8, i32, *mut u64) -> LexeV8Status;
 type StringToUtf8Fn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
+    *mut LexeV8ContextState,
     u64,
     *mut *mut c_char,
     *mut usize,
-) -> RasterV8Status;
-type StringFreeUtf8Fn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, *mut c_char) -> RasterV8Status;
+) -> LexeV8Status;
+type StringFreeUtf8Fn = unsafe extern "C" fn(*mut LexeV8ContextState, *mut c_char) -> LexeV8Status;
 type FunctionCallFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
+    *mut LexeV8ContextState,
     u64,
     u64,
     i32,
     *const u64,
     *mut u64,
-) -> RasterV8Status;
-type ThrowValueFn = unsafe extern "C" fn(*mut RasterV8ContextState, u64) -> RasterV8Status;
+) -> LexeV8Status;
+type ThrowValueFn = unsafe extern "C" fn(*mut LexeV8ContextState, u64) -> LexeV8Status;
 type NewExceptionFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, i32, *mut u64) -> RasterV8Status;
-type ExternalNewFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
-    *mut std::ffi::c_void,
-    *mut u64,
-) -> RasterV8Status;
-type InternalFieldSetFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
-    u64,
-    i32,
-    *mut std::ffi::c_void,
-) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, i32, *mut u64) -> LexeV8Status;
+type ExternalNewFn =
+    unsafe extern "C" fn(*mut LexeV8ContextState, *mut std::ffi::c_void, *mut u64) -> LexeV8Status;
+type InternalFieldSetFn =
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, i32, *mut std::ffi::c_void) -> LexeV8Status;
 type InternalFieldGetFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
+    *mut LexeV8ContextState,
     u64,
     i32,
     *mut *mut std::ffi::c_void,
-) -> RasterV8Status;
-type SymbolIteratorFn = unsafe extern "C" fn(*mut RasterV8ContextState, *mut u64) -> RasterV8Status;
+) -> LexeV8Status;
+type SymbolIteratorFn = unsafe extern "C" fn(*mut LexeV8ContextState, *mut u64) -> LexeV8Status;
 type GetCreationContextFn =
-    unsafe extern "C" fn(*mut RasterV8ContextState, u64, *mut u64) -> RasterV8Status;
+    unsafe extern "C" fn(*mut LexeV8ContextState, u64, *mut u64) -> LexeV8Status;
 type RegisterWeakCallbackFn = unsafe extern "C" fn(
-    *mut RasterV8ContextState,
+    *mut LexeV8ContextState,
     u64,
     *mut std::ffi::c_void,
     *mut std::ffi::c_void,
-) -> RasterV8Status;
-type GetContextRootFn = unsafe extern "C" fn(*mut RasterV8ContextState, *mut u64) -> RasterV8Status;
+) -> LexeV8Status;
+type GetContextRootFn = unsafe extern "C" fn(*mut LexeV8ContextState, *mut u64) -> LexeV8Status;
 
 #[repr(C)]
-pub struct RasterV8BridgeV1 {
+pub struct LexeV8BridgeV1 {
     pub version: u32,
     pub node_module_version: u32,
     pub root_dup: Option<RootDupFn>,
@@ -352,7 +336,7 @@ fn persistent_counts_for_ctx(ctx: *mut JSContext, key: usize) -> (usize, usize) 
         return (0, 0);
     };
     extern "C" {
-        fn raster_v8_persistent_counts_for_context(
+        fn lexe_v8_persistent_counts_for_context(
             isolate: *mut std::ffi::c_void,
             context_key: usize,
             strong_out: *mut usize,
@@ -362,7 +346,7 @@ fn persistent_counts_for_ctx(ctx: *mut JSContext, key: usize) -> (usize, usize) 
     let mut strong = 0usize;
     let mut weak = 0usize;
     unsafe {
-        raster_v8_persistent_counts_for_context(
+        lexe_v8_persistent_counts_for_context(
             isolate_ptr as *mut std::ffi::c_void,
             key,
             &mut strong,
@@ -403,14 +387,12 @@ fn dispose_strong_persistents_for_ctx(ctx: *mut JSContext, key: usize) -> usize 
         return 0;
     };
     extern "C" {
-        fn raster_v8_dispose_strong_context_persistents(
+        fn lexe_v8_dispose_strong_context_persistents(
             isolate: *mut std::ffi::c_void,
             context_key: usize,
         ) -> usize;
     }
-    unsafe {
-        raster_v8_dispose_strong_context_persistents(isolate_ptr as *mut std::ffi::c_void, key)
-    }
+    unsafe { lexe_v8_dispose_strong_context_persistents(isolate_ptr as *mut std::ffi::c_void, key) }
 }
 
 fn dispose_weak_persistents_for_ctx(ctx: *mut JSContext, key: usize) -> usize {
@@ -420,12 +402,12 @@ fn dispose_weak_persistents_for_ctx(ctx: *mut JSContext, key: usize) -> usize {
         return 0;
     };
     extern "C" {
-        fn raster_v8_dispose_weak_context_persistents(
+        fn lexe_v8_dispose_weak_context_persistents(
             isolate: *mut std::ffi::c_void,
             context_key: usize,
         ) -> usize;
     }
-    unsafe { raster_v8_dispose_weak_context_persistents(isolate_ptr as *mut std::ffi::c_void, key) }
+    unsafe { lexe_v8_dispose_weak_context_persistents(isolate_ptr as *mut std::ffi::c_void, key) }
 }
 
 const MAX_TEARDOWN_PASSES: usize = 32;
@@ -515,13 +497,13 @@ where
     })
 }
 
-fn catch_panic<F>(f: F) -> RasterV8Status
+fn catch_panic<F>(f: F) -> LexeV8Status
 where
-    F: FnOnce() -> RasterV8Status + UnwindSafe,
+    F: FnOnce() -> LexeV8Status + UnwindSafe,
 {
     match catch_unwind(f) {
         Ok(status) => status,
-        Err(_) => RasterV8Status::Error,
+        Err(_) => LexeV8Status::Error,
     }
 }
 
@@ -562,43 +544,43 @@ pub(crate) fn function_id_for_root(state: &BridgeState, root: u64) -> Option<u32
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn raster_v8_function_id_for_root(
-    _ctx: *mut RasterV8ContextState,
+pub unsafe extern "C" fn lexe_v8_function_id_for_root(
+    _ctx: *mut LexeV8ContextState,
     root_id: u64,
     out_function_id: *mut u32,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out_function_id.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     if let Some(function_id) = with_state_ref(|state| function_id_for_root(state, root_id)) {
         *out_function_id = function_id;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     } else {
-        RasterV8Status::Error
+        LexeV8Status::Error
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn raster_v8_function_root_for_id(
-    _ctx: *mut RasterV8ContextState,
+pub unsafe extern "C" fn lexe_v8_function_root_for_id(
+    _ctx: *mut LexeV8ContextState,
     function_id: u32,
     out_root_id: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     if out_root_id.is_null() {
-        return RasterV8Status::Error;
+        return LexeV8Status::Error;
     }
     if let Some(root) = with_state_ref(|state| function_root_for_id(state, function_id)) {
         *out_root_id = root;
-        RasterV8Status::Ok
+        LexeV8Status::Ok
     } else {
-        RasterV8Status::Error
+        LexeV8Status::Error
     }
 }
 
-unsafe extern "C" fn root_dup(id: u64, out: *mut u64) -> RasterV8Status {
+unsafe extern "C" fn root_dup(id: u64, out: *mut u64) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         if out.is_null() {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         }
         with_state(|state| match state.roots.dup(state.ctx_ptr(), id) {
             Some(new_id) => {
@@ -607,21 +589,21 @@ unsafe extern "C" fn root_dup(id: u64, out: *mut u64) -> RasterV8Status {
                     state.function_roots.insert(function_id, new_id);
                 }
                 *out = new_id;
-                RasterV8Status::Ok
+                LexeV8Status::Ok
             },
-            None => RasterV8Status::Error,
+            None => LexeV8Status::Error,
         })
     }))
 }
 
-unsafe extern "C" fn root_drop(id: u64) -> RasterV8Status {
+unsafe extern "C" fn root_drop(id: u64) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         if let Some(status) = with_state_for_root_id(id, |state| {
             if let Some(function_id) = state.root_function_ids.remove(&id) {
                 state.function_roots.remove(&function_id);
             }
             state.roots.drop_root(state.ctx_ptr(), id);
-            RasterV8Status::Ok
+            LexeV8Status::Ok
         }) {
             return status;
         }
@@ -630,12 +612,12 @@ unsafe extern "C" fn root_drop(id: u64) -> RasterV8Status {
                 state.function_roots.remove(&function_id);
             }
             state.roots.drop_root(state.ctx_ptr(), id);
-            RasterV8Status::Ok
+            LexeV8Status::Ok
         })
     }))
 }
 
-unsafe extern "C" fn root_make_weak(id: u64) -> RasterV8Status {
+unsafe extern "C" fn root_make_weak(id: u64) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         if let Some(status) =
             with_state_for_root_id(id, |state| crate::js_ops::root_make_weak(state, id))
@@ -647,14 +629,14 @@ unsafe extern "C" fn root_make_weak(id: u64) -> RasterV8Status {
 }
 
 unsafe extern "C" fn string_new_utf8(
-    _ctx: *mut RasterV8ContextState,
+    _ctx: *mut LexeV8ContextState,
     data: *const c_char,
     length: i32,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         if data.is_null() || out.is_null() {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         }
         with_state(|state| {
             let bytes = if length < 0 {
@@ -670,46 +652,46 @@ unsafe extern "C" fn string_new_utf8(
             *out = state.roots.insert_owned(unsafe {
                 crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), js)
             });
-            RasterV8Status::Ok
+            LexeV8Status::Ok
         })
     }))
 }
 
-unsafe extern "C" fn object_new(_ctx: *mut RasterV8ContextState, out: *mut u64) -> RasterV8Status {
+unsafe extern "C" fn object_new(_ctx: *mut LexeV8ContextState, out: *mut u64) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         if out.is_null() {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         }
         with_state(|state| {
             let obj = crate::js_ops::new_v8_object(state.ctx_ptr());
             *out = state.roots.insert_owned(unsafe {
                 crate::owned_js_value::OwnedJsValue::new(state.ctx_ptr(), obj)
             });
-            RasterV8Status::Ok
+            LexeV8Status::Ok
         })
     }))
 }
 
 unsafe extern "C" fn object_set(
-    _ctx: *mut RasterV8ContextState,
+    _ctx: *mut LexeV8ContextState,
     object_root: u64,
     key_root: u64,
     value_root: u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         with_state(|state| {
             let Some(obj) = state.roots.get(object_root) else {
-                return RasterV8Status::Error;
+                return LexeV8Status::Error;
             };
             let Some(key) = state.roots.get(key_root) else {
-                return RasterV8Status::Error;
+                return LexeV8Status::Error;
             };
             let Some(val) = state.roots.get(value_root) else {
-                return RasterV8Status::Error;
+                return LexeV8Status::Error;
             };
             let atom = qjs::JS_ValueToAtom(state.ctx_ptr(), key);
             if atom == 0 {
-                return RasterV8Status::Error;
+                return LexeV8Status::Error;
             }
             let rc = qjs::JS_SetProperty(
                 state.ctx_ptr(),
@@ -719,17 +701,17 @@ unsafe extern "C" fn object_set(
             );
             qjs::JS_FreeAtom(state.ctx_ptr(), atom);
             if rc < 0 {
-                return RasterV8Status::Exception;
+                return LexeV8Status::Exception;
             }
-            RasterV8Status::Ok
+            LexeV8Status::Ok
         })
     }))
 }
 
 unsafe extern "C" fn throw_type_error(
-    _ctx: *mut RasterV8ContextState,
+    _ctx: *mut LexeV8ContextState,
     message: *const c_char,
-) -> RasterV8Status {
+) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         with_state(|state| {
             let msg = if message.is_null() {
@@ -751,7 +733,7 @@ unsafe extern "C" fn throw_type_error(
                 ),
             );
             qjs::JS_Throw(state.ctx_ptr(), err);
-            RasterV8Status::Exception
+            LexeV8Status::Exception
         })
     }))
 }
@@ -772,18 +754,18 @@ unsafe extern "C" fn fatal(api: *const c_char, message: *const c_char) {
     panic!("V8 ABI fatal in {api}: {message}");
 }
 
-unsafe extern "C" fn unsupported_fn() -> RasterV8Status {
-    RasterV8Status::Unsupported
+unsafe extern "C" fn unsupported_fn() -> LexeV8Status {
+    LexeV8Status::Unsupported
 }
 
 unsafe extern "C" fn unsupported_template_new(
-    _ctx: *mut RasterV8ContextState,
+    _ctx: *mut LexeV8ContextState,
     _template_id: u32,
     _callback: *mut std::ffi::c_void,
     _data_root: u64,
     _out: *mut u32,
-) -> RasterV8Status {
-    RasterV8Status::Unsupported
+) -> LexeV8Status {
+    LexeV8Status::Unsupported
 }
 
 /// Returns:
@@ -860,8 +842,8 @@ unsafe extern "C" fn v8_accessor_getter(
     let isolate = ensure_isolate_for_runtime(rt);
     let context_state = ensure_context_for_ctx(ctx);
     unsafe {
-        raster_v8_set_current_context(context_state as *mut RasterV8ContextState);
-        raster_v8_set_current_isolate(isolate as *mut RasterV8IsolateState);
+        lexe_v8_set_current_context(context_state as *mut LexeV8ContextState);
+        lexe_v8_set_current_isolate(isolate as *mut LexeV8IsolateState);
     }
     set_active_bridge_context(ctx);
     let accessor_id = magic as u32;
@@ -874,7 +856,7 @@ unsafe extern "C" fn v8_accessor_getter(
     }
     let mut result_root = 0u64;
     let status = unsafe {
-        raster_v8_dispatch_accessor(
+        lexe_v8_dispatch_accessor(
             accessor_id,
             receiver_root,
             embedder as *mut c_void,
@@ -884,7 +866,7 @@ unsafe extern "C" fn v8_accessor_getter(
     with_state_ref_for_ctx(ctx, |state| {
         state.roots.drop_root(ctx, receiver_root);
     });
-    if status != RasterV8Status::Ok || result_root == 0 {
+    if status != LexeV8Status::Ok || result_root == 0 {
         return qjs::JS_UNDEFINED;
     }
     let result = with_state_ref_for_ctx(ctx, |state| {
@@ -906,7 +888,7 @@ unsafe fn install_function_prototype(
     template_id: u32,
     func: JSValue,
 ) {
-    let proto_template_id = raster_v8_function_prototype_template_id(template_id);
+    let proto_template_id = lexe_v8_function_prototype_template_id(template_id);
     if proto_template_id == 0 {
         let proto = unsafe { qjs::JS_NewObject(ctx) };
         unsafe {
@@ -916,11 +898,11 @@ unsafe fn install_function_prototype(
         return;
     }
     let proto = unsafe { qjs::JS_NewObject(ctx) };
-    let count = raster_v8_object_template_property_count(proto_template_id);
+    let count = lexe_v8_object_template_property_count(proto_template_id);
     for i in 0..count {
         let mut key_root = 0u64;
         let mut child_template_id = 0u32;
-        if raster_v8_object_template_property_at(
+        if lexe_v8_object_template_property_at(
             proto_template_id,
             i,
             &mut key_root,
@@ -937,18 +919,18 @@ unsafe fn install_function_prototype(
             continue;
         }
         let child_function_id =
-            unsafe { raster_v8_register_function_for_template(child_template_id) };
+            unsafe { lexe_v8_register_function_for_template(child_template_id) };
         let (child_fn, _) = unsafe { make_v8_method_from_id(ctx, state, child_function_id) };
         unsafe {
             let _ = qjs::JS_SetProperty(ctx, proto, atom, child_fn);
             qjs::JS_FreeAtom(ctx, atom);
         }
     }
-    let native_count = raster_v8_object_template_native_property_count(proto_template_id);
+    let native_count = lexe_v8_object_template_native_property_count(proto_template_id);
     for i in 0..native_count {
         let mut name_root = 0u64;
         let mut accessor_id = 0u32;
-        if raster_v8_object_template_native_property_at(
+        if lexe_v8_object_template_native_property_at(
             proto_template_id,
             i,
             &mut name_root,
@@ -979,20 +961,20 @@ unsafe fn install_function_prototype(
     }
     let proto_root = state.roots.insert_borrowed(ctx, proto);
     unsafe {
-        raster_v8_set_function_template_prototype_root(template_id, proto_root);
+        lexe_v8_set_function_template_prototype_root(template_id, proto_root);
         let _ = qjs::JS_SetConstructor(ctx, func, proto);
         qjs::JS_FreeValue(ctx, proto);
     }
 }
 
 unsafe extern "C" fn function_template_get_function(
-    _ctx: *mut RasterV8ContextState,
+    _ctx: *mut LexeV8ContextState,
     function_id: u32,
     out: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         if out.is_null() {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         }
         with_state(|state| {
             let ctx = state.ctx_ptr();
@@ -1006,7 +988,7 @@ unsafe extern "C" fn function_template_get_function(
                 root
             } else {
                 let (func, root) = make_v8_constructor_from_id(ctx, state, function_id);
-                let template_id = unsafe { raster_v8_function_template_id(function_id) };
+                let template_id = unsafe { lexe_v8_function_template_id(function_id) };
                 install_function_prototype(ctx, state, template_id, func);
                 unsafe {
                     qjs::JS_FreeValue(ctx, func);
@@ -1014,23 +996,23 @@ unsafe extern "C" fn function_template_get_function(
                 root
             };
             *out = root;
-            RasterV8Status::Ok
+            LexeV8Status::Ok
         })
     }))
 }
 
 unsafe extern "C" fn dispatch_function(
-    _ctx: *mut RasterV8ContextState,
+    _ctx: *mut LexeV8ContextState,
     function_id: u32,
     receiver_root: u64,
     _new_target_root: u64,
     arg_root_ids: *const u64,
     argc: i32,
     out_result_root: *mut u64,
-) -> RasterV8Status {
+) -> LexeV8Status {
     catch_panic(AssertUnwindSafe(|| {
         if out_result_root.is_null() {
-            return RasterV8Status::Error;
+            return LexeV8Status::Error;
         }
         let args = if arg_root_ids.is_null() || argc <= 0 {
             &[]
@@ -1038,7 +1020,7 @@ unsafe extern "C" fn dispatch_function(
             std::slice::from_raw_parts(arg_root_ids, argc as usize)
         };
         let mut result_root = 0u64;
-        let status = raster_v8_dispatch_callback(
+        let status = lexe_v8_dispatch_callback(
             function_id,
             receiver_root,
             _new_target_root,
@@ -1046,7 +1028,7 @@ unsafe extern "C" fn dispatch_function(
             argc,
             &mut result_root,
         );
-        if status == RasterV8Status::Ok {
+        if status == LexeV8Status::Ok {
             *out_result_root = result_root;
         }
         status
@@ -1086,8 +1068,8 @@ unsafe fn v8_js_trampoline_inner(
     let isolate = ensure_isolate_for_runtime(rt);
     let context_state = ensure_context_for_ctx(ctx);
     unsafe {
-        raster_v8_set_current_context(context_state as *mut RasterV8ContextState);
-        raster_v8_set_current_isolate(isolate as *mut RasterV8IsolateState);
+        lexe_v8_set_current_context(context_state as *mut LexeV8ContextState);
+        lexe_v8_set_current_isolate(isolate as *mut LexeV8IsolateState);
     }
     set_active_bridge_context(ctx);
 
@@ -1097,12 +1079,12 @@ unsafe fn v8_js_trampoline_inner(
     let is_construct = use_constructor_semantics && unsafe { !qjs::JS_IsUndefined(this_val) };
 
     let (receiver_root, new_target_root, instance_val) = if is_construct {
-        let template_id = unsafe { raster_v8_function_template_id(function_id) };
-        let field_count = unsafe { raster_v8_instance_internal_field_count(template_id) };
+        let template_id = unsafe { lexe_v8_function_template_id(function_id) };
+        let field_count = unsafe { lexe_v8_instance_internal_field_count(template_id) };
         let ctor_is_new_target = unsafe { qjs::JS_IsFunction(ctx, this_val) };
         let proto = if ctor_is_new_target {
             let installed = with_state_ref_for_ctx(ctx, |state| {
-                let proto_root = unsafe { raster_v8_function_template_prototype_root(template_id) };
+                let proto_root = unsafe { lexe_v8_function_template_prototype_root(template_id) };
                 proto_root
                     .ne(&0)
                     .then_some(proto_root)
@@ -1114,7 +1096,7 @@ unsafe fn v8_js_trampoline_inner(
             })
         } else {
             with_state_ref_for_ctx(ctx, |state| {
-                let proto_root = unsafe { raster_v8_function_template_prototype_root(template_id) };
+                let proto_root = unsafe { lexe_v8_function_template_prototype_root(template_id) };
                 if proto_root != 0 {
                     state
                         .roots
@@ -1144,8 +1126,8 @@ unsafe fn v8_js_trampoline_inner(
             with_state_ref_for_ctx(ctx, |state| state.roots.insert_borrowed(ctx, instance));
         if field_count > 0 {
             unsafe {
-                raster_v8_object_reserve_internal_fields(
-                    context_state as *mut RasterV8ContextState,
+                lexe_v8_object_reserve_internal_fields(
+                    context_state as *mut LexeV8ContextState,
                     receiver_root,
                     field_count,
                 );
@@ -1181,7 +1163,7 @@ unsafe fn v8_js_trampoline_inner(
     let _embedder_scope = crate::js_ops::EmbedderScopeGuard::enter();
     let mut result_root = 0u64;
     let status = unsafe {
-        raster_v8_dispatch_callback(
+        lexe_v8_dispatch_callback(
             function_id,
             receiver_root,
             new_target_root,
@@ -1191,7 +1173,7 @@ unsafe fn v8_js_trampoline_inner(
         )
     };
     let _ = embedder_patch;
-    if status == RasterV8Status::Exception || unsafe { qjs::JS_HasException(ctx) } {
+    if status == LexeV8Status::Exception || unsafe { qjs::JS_HasException(ctx) } {
         with_state_ref_for_ctx(ctx, |state| {
             state.roots.drop_root(ctx, receiver_root);
             if new_target_root != 0 {
@@ -1206,7 +1188,7 @@ unsafe fn v8_js_trampoline_inner(
         }
         return unsafe { qjs::JS_GetException(ctx) };
     }
-    if status != RasterV8Status::Ok {
+    if status != LexeV8Status::Ok {
         return qjs::JS_UNDEFINED;
     }
     if let Some(instance) = instance_val {
@@ -1293,72 +1275,68 @@ unsafe fn v8_js_trampoline_inner(
 }
 
 extern "C" {
-    fn raster_v8_bind_bridge(bridge: *const RasterV8BridgeV1);
-    fn raster_v8_set_oddball_root_fn(
-        callback: unsafe extern "C" fn(
-            *mut RasterV8ContextState,
-            c_int,
-            *mut u64,
-        ) -> RasterV8Status,
+    fn lexe_v8_bind_bridge(bridge: *const LexeV8BridgeV1);
+    fn lexe_v8_set_oddball_root_fn(
+        callback: unsafe extern "C" fn(*mut LexeV8ContextState, c_int, *mut u64) -> LexeV8Status,
     );
-    fn raster_v8_force_link();
-    fn raster_v8_set_current_context(ctx: *mut RasterV8ContextState);
-    fn raster_v8_set_current_isolate(isolate: *mut RasterV8IsolateState);
-    fn raster_v8_dispatch_callback(
+    fn lexe_v8_force_link();
+    fn lexe_v8_set_current_context(ctx: *mut LexeV8ContextState);
+    fn lexe_v8_set_current_isolate(isolate: *mut LexeV8IsolateState);
+    fn lexe_v8_dispatch_callback(
         function_id: u32,
         receiver_root: u64,
         new_target_root: u64,
         arg_roots: *const u64,
         argc: i32,
         out_result_root: *mut u64,
-    ) -> RasterV8Status;
-    fn raster_v8_function_template_id(function_id: u32) -> u32;
-    fn raster_v8_instance_internal_field_count(template_id: u32) -> i32;
-    fn raster_v8_function_prototype_template_id(template_id: u32) -> u32;
-    fn raster_v8_set_function_template_prototype_root(template_id: u32, root_id: u64);
-    fn raster_v8_function_template_prototype_root(template_id: u32) -> u64;
-    fn raster_v8_function_template_ids_for_context(
+    ) -> LexeV8Status;
+    fn lexe_v8_function_template_id(function_id: u32) -> u32;
+    fn lexe_v8_instance_internal_field_count(template_id: u32) -> i32;
+    fn lexe_v8_function_prototype_template_id(template_id: u32) -> u32;
+    fn lexe_v8_set_function_template_prototype_root(template_id: u32, root_id: u64);
+    fn lexe_v8_function_template_prototype_root(template_id: u32) -> u64;
+    fn lexe_v8_function_template_ids_for_context(
         context_key: usize,
         out: *mut u32,
         capacity: usize,
     ) -> usize;
-    fn raster_v8_object_template_property_count(object_template_id: u32) -> usize;
-    fn raster_v8_object_template_property_at(
+    fn lexe_v8_object_template_property_count(object_template_id: u32) -> usize;
+    fn lexe_v8_object_template_property_at(
         object_template_id: u32,
         index: usize,
         key_root: *mut u64,
         value_template_id: *mut u32,
     ) -> i32;
-    fn raster_v8_register_function_for_template(template_id: u32) -> u32;
-    fn raster_v8_object_template_native_property_count(object_template_id: u32) -> usize;
-    fn raster_v8_object_template_native_property_at(
+    fn lexe_v8_register_function_for_template(template_id: u32) -> u32;
+    fn lexe_v8_object_template_native_property_count(object_template_id: u32) -> usize;
+    fn lexe_v8_object_template_native_property_at(
         object_template_id: u32,
         index: usize,
         name_root: *mut u64,
         accessor_id: *mut u32,
     ) -> i32;
-    fn raster_v8_dispatch_accessor(
+    fn lexe_v8_dispatch_accessor(
         accessor_id: u32,
         receiver_root: u64,
         embedder_override: *mut c_void,
         out_result_root: *mut u64,
-    ) -> RasterV8Status;
-    fn raster_v8_object_reserve_internal_fields(
-        ctx: *mut RasterV8ContextState,
+    ) -> LexeV8Status;
+    fn lexe_v8_object_reserve_internal_fields(
+        ctx: *mut LexeV8ContextState,
         object_root: u64,
         count: i32,
-    ) -> RasterV8Status;
+    ) -> LexeV8Status;
 }
 
-static BRIDGE_VTABLE: OnceLock<RasterV8BridgeV1> = OnceLock::new();
+static BRIDGE_VTABLE: OnceLock<LexeV8BridgeV1> = OnceLock::new();
 
 #[used]
-static FORCE_V8_SHIM_LINK: unsafe extern "C" fn() = raster_v8_force_link;
+static FORCE_V8_SHIM_LINK: unsafe extern "C" fn() = lexe_v8_force_link;
 
 /// Prevent the linker from dead-stripping the C++ V8 shim.
 pub fn ensure_shim_linked() {
     unsafe {
-        raster_v8_force_link();
+        lexe_v8_force_link();
     }
 }
 
@@ -1372,7 +1350,7 @@ pub fn bind_bridge(ctx: *mut JSContext) {
     });
     set_active_bridge_context(ctx);
 
-    let bridge = BRIDGE_VTABLE.get_or_init(|| RasterV8BridgeV1 {
+    let bridge = BRIDGE_VTABLE.get_or_init(|| LexeV8BridgeV1 {
         version: 1,
         node_module_version: NODE_MODULE_VERSION as u32,
         root_dup: Some(root_dup),
@@ -1415,8 +1393,8 @@ pub fn bind_bridge(ctx: *mut JSContext) {
     });
 
     unsafe {
-        raster_v8_bind_bridge(bridge);
-        raster_v8_set_oddball_root_fn(crate::js_ops::oddball_root);
+        lexe_v8_bind_bridge(bridge);
+        lexe_v8_set_oddball_root_fn(crate::js_ops::oddball_root);
     }
 }
 
@@ -1518,20 +1496,19 @@ pub(crate) unsafe fn prototype_has_own_constructor(
 }
 
 unsafe fn sever_installed_v8_templates(ctx: *mut JSContext, key: usize) -> Result<(), String> {
-    let count =
-        unsafe { raster_v8_function_template_ids_for_context(key, std::ptr::null_mut(), 0) };
+    let count = unsafe { lexe_v8_function_template_ids_for_context(key, std::ptr::null_mut(), 0) };
     if count == 0 {
         return Ok(());
     }
     let mut ids = vec![0u32; count];
     let written =
-        unsafe { raster_v8_function_template_ids_for_context(key, ids.as_mut_ptr(), count) };
+        unsafe { lexe_v8_function_template_ids_for_context(key, ids.as_mut_ptr(), count) };
     debug_assert_eq!(written, count);
 
     with_state_for_ctx(ctx, |state| -> Result<(), String> {
         let ctx = state.ctx_ptr();
         for &template_id in &ids {
-            let proto_root = unsafe { raster_v8_function_template_prototype_root(template_id) };
+            let proto_root = unsafe { lexe_v8_function_template_prototype_root(template_id) };
             if proto_root == 0 {
                 continue;
             }
@@ -1689,10 +1666,10 @@ pub(crate) unsafe fn shutdown_bridge_for_context(ctx: *mut JSContext) -> Result<
 
     if let Some(isolate_ptr) = crate::module_loader::isolate_ptr_for_runtime(rt_key) {
         extern "C" {
-            fn raster_v8_clear_registries_for_context(context_key: usize);
+            fn lexe_v8_clear_registries_for_context(context_key: usize);
         }
         unsafe {
-            raster_v8_clear_registries_for_context(key);
+            lexe_v8_clear_registries_for_context(key);
         }
         let _isolate_ptr = isolate_ptr;
     }

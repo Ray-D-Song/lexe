@@ -572,7 +572,7 @@ describe("SIMD", () => {
 
 describe("cross-realm isolation", () => {
   // `vm.runInNewContext` creates a bare QuickJS context that does not run
-  // any Raster module's `init` (see `raster_runtime_vm::run_in_new_context`):
+  // any Lexe module's `init` (see `lexe_vm::run_in_new_context`):
   // it has no `WebAssembly` of its own at all, so it cannot be used here to
   // build a *second fully-initialized* realm to import across (that
   // scenario -- two realms that each have a working `WebAssembly`, with an

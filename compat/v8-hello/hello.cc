@@ -155,7 +155,7 @@ void RunGcIfAvailable(const FunctionCallbackInfo<Value>& info) {
   bool ran = false;
 #if defined(__unix__) || defined(__APPLE__)
   using RunGcFn = void (*)();
-  auto* run_gc = reinterpret_cast<RunGcFn>(dlsym(RTLD_DEFAULT, "raster_v8_run_gc"));
+  auto* run_gc = reinterpret_cast<RunGcFn>(dlsym(RTLD_DEFAULT, "lexe_v8_run_gc"));
   if (run_gc != nullptr) {
     run_gc();
     ran = true;
@@ -210,7 +210,7 @@ void WeakTwoPassGc(const FunctionCallbackInfo<Value>& info) {
 
 #if defined(__unix__) || defined(__APPLE__)
   using RunGcFn = void (*)();
-  auto* run_gc = reinterpret_cast<RunGcFn>(dlsym(RTLD_DEFAULT, "raster_v8_run_gc"));
+  auto* run_gc = reinterpret_cast<RunGcFn>(dlsym(RTLD_DEFAULT, "lexe_v8_run_gc"));
   if (run_gc != nullptr) {
     run_gc();
   }

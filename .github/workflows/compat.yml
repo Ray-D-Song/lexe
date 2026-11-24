@@ -62,9 +62,10 @@ jobs:
               - 'compat/**'
               - 'modules/**'
               - 'libs/**'
-              - 'raster_runtime/**'
-              - 'raster_runtime_core/**'
-              - 'raster_runtime_modules/**'
+              - 'lexe/**'
+              - 'lexe_core/**'
+              - 'lexe_modules/**'
+              - 'prebuild/**'
               - 'v8_compat/**'
               - 'vendor/**'
               - 'refs/**'
@@ -89,67 +90,67 @@ jobs:
             v8:
               - 'v8_compat/**'
               - 'refs/node'
-              - 'modules/raster_runtime_napi/**'
-              - 'raster_runtime/Cargo.toml'
-              - 'raster_runtime/src/**'
-              - 'raster_runtime/build.rs'
+              - 'modules/lexe_napi/**'
+              - 'lexe/Cargo.toml'
+              - 'lexe/src/**'
+              - 'lexe/build.rs'
               - 'compat/v8-hello/**'
               - 'compat/better-sqlite3/**'
               - 'Cargo.lock'
               - '.github/workflows/compat.yml'
             sqlite:
-              - 'modules/raster_runtime_sqlite/**'
+              - 'modules/lexe_sqlite/**'
               - 'compat/node-sqlite/**'
               - 'tests/unit/sqlite*'
               - 'libs/**'
-              - 'raster_runtime_core/**'
+              - 'lexe_core/**'
               - 'Cargo.lock'
               - '.github/workflows/compat.yml'
             napi:
-              - 'modules/raster_runtime_napi/**'
+              - 'modules/lexe_napi/**'
               - 'compat/napi-hello/**'
               - 'compat/vite-plus/**'
               - 'libs/**'
-              - 'raster_runtime_core/**'
-              - 'raster_runtime/src/**'
+              - 'lexe_core/**'
+              - 'lexe/src/**'
               - '.github/workflows/compat.yml'
             windows_crates:
-              - 'modules/raster_runtime_tty/**'
-              - 'modules/raster_runtime_napi/**'
-              - 'modules/raster_runtime_fs/**'
+              - 'modules/lexe_tty/**'
+              - 'modules/lexe_napi/**'
+              - 'modules/lexe_fs/**'
               - 'libs/**'
-              - 'raster_runtime/**'
-              - 'raster_runtime_core/**'
+              - 'lexe/**'
+              - 'lexe_core/**'
               - '.github/workflows/compat.yml'
             db_compat:
-              - 'modules/raster_runtime_net/**'
-              - 'modules/raster_runtime_tls/**'
-              - 'modules/raster_runtime_crypto/**'
-              - 'modules/raster_runtime_stream*/**'
-              - 'modules/raster_runtime_buffer/**'
-              - 'modules/raster_runtime_events/**'
-              - 'modules/raster_runtime_timers/**'
+              - 'modules/lexe_net/**'
+              - 'modules/lexe_tls/**'
+              - 'modules/lexe_crypto/**'
+              - 'modules/lexe_stream*/**'
+              - 'modules/lexe_buffer/**'
+              - 'modules/lexe_events/**'
+              - 'modules/lexe_timers/**'
               - 'libs/**'
-              - 'raster_runtime_core/**'
-              - 'raster_runtime_modules/**'
-              - 'raster_runtime/**'
+              - 'lexe_core/**'
+              - 'lexe_modules/**'
+              - 'lexe/**'
               - 'compat/mysql2/**'
               - 'compat/node-postgres/**'
               - '.github/workflows/compat.yml'
             next_compat:
-              - 'modules/raster_runtime_http*/**'
-              - 'modules/raster_runtime_net/**'
-              - 'modules/raster_runtime_fs/**'
-              - 'modules/raster_runtime_url/**'
-              - 'modules/raster_runtime_stream*/**'
-              - 'modules/raster_runtime_zlib/**'
-              - 'modules/raster_runtime_buffer/**'
-              - 'modules/raster_runtime_process/**'
-              - 'modules/raster_runtime_path/**'
+              - 'modules/lexe_http*/**'
+              - 'modules/lexe_net/**'
+              - 'modules/lexe_fs/**'
+              - 'modules/lexe_url/**'
+              - 'modules/lexe_stream*/**'
+              - 'modules/lexe_zlib/**'
+              - 'modules/lexe_buffer/**'
+              - 'modules/lexe_process/**'
+              - 'modules/lexe_path/**'
               - 'libs/**'
-              - 'raster_runtime_core/**'
-              - 'raster_runtime_modules/**'
-              - 'raster_runtime/**'
+              - 'lexe_core/**'
+              - 'lexe_modules/**'
+              - 'lexe/**'
               - 'compat/next/**'
               - '.github/workflows/compat.yml'
       # Non-PR events (push to main, manual dispatch) or PRs labeled `ci:full`
@@ -265,13 +266,13 @@ jobs:
           cache-targets: "false"
       - run: >
           cargo clippy
-          -p raster_runtime_napi
-          -p raster_runtime_events
-          -p raster_runtime_tty
-          -p raster_runtime_modules
-          -p raster_runtime_fs
-          -p raster_runtime_util
-          -p raster_runtime_sqlite
+          -p lexe_napi
+          -p lexe_events
+          -p lexe_tty
+          -p lexe_modules
+          -p lexe_fs
+          -p lexe_util
+          -p lexe_sqlite
           --all-targets --no-deps -- -D warnings
 
   v8-abi:
@@ -353,14 +354,14 @@ jobs:
         run: cargo test -p v8_compat --lib
       - run: >
           cargo test
-          -p raster_runtime_events
-          -p raster_runtime_tty
-          -p raster_runtime_modules
-          -p raster_runtime_util
-          -p raster_runtime_fs
+          -p lexe_events
+          -p lexe_tty
+          -p lexe_modules
+          -p lexe_util
+          -p lexe_fs
           --lib
-      - run: cargo test -p raster_runtime_napi --lib -- --test-threads=1
-      - run: cargo test -p raster_runtime_sqlite --all-targets
+      - run: cargo test -p lexe_napi --lib -- --test-threads=1
+      - run: cargo test -p lexe_sqlite --all-targets
 
   build-linux:
     needs: changes
@@ -396,31 +397,31 @@ jobs:
           shared-key: build-linux-${{ needs.changes.outputs.v8 == 'true' && 'v8' || 'napi' }}
           cache-workspace-crates: "true"
           cache-on-failure: "true"
-      - name: Build raster_runtime (once for Linux gates and compat)
+      - name: Build lexe (once for Linux gates and compat)
         run: |
           if [ "${{ needs.changes.outputs.v8 }}" = "true" ]; then
-            cargo build -p raster_runtime --features v8-compat
-            nm -D --defined-only target/debug/raster_runtime |
+            cargo build -p lexe --features v8-compat
+            nm -D --defined-only target/debug/lexe |
               c++filt |
               grep -F "v8::Isolate::GetCurrent()"
-            nm -D --defined-only target/debug/raster_runtime |
+            nm -D --defined-only target/debug/lexe |
               c++filt |
               grep -F "v8::Context::GetIsolate()"
           else
-            cargo build -p raster_runtime --features napi
+            cargo build -p lexe --features napi
           fi
       - name: JS unit gates
         env:
-          RASTER_RUNTIME_ASYNC_HOOKS: "1"
+          LEXE_ASYNC_HOOKS: "1"
         run: |
-          for filter in events readline util module fs sqlite worker_threads child_process; do
-            ./target/debug/raster_runtime test -d bundle/js/__tests__/unit --filter "$filter"
+          for filter in events readline util module fs sqlite worker_threads child_process executable; do
+            ./target/debug/lexe test -d bundle/js/__tests__/unit --filter "$filter"
           done
       - uses: actions/upload-artifact@v4
         if: needs.changes.outputs.has_linux_compat == 'true'
         with:
-          name: raster-linux-x64
-          path: target/debug/raster_runtime
+          name: lexe-linux-x64
+          path: target/debug/lexe
           retention-days: 1
           compression-level: 1
 
@@ -440,7 +441,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - uses: actions/download-artifact@v4
         with:
-          name: raster-linux-x64
+          name: lexe-linux-x64
           path: target/debug
       - name: Run compatibility fixture
         env:
@@ -450,9 +451,9 @@ jobs:
           COMPAT_SQLITE_BACKUP_LOOPS: ${{ matrix.case == 'node-sqlite' && '20' || '0' }}
           COMPAT_BETTER_SQLITE3_LOOPS: ${{ matrix.case == 'better-sqlite3' && '20' || '0' }}
         run: |
-          chmod +x target/debug/raster_runtime
-          ./target/debug/raster_runtime --version
-          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
+          chmod +x target/debug/lexe
+          ./target/debug/lexe --version
+          export LEXE_BIN="$PWD/target/debug/lexe"
           case "${{ matrix.case }}" in
             mysql2|node-postgres|next|vite-plus|better-sqlite3)
               (cd "compat/${{ matrix.case }}" && yarn install --frozen-lockfile)
@@ -463,7 +464,7 @@ jobs:
             node-sqlite)
               ;;
           esac
-          node compat/run.mjs "${{ matrix.case }}" target/debug/raster_runtime
+          node compat/run.mjs "${{ matrix.case }}" target/debug/lexe
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -494,9 +495,9 @@ jobs:
           shared-key: windows-sqlite
       - run: yarn install --frozen-lockfile
       - run: make js JS_MINIFY=0
-      - name: Build raster_runtime and sqlite extension
+      - name: Build lexe and sqlite extension
         run: |
-          cargo build -p raster_runtime
+          cargo build -p lexe
           $env:CC = "clang"
           node compat/node-sqlite/build-extension.mjs
           Remove-Item Env:CC
@@ -504,13 +505,13 @@ jobs:
             throw "missing compat/node-sqlite/build/sqlite_extension.dll"
           }
       - name: JS sqlite unit tests
-        run: ./target/debug/raster_runtime.exe test -d bundle/js/__tests__/unit --filter sqlite
-      - name: Parity differential (Raster only on Windows CI)
+        run: ./target/debug/lexe.exe test -d bundle/js/__tests__/unit --filter sqlite
+      - name: Parity differential (Lexe only on Windows CI)
         env:
           COMPAT_SKIP_NODE_BASELINE: "1"
           COMPAT_SQLITE_LIFECYCLE_LOOPS: "5"
           COMPAT_SQLITE_BACKUP_LOOPS: "2"
-        run: node compat/run.mjs node-sqlite target/debug/raster_runtime.exe
+        run: node compat/run.mjs node-sqlite target/debug/lexe.exe
 
   windows-tty-napi:
     needs: changes
@@ -529,11 +530,11 @@ jobs:
           shared-key: windows-tty-napi
       - name: Build and test TTY + N-API + FS (Windows)
         run: |
-          cargo test -p raster_runtime_tty --lib
-          cargo test -p raster_runtime_napi --lib -- --test-threads=1
-          cargo test -p raster_runtime_fs --lib
-          cargo clippy -p raster_runtime_fs -p raster_runtime_napi --all-targets --no-deps -- -D warnings
-          cargo build -p raster_runtime --features napi
+          cargo test -p lexe_tty --lib
+          cargo test -p lexe_napi --lib -- --test-threads=1
+          cargo test -p lexe_fs --lib
+          cargo clippy -p lexe_fs -p lexe_napi --all-targets --no-deps -- -D warnings
+          cargo build -p lexe --features napi
 
   sanitizer:
     needs: changes
@@ -612,18 +613,18 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: compatibility
           key: macos-latest-napi
-      - run: cargo build -p raster_runtime --features napi
+      - run: cargo build -p lexe --features napi
       - name: Run napi-hello and vite-plus
         env:
           COMPAT_VP_VERSION_LOOPS: "100"
           COMPAT_VP_BUILD_LOOPS: "20"
         run: |
-          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
-          "$RASTER_RUNTIME" --version
+          export LEXE_BIN="$PWD/target/debug/lexe"
+          "$LEXE_BIN" --version
           (cd compat/napi-hello && yarn install)
-          node compat/run.mjs napi-hello target/debug/raster_runtime
+          node compat/run.mjs napi-hello target/debug/lexe
           (cd compat/vite-plus && yarn install --frozen-lockfile)
-          node compat/run.mjs vite-plus target/debug/raster_runtime
+          node compat/run.mjs vite-plus target/debug/lexe
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -663,20 +664,20 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: compatibility
           key: macos-latest-v8-compat
-      - run: cargo build -p raster_runtime --features v8-compat
+      - run: cargo build -p lexe --features v8-compat
       - name: Run node-sqlite, v8-hello, and better-sqlite3
         env:
           COMPAT_SQLITE_LIFECYCLE_LOOPS: "100"
           COMPAT_SQLITE_BACKUP_LOOPS: "20"
           COMPAT_BETTER_SQLITE3_LOOPS: "20"
         run: |
-          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
-          "$RASTER_RUNTIME" --version
-          node compat/run.mjs node-sqlite target/debug/raster_runtime
+          export LEXE_BIN="$PWD/target/debug/lexe"
+          "$LEXE_BIN" --version
+          node compat/run.mjs node-sqlite target/debug/lexe
           (cd compat/v8-hello && npm run build)
-          node compat/run.mjs v8-hello target/debug/raster_runtime
+          node compat/run.mjs v8-hello target/debug/lexe
           (cd compat/better-sqlite3 && yarn install --frozen-lockfile)
-          node compat/run.mjs better-sqlite3 target/debug/raster_runtime
+          node compat/run.mjs better-sqlite3 target/debug/lexe
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -716,13 +717,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: compatibility
           key: macos-15-intel-v8-compat
-      - run: cargo build -p raster_runtime --features v8-compat
+      - run: cargo build -p lexe --features v8-compat
       - name: Run v8-hello
         run: |
-          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
-          "$RASTER_RUNTIME" --version
+          export LEXE_BIN="$PWD/target/debug/lexe"
+          "$LEXE_BIN" --version
           (cd compat/v8-hello && npm run build)
-          node compat/run.mjs v8-hello target/debug/raster_runtime
+          node compat/run.mjs v8-hello target/debug/lexe
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -758,25 +759,25 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: compatibility
           key: ubuntu-24.04-arm-v8-compat
-      - name: Build raster_runtime (v8-compat)
+      - name: Build lexe (v8-compat)
         run: |
-          cargo build -p raster_runtime --features v8-compat
-          nm -D --defined-only target/debug/raster_runtime |
+          cargo build -p lexe --features v8-compat
+          nm -D --defined-only target/debug/lexe |
             c++filt |
             grep -F "v8::Isolate::GetCurrent()"
-          nm -D --defined-only target/debug/raster_runtime |
+          nm -D --defined-only target/debug/lexe |
             c++filt |
             grep -F "v8::Context::GetIsolate()"
       - name: Run v8-hello and better-sqlite3
         env:
           COMPAT_BETTER_SQLITE3_LOOPS: "20"
         run: |
-          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
-          "$RASTER_RUNTIME" --version
+          export LEXE_BIN="$PWD/target/debug/lexe"
+          "$LEXE_BIN" --version
           (cd compat/v8-hello && npm run build)
-          node compat/run.mjs v8-hello target/debug/raster_runtime
+          node compat/run.mjs v8-hello target/debug/lexe
           (cd compat/better-sqlite3 && yarn install --frozen-lockfile)
-          node compat/run.mjs better-sqlite3 target/debug/raster_runtime
+          node compat/run.mjs better-sqlite3 target/debug/lexe
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

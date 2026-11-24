@@ -26,34 +26,34 @@ void invoke_erased_context_register_func(
 
 }  // namespace
 
-extern "C" RasterV8Status raster_v8_run_module_init(
-    RasterV8ContextState* ctx,
+extern "C" LexeV8Status lexe_v8_run_module_init(
+    LexeV8ContextState* ctx,
     void* module_opaque,
     uint64_t exports_root_id,
     uint64_t module_root_id,
     uint64_t* out_exports_root_id) {
-  const RasterV8BridgeV1* bridge = raster_v8_bridge();
+  const LexeV8BridgeV1* bridge = lexe_v8_bridge();
   if (!bridge || !ctx || !module_opaque || !out_exports_root_id) {
-    return RASTER_V8_ERROR;
+    return LEXE_V8_ERROR;
   }
 
   auto* node_mod = reinterpret_cast<node::node_module*>(module_opaque);
-  raster_v8_set_current_context(ctx);
-  raster_v8_open_handle_scope(ctx);
+  lexe_v8_set_current_context(ctx);
+  lexe_v8_open_handle_scope(ctx);
 
-  v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(raster_v8_current_isolate());
+  v8::Isolate* isolate = reinterpret_cast<v8::Isolate*>(lexe_v8_current_isolate());
   v8::HandleScope scope(isolate);
 
-  auto* exports_slot = raster_v8::alloc_handle_slot(ctx);
-  exports_slot->object = raster_v8::shim::ObjectLayout(
-      const_cast<raster_v8::shim::Map*>(&raster_v8::shim::Map::object_map()), exports_root_id);
-  auto* module_slot = raster_v8::alloc_handle_slot(ctx);
-  module_slot->object = raster_v8::shim::ObjectLayout(
-      const_cast<raster_v8::shim::Map*>(&raster_v8::shim::Map::object_map()), module_root_id);
-  auto* context_slot = raster_v8::alloc_handle_slot(ctx);
-  context_slot->object = raster_v8::shim::ObjectLayout(
-      const_cast<raster_v8::shim::Map*>(&raster_v8::shim::Map::object_map()),
-      raster_v8::ctx_impl(ctx)->context_root_id);
+  auto* exports_slot = lexe_v8::alloc_handle_slot(ctx);
+  exports_slot->object = lexe_v8::shim::ObjectLayout(
+      const_cast<lexe_v8::shim::Map*>(&lexe_v8::shim::Map::object_map()), exports_root_id);
+  auto* module_slot = lexe_v8::alloc_handle_slot(ctx);
+  module_slot->object = lexe_v8::shim::ObjectLayout(
+      const_cast<lexe_v8::shim::Map*>(&lexe_v8::shim::Map::object_map()), module_root_id);
+  auto* context_slot = lexe_v8::alloc_handle_slot(ctx);
+  context_slot->object = lexe_v8::shim::ObjectLayout(
+      const_cast<lexe_v8::shim::Map*>(&lexe_v8::shim::Map::object_map()),
+      lexe_v8::ctx_impl(ctx)->context_root_id);
 
   v8::Local<v8::Object> exports =
       v8::MakeLocalFromObject<v8::Object>(isolate, &exports_slot->object);
@@ -72,12 +72,12 @@ extern "C" RasterV8Status raster_v8_run_module_init(
   } else if (node_mod->nm_register_func) {
     node_mod->nm_register_func(exports, module_obj, nullptr);
   } else {
-    raster_v8_close_handle_scope(ctx);
-    return RASTER_V8_ERROR;
+    lexe_v8_close_handle_scope(ctx);
+    return LEXE_V8_ERROR;
   }
 
   *out_exports_root_id = exports_slot->object.contents.root_id;
-  raster_v8_close_handle_scope(ctx);
-  raster_v8_dispatch_pending_weak_callbacks();
-  return RASTER_V8_OK;
+  lexe_v8_close_handle_scope(ctx);
+  lexe_v8_dispatch_pending_weak_callbacks();
+  return LEXE_V8_OK;
 }

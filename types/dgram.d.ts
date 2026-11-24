@@ -108,8 +108,8 @@ declare module "dgram" {
       multicastInterface?: string
     ): void;
     /**
-     * By default, binding a socket will cause it to block the raster_runtime process from exiting as long as the socket is open.
-     * The `socket.unref()` method can be used to exclude the socket from the reference counting that keeps the raster_runtime process active.
+     * By default, binding a socket will cause it to block the lexe process from exiting as long as the socket is open.
+     * The `socket.unref()` method can be used to exclude the socket from the reference counting that keeps the lexe process active.
      * The `socket.ref()` method adds the socket back to the reference counting and restores the default behavior.
      *
      * Calling `socket.ref()` multiples times will have no additional effect.
@@ -135,7 +135,7 @@ declare module "dgram" {
      * If the socket has not been previously bound with a call to `bind`, the socket is assigned a random port number and is bound to the "all interfaces" address (`'0.0.0.0'` for `udp4` sockets, `'::0'` for `udp6` sockets.)
      *
      * An optional `callback` function may be specified to as a way of reporting DNS errors or for determining when it is safe to reuse the `buf` object.
-     * DNS lookups delay the time to send for at least one tick of the raster_runtime event loop.
+     * DNS lookups delay the time to send for at least one tick of the lexe event loop.
      *
      * The only way to know for sure that the datagram has been sent is by using a `callback`. If an error occurs and a `callback` is given, the error will be passed as the first argument to the `callback`.
      * If a `callback` is not given, the error is emitted as an `'error'` event on the `socket` object.
@@ -268,8 +268,8 @@ declare module "dgram" {
      */
     setTTL(ttl: number): void;
     /**
-     * By default, binding a socket will cause it to block the raster_runtime process from exiting as long as the socket is open.
-     * The `socket.unref()` method can be used to exclude the socket from the reference counting that keeps the raster_runtime process active, allowing the process to exit even if the socket is still listening.
+     * By default, binding a socket will cause it to block the lexe process from exiting as long as the socket is open.
+     * The `socket.unref()` method can be used to exclude the socket from the reference counting that keeps the lexe process active, allowing the process to exit even if the socket is still listening.
      *
      * Calling `socket.unref()` multiple times will have no addition effect.
      *

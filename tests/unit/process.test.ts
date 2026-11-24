@@ -217,9 +217,9 @@ describe("Node compat identity", () => {
   it("should advertise Node 24.3.0 identity", () => {
     expect(process.version).toBe("v24.3.0");
     expect(process.versions.node).toBe("24.3.0");
-    expect(typeof process.versions.raster_runtime).toBe("string");
-    expect(process.versions.raster_runtime.length > 0).toBeTruthy();
-    expect(process.release.name).toBe("raster_runtime");
+    expect(typeof process.versions.lexe).toBe("string");
+    expect(process.versions.lexe.length > 0).toBeTruthy();
+    expect(process.release.name).toBe("lexe");
   });
 });
 
@@ -328,8 +328,8 @@ describe("unhandledRejection timing", () => {
   });
 
   it("should not leak rejection tracker helpers on globalThis", () => {
-    expect((globalThis as any).__rasterRejectionPending).toBeUndefined();
-    expect((globalThis as any).__rasterRejectionSchedule).toBeUndefined();
+    expect((globalThis as any).__lexeRejectionPending).toBeUndefined();
+    expect((globalThis as any).__lexeRejectionSchedule).toBeUndefined();
   });
 });
 

@@ -23,7 +23,7 @@ const POSTGRES_HEALTH_TIMEOUT_MS = 120_000;
 const POSTGRES_DOCKER_RUN_TIMEOUT_MS = 180_000;
 
 const TEARDOWN_GUARD =
-  /RASTER_QJS_GC_DIAGNOSTICS: residual|Assertion failed|SIGABRT|SIGSEGV|shutdown incomplete|driver has not finished|retained JS owners/i;
+  /LEXE_QJS_GC_DIAGNOSTICS: residual|Assertion failed|SIGABRT|SIGSEGV|shutdown incomplete|driver has not finished|retained JS owners/i;
 
 const BETTER_SQLITE3_SCENARIOS = [
   "addon-only",
@@ -42,7 +42,7 @@ function positiveLoopCount(name, fallback) {
   return value;
 }
 
-const [name, rasterPath] = process.argv.slice(2);
+const [name, lexePath] = process.argv.slice(2);
 const root = process.cwd();
 const cases = {
   next: {
@@ -86,7 +86,7 @@ const cases = {
     directory: "compat/node-postgres",
     script: "test.cjs",
     successMarker: "node-postgres compat OK",
-    allowRasterFailure: true,
+    allowLexeFailure: true,
   },
   "v8-hello": {
     directory: "compat/v8-hello",
@@ -141,20 +141,20 @@ const cases = {
 };
 
 const testCase = cases[name];
-if (!testCase || !rasterPath) {
+if (!testCase || !lexePath) {
   throw new Error(
-    "Usage: node compat/run.mjs <next|vite-plus|better-sqlite3|mysql2|node-postgres|v8-hello|napi-hello|node-sqlite> <raster-runtime>"
+    "Usage: node compat/run.mjs <next|vite-plus|better-sqlite3|mysql2|node-postgres|v8-hello|napi-hello|node-sqlite> <lexe>"
   );
 }
 
 const directory = path.join(root, testCase.directory);
-const raster = path.resolve(root, rasterPath);
+const lexe = path.resolve(root, lexePath);
 const logPath = path.join(directory, "compat.log");
 
 if (name === "next") {
-  await runNextStandalone(directory, raster, logPath, root);
+  await runNextStandalone(directory, lexe, logPath, root);
 } else if (name === "node-sqlite") {
-  await runNodeSqliteCompat(testCase, directory, raster, logPath, root);
+  await runNodeSqliteCompat(testCase, directory, lexe, logPath, root);
 } else if (
   name === "better-sqlite3" ||
   name === "mysql2" ||
@@ -162,25 +162,25 @@ if (name === "next") {
   name === "napi-hello" ||
   name === "v8-hello"
 ) {
-  await runScriptCompat(testCase, directory, raster, logPath, root);
+  await runScriptCompat(testCase, directory, lexe, logPath, root);
 } else {
-  await runVitePlusBuild(testCase, directory, raster, logPath, root);
+  await runVitePlusBuild(testCase, directory, lexe, logPath, root);
 }
 
-async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
+async function runVitePlusBuild(testCase, directory, lexe, logPath, root) {
   const output = path.join(directory, testCase.output);
   const command = path.join(directory, testCase.command);
   const logParts = [];
 
   // Phase 1: vp --version must exit cleanly (no abort/assert/JS_CONTEXT hang).
   const versionResult = await spawnCollect(
-    raster,
+    lexe,
     [command, "--version"],
     { cwd: directory, env: { ...process.env } },
     SCRIPT_TIMEOUT_MS
   );
   logParts.push(
-    `$ ${raster} ${command} --version\n\n` +
+    `$ ${lexe} ${command} --version\n\n` +
       `exit: ${versionResult.code ?? versionResult.signal}${versionResult.timedOut ? " (timed out)" : ""}\n\n` +
       `stdout:\n${versionResult.stdout}\n\nstderr:\n${versionResult.stderr}\n`
   );
@@ -215,7 +215,7 @@ async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
   await fs.rm(output, { recursive: true, force: true });
 
   const result = await spawnCollect(
-    raster,
+    lexe,
     [command, ...testCase.args],
     {
       cwd: directory,
@@ -226,7 +226,7 @@ async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
 
   const timedOut = result.timedOut ? " (timed out)" : "";
   logParts.push(
-    `$ ${raster} ${command} ${testCase.args.join(" ")}\n\n` +
+    `$ ${lexe} ${command} ${testCase.args.join(" ")}\n\n` +
       `exit: ${result.code ?? result.signal}${timedOut}\n\n` +
       `stdout:\n${result.stdout}\n\nstderr:\n${result.stderr}\n`
   );
@@ -255,7 +255,7 @@ async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
     throw new Error(
       `${name} exited 0 but produced no ${testCase.output}/ directory. ` +
         `stdout empty=${result.stdout.length === 0}, stderr empty=${result.stderr.length === 0}. ` +
-        `See ${path.relative(root, logPath)} for the captured Raster child output.`
+        `See ${path.relative(root, logPath)} for the captured Lexe child output.`
     );
   }
 
@@ -281,7 +281,7 @@ async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
   if (
     !esm.includes("Button") ||
     !cjs.includes("Button") ||
-    !css.includes(".raster-button") ||
+    !css.includes(".lexe-button") ||
     !manifestText.includes("src/index.tsx") ||
     typeof manifest !== "object" ||
     manifest === null
@@ -305,7 +305,7 @@ async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
 
   for (let i = 1; i <= versionLoops; i++) {
     const r = await spawnCollect(
-      raster,
+      lexe,
       [command, "--version"],
       { cwd: directory, env: { ...process.env } },
       SCRIPT_TIMEOUT_MS
@@ -333,14 +333,14 @@ async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
 
   if (buildLoops > 0) {
     const stabilityDist = await fs.mkdtemp(
-      path.join(os.tmpdir(), "raster-vp-build-")
+      path.join(os.tmpdir(), "lexe-vp-build-")
     );
     try {
       for (let i = 1; i <= buildLoops; i++) {
         // Wipe fixture dist each iteration; keep repo user artifacts elsewhere.
         await fs.rm(output, { recursive: true, force: true });
         const r = await spawnCollect(
-          raster,
+          lexe,
           [command, ...testCase.args],
           { cwd: directory, env: { ...process.env } },
           BUILD_TIMEOUT_MS
@@ -379,13 +379,13 @@ async function runVitePlusBuild(testCase, directory, raster, logPath, root) {
   );
 }
 
-async function runNodeSqliteCompat(testCase, directory, raster, logPath, root) {
+async function runNodeSqliteCompat(testCase, directory, lexe, logPath, root) {
   const logParts = [];
   const INVALID_TEARDOWN =
-    /RASTER_QJS_GC_DIAGNOSTICS: residual|RASTER_QJS_CONTEXT_REFS|Assertion failed|SIGABRT|SIGSEGV|shutdown incomplete|driver has not finished|leaking env|double free|pending backup|retained JS owners/i;
+    /LEXE_QJS_GC_DIAGNOSTICS: residual|LEXE_QJS_CONTEXT_REFS|Assertion failed|SIGABRT|SIGSEGV|shutdown incomplete|driver has not finished|leaking env|double free|pending backup|retained JS owners/i;
 
   try {
-    await assertRasterExecutable(raster, logParts);
+    await assertLexeExecutable(lexe, logParts);
 
     if (testCase.buildCommand && process.env.COMPAT_SKIP_BUILD !== "1") {
       logParts.push(`# Build extension\n$ ${testCase.buildCommand}`);
@@ -411,12 +411,12 @@ async function runNodeSqliteCompat(testCase, directory, raster, logPath, root) {
     logParts.push(`\n# Extension\npath: ${extensionPath ?? "(not built)"}`);
 
     const sharedTmpRoot = await fs.mkdtemp(
-      path.join(os.tmpdir(), "raster-node-sqlite-parity-")
+      path.join(os.tmpdir(), "lexe-node-sqlite-parity-")
     );
     const nodeTmpRoot = path.join(sharedTmpRoot, "node");
-    const rasterTmpRoot = path.join(sharedTmpRoot, "raster");
+    const lexeTmpRoot = path.join(sharedTmpRoot, "lexe");
     await fs.mkdir(nodeTmpRoot, { recursive: true });
-    await fs.mkdir(rasterTmpRoot, { recursive: true });
+    await fs.mkdir(lexeTmpRoot, { recursive: true });
     const lifecycleLoops = process.env.COMPAT_SQLITE_LIFECYCLE_LOOPS ?? "100";
     const backupLoops = process.env.COMPAT_SQLITE_BACKUP_LOOPS ?? "20";
     const baseParityEnv = {
@@ -452,53 +452,53 @@ async function runNodeSqliteCompat(testCase, directory, raster, logPath, root) {
         logPath,
         root,
         logParts,
-        rasterNotStarted: true,
+        lexeNotStarted: true,
         mustNotContainStdout: INVALID_TEARDOWN,
       });
       nodeParity = parseParityJson(nodeResult.stdout, "Node parity");
     }
 
-    const rasterCmd = `${raster} ${testCase.parity}`;
-    logParts.push(`\n# Raster parity\n$ ${rasterCmd}`);
-    console.log(`[compat-node-sqlite] Raster parity: ${rasterCmd}`);
-    const rasterResult = await spawnCompatChild(
-      raster,
+    const lexeCmd = `${lexe} ${testCase.parity}`;
+    logParts.push(`\n# Lexe parity\n$ ${lexeCmd}`);
+    console.log(`[compat-node-sqlite] Lexe parity: ${lexeCmd}`);
+    const lexeResult = await spawnCompatChild(
+      lexe,
       [testCase.parity],
       {
         cwd: directory,
         env: {
           ...baseParityEnv,
-          PARITY_TMP_ROOT: rasterTmpRoot,
+          PARITY_TMP_ROOT: lexeTmpRoot,
         },
       },
       SCRIPT_TIMEOUT_MS * 4,
       logParts
     );
-    validateCompatRun("node-sqlite/parity.mjs", "Raster parity", rasterResult, {
+    validateCompatRun("node-sqlite/parity.mjs", "Lexe parity", lexeResult, {
       maxDurationMs: SCRIPT_TIMEOUT_MS * 4,
       expectCode: 0,
       logPath,
       root,
       logParts,
-      rasterNotStarted: false,
+      lexeNotStarted: false,
       mustNotContainStdout: INVALID_TEARDOWN,
     });
-    const rasterParity = parseParityJson(rasterResult.stdout, "Raster parity");
+    const lexeParity = parseParityJson(lexeResult.stdout, "Lexe parity");
 
     if (nodeParity) {
       const nodeNorm = normalizeParityOutput(nodeParity);
-      const rasterNorm = normalizeParityOutput(rasterParity);
-      const diff = diffParityOutputs(nodeNorm, rasterNorm);
+      const lexeNorm = normalizeParityOutput(lexeParity);
+      const diff = diffParityOutputs(nodeNorm, lexeNorm);
       logParts.push(`\n# Parity diff\n${diff || "(no differences)"}`);
       if (diff) {
         throw new Error(
-          `node-sqlite parity mismatch between Node and Raster:\n${diff}\n` +
+          `node-sqlite parity mismatch between Node and Lexe:\n${diff}\n` +
             `See ${path.relative(root, logPath)}.`
         );
       }
     }
 
-    const compatMode = skipNodeBaseline ? "Raster only" : "Node baseline + Raster";
+    const compatMode = skipNodeBaseline ? "Lexe only" : "Node baseline + Lexe";
     console.log(`node-sqlite compatibility passed (${compatMode})`);
   } finally {
     await writeLog(logPath, logParts);
@@ -579,41 +579,41 @@ function normalizeParityText(text) {
     .trim();
 }
 
-function diffParityOutputs(nodeParity, rasterParity) {
+function diffParityOutputs(nodeParity, lexeParity) {
   const nodeJson = JSON.stringify(nodeParity, null, 2);
-  const rasterJson = JSON.stringify(rasterParity, null, 2);
-  if (nodeJson === rasterJson) {
+  const lexeJson = JSON.stringify(lexeParity, null, 2);
+  if (nodeJson === lexeJson) {
     return "";
   }
   const nodeResults = new Map(
     (nodeParity.results ?? []).map((entry) => [entry.name, entry])
   );
   const lines = [];
-  for (const rasterEntry of rasterParity.results ?? []) {
-    const nodeEntry = nodeResults.get(rasterEntry.name);
+  for (const lexeEntry of lexeParity.results ?? []) {
+    const nodeEntry = nodeResults.get(lexeEntry.name);
     if (!nodeEntry) {
-      lines.push(`- missing Node result: ${rasterEntry.name}`);
+      lines.push(`- missing Node result: ${lexeEntry.name}`);
       continue;
     }
     const nodeValue = JSON.stringify(nodeEntry);
-    const rasterValue = JSON.stringify(rasterEntry);
-    if (nodeValue !== rasterValue) {
-      lines.push(`- ${rasterEntry.name}`);
+    const lexeValue = JSON.stringify(lexeEntry);
+    if (nodeValue !== lexeValue) {
+      lines.push(`- ${lexeEntry.name}`);
       lines.push(`  node:   ${nodeValue}`);
-      lines.push(`  raster: ${rasterValue}`);
+      lines.push(`  lexe: ${lexeValue}`);
     }
   }
   return lines.join("\n");
 }
 
-async function runScriptCompat(testCase, directory, raster, logPath, root) {
+async function runScriptCompat(testCase, directory, lexe, logPath, root) {
   if (name === "mysql2") {
-    await runMysql2ScriptCompat(testCase, directory, raster, logPath, root);
+    await runMysql2ScriptCompat(testCase, directory, lexe, logPath, root);
     return;
   }
 
   if (name === "node-postgres") {
-    await runPostgresScriptCompat(testCase, directory, raster, logPath, root);
+    await runPostgresScriptCompat(testCase, directory, lexe, logPath, root);
     return;
   }
 
@@ -672,7 +672,7 @@ async function runScriptCompat(testCase, directory, raster, logPath, root) {
         await runCompatScript(
           specWithGuard,
           directory,
-          raster,
+          lexe,
           logParts,
           root,
           logPath,
@@ -683,8 +683,8 @@ async function runScriptCompat(testCase, directory, raster, logPath, root) {
 
     const compatMode =
       process.env.COMPAT_SKIP_NODE_BASELINE === "1"
-        ? "Raster only"
-        : "Node baseline + Raster";
+        ? "Lexe only"
+        : "Node baseline + Lexe";
     console.log(
       `${name} compatibility passed (${scripts.length} script(s), ${compatMode})`
     );
@@ -696,7 +696,7 @@ async function runScriptCompat(testCase, directory, raster, logPath, root) {
 async function runCompatScript(
   spec,
   directory,
-  raster,
+  lexe,
   logParts,
   root,
   logPath,
@@ -712,7 +712,7 @@ async function runCompatScript(
     expectCode = 0,
     mustNotContainStdout,
     expectStillRunning,
-    allowRasterFailure = false,
+    allowLexeFailure = false,
     skipNodeBaseline: specSkipNodeBaseline = false,
   } = spec;
   const label = `${name}/${script}`;
@@ -728,10 +728,10 @@ async function runCompatScript(
   if (expectStillRunning) {
     const { checkMs = 400, killAfterMs = 1_500 } = expectStillRunning;
     const phases = skipNodeBaseline
-      ? [["Raster run", raster, [script]]]
+      ? [["Lexe run", lexe, [script]]]
       : [
           ["Node baseline", process.execPath, [script]],
-          ["Raster run", raster, [script]],
+          ["Lexe run", lexe, [script]],
         ];
     for (const [phase, command, args] of phases) {
       const cmdLine = `${command} ${args.join(" ")}`;
@@ -754,7 +754,7 @@ async function runCompatScript(
         );
       }
     }
-    return { rasterPassed: true };
+    return { lexePassed: true };
   }
 
   if (!skipNodeBaseline) {
@@ -778,7 +778,7 @@ async function runCompatScript(
       logPath,
       root,
       logParts,
-      rasterNotStarted: true,
+      lexeNotStarted: true,
     });
 
     if (betweenPhases) {
@@ -787,33 +787,33 @@ async function runCompatScript(
   }
 
   for (const stdioMode of stdioModes) {
-    const rasterCmd = `${raster} ${script}${args.length ? ` ${args.join(" ")}` : ""}`;
-    logParts.push(`\n# Raster run (${stdioMode}): ${script}\n$ ${rasterCmd}`);
-    console.log(`[compat-${label}] Raster run (${stdioMode}): ${rasterCmd}`);
+    const lexeCmd = `${lexe} ${script}${args.length ? ` ${args.join(" ")}` : ""}`;
+    logParts.push(`\n# Lexe run (${stdioMode}): ${script}\n$ ${lexeCmd}`);
+    console.log(`[compat-${label}] Lexe run (${stdioMode}): ${lexeCmd}`);
 
-    const rasterResult =
+    const lexeResult =
       stdioMode === "redirect"
         ? await spawnRedirected(
-            raster,
+            lexe,
             [script, ...args],
             { cwd: directory, env: childEnv },
             maxDurationMs
           )
         : await spawnCompatChild(
-            raster,
+            lexe,
             [script, ...args],
             { cwd: directory, env: childEnv },
             maxDurationMs,
             logParts
           );
 
-    let rasterPassed = true;
+    let lexePassed = true;
 
     try {
       validateCompatRun(
         `${label}/${stdioMode}`,
-        "Raster run",
-        rasterResult,
+        "Lexe run",
+        lexeResult,
         {
           maxDurationMs,
           expectCode,
@@ -822,26 +822,26 @@ async function runCompatScript(
           logPath,
           root,
           logParts,
-          rasterNotStarted: false,
+          lexeNotStarted: false,
         }
       );
     } catch (error) {
-      if (!allowRasterFailure) {
+      if (!allowLexeFailure) {
         throw error;
       }
 
-      rasterPassed = false;
+      lexePassed = false;
       const message = formatSpawnError(error);
-      logParts.push(`\n# Non-blocking Raster probe failure\n${message}`);
+      logParts.push(`\n# Non-blocking Lexe probe failure\n${message}`);
       emitGitHubWarning(`${label}/${stdioMode}: ${message}`);
     }
 
-    if (!rasterPassed) {
-      return { rasterPassed };
+    if (!lexePassed) {
+      return { lexePassed };
     }
   }
 
-  return { rasterPassed: true };
+  return { lexePassed: true };
 }
 
 function validateCompatRun(
@@ -856,7 +856,7 @@ function validateCompatRun(
     logPath,
     root,
     logParts,
-    rasterNotStarted,
+    lexeNotStarted,
   }
 ) {
   process.stdout.write(result.stdout);
@@ -873,7 +873,7 @@ function validateCompatRun(
     throw new Error(
       `${label} ${phase} timed out after ${maxDurationMs}ms. ` +
         `See ${path.relative(root, logPath)}.` +
-        (rasterNotStarted ? " Raster was not started." : "")
+        (lexeNotStarted ? " Lexe was not started." : "")
     );
   }
 
@@ -881,7 +881,7 @@ function validateCompatRun(
     throw new Error(
       `${label} ${phase} expected exit ${expectCode}, got ${result.code ?? result.signal}. ` +
         `See ${path.relative(root, logPath)}.` +
-        (rasterNotStarted ? " Raster was not started." : "")
+        (lexeNotStarted ? " Lexe was not started." : "")
     );
   }
 
@@ -889,7 +889,7 @@ function validateCompatRun(
     throw new Error(
       `${label} ${phase} exited ${expectCode} but stdout missing "${successMarker}". ` +
         `See ${path.relative(root, logPath)}.` +
-        (rasterNotStarted ? " Raster was not started." : "")
+        (lexeNotStarted ? " Lexe was not started." : "")
     );
   }
 
@@ -911,7 +911,7 @@ function validateCompatRun(
 async function runMysql2ScriptCompat(
   testCase,
   directory,
-  raster,
+  lexe,
   logPath,
   root
 ) {
@@ -995,7 +995,7 @@ async function runMysql2ScriptCompat(
 
   let testFailed = false;
   try {
-    await assertRasterExecutable(raster, logParts);
+    await assertLexeExecutable(lexe, logParts);
     logParts.push(`# Docker\nimage: ${MYSQL_DOCKER_IMAGE}`);
 
     const dockerVersion = await execDocker([
@@ -1020,11 +1020,11 @@ async function runMysql2ScriptCompat(
       "--env",
       "MYSQL_ROOT_PASSWORD=compat-root",
       "--env",
-      "MYSQL_DATABASE=raster_compat",
+      "MYSQL_DATABASE=lexe_compat",
       "--env",
-      "MYSQL_USER=raster",
+      "MYSQL_USER=lexe",
       "--env",
-      "MYSQL_PASSWORD=raster",
+      "MYSQL_PASSWORD=lexe",
       "--publish",
       `${MYSQL_DOCKER_HOST}::3306`,
       "--health-cmd=mysqladmin ping -h 127.0.0.1 -uroot -pcompat-root --silent",
@@ -1082,12 +1082,12 @@ async function runMysql2ScriptCompat(
       ...process.env,
       MYSQL_HOST: MYSQL_DOCKER_HOST,
       MYSQL_PORT: port,
-      MYSQL_DATABASE: "raster_compat",
-      MYSQL_USER: "raster",
-      MYSQL_PASSWORD: "raster",
+      MYSQL_DATABASE: "lexe_compat",
+      MYSQL_USER: "lexe",
+      MYSQL_PASSWORD: "lexe",
     };
     logParts.push(
-      `\n# Database config\nhost: ${MYSQL_DOCKER_HOST}\nport: ${port}\ndatabase: raster_compat\nuser: raster`
+      `\n# Database config\nhost: ${MYSQL_DOCKER_HOST}\nport: ${port}\ndatabase: lexe_compat\nuser: lexe`
     );
 
     const scripts = testCase.scripts ?? [
@@ -1103,7 +1103,7 @@ async function runMysql2ScriptCompat(
       await runCompatScript(
         spec,
         directory,
-        raster,
+        lexe,
         logParts,
         root,
         logPath,
@@ -1114,8 +1114,8 @@ async function runMysql2ScriptCompat(
 
     const compatMode =
       process.env.COMPAT_SKIP_NODE_BASELINE === "1"
-        ? "Raster only"
-        : "Node baseline + Raster";
+        ? "Lexe only"
+        : "Node baseline + Lexe";
     console.log(
       `${name} compatibility passed (${scripts.length} script(s), ${compatMode})`
     );
@@ -1145,7 +1145,7 @@ async function runMysql2ScriptCompat(
 async function runPostgresScriptCompat(
   testCase,
   directory,
-  raster,
+  lexe,
   logPath,
   root
 ) {
@@ -1235,7 +1235,7 @@ async function runPostgresScriptCompat(
 
   let testFailed = false;
   try {
-    await assertRasterExecutable(raster, logParts);
+    await assertLexeExecutable(lexe, logParts);
     logParts.push(`# Docker\nimage: ${POSTGRES_DOCKER_IMAGE}`);
 
     const dockerVersion = await execDocker([
@@ -1256,7 +1256,7 @@ async function runPostgresScriptCompat(
     // Separate short-lived CA + leaf server cert so:
     // - rustls can trust the CA (BasicConstraints CA:TRUE) via ssl.ca
     // - the leaf is a valid end-entity cert (not CaUsedAsEndEntity)
-    // - Node and Raster both verify with the exported CA file
+    // - Node and Lexe both verify with the exported CA file
     const postgresBootstrap = `
 set -eu
 umask 077
@@ -1268,11 +1268,11 @@ openssl req \\
   -sha256 \\
   -nodes \\
   -days 1 \\
-  -subj /CN=RasterCompatCA \\
+  -subj /CN=LexeCompatCA \\
   -addext basicConstraints=critical,CA:TRUE,pathlen:0 \\
   -addext keyUsage=critical,keyCertSign,cRLSign \\
-  -keyout /tmp/raster-ca.key \\
-  -out /tmp/raster-ca.crt
+  -keyout /tmp/lexe-ca.key \\
+  -out /tmp/lexe-ca.crt
 
 # Server leaf key + CSR
 openssl req \\
@@ -1280,42 +1280,42 @@ openssl req \\
   -sha256 \\
   -nodes \\
   -subj /CN=localhost \\
-  -keyout /tmp/raster-postgres.key \\
-  -out /tmp/raster-postgres.csr
+  -keyout /tmp/lexe-postgres.key \\
+  -out /tmp/lexe-postgres.csr
 
 printf '%s\\n' \\
   'subjectAltName=DNS:localhost,IP:127.0.0.1' \\
   'basicConstraints=CA:FALSE' \\
   'keyUsage=digitalSignature,keyEncipherment' \\
   'extendedKeyUsage=serverAuth' \\
-  > /tmp/raster-server-ext.cnf
+  > /tmp/lexe-server-ext.cnf
 
 # Sign leaf with CA
 openssl x509 \\
   -req \\
-  -in /tmp/raster-postgres.csr \\
-  -CA /tmp/raster-ca.crt \\
-  -CAkey /tmp/raster-ca.key \\
+  -in /tmp/lexe-postgres.csr \\
+  -CA /tmp/lexe-ca.crt \\
+  -CAkey /tmp/lexe-ca.key \\
   -CAcreateserial \\
   -days 1 \\
   -sha256 \\
-  -extfile /tmp/raster-server-ext.cnf \\
-  -out /tmp/raster-postgres.crt
+  -extfile /tmp/lexe-server-ext.cnf \\
+  -out /tmp/lexe-postgres.crt
 
 # Publish CA at the path the host copies for client verification
-cp /tmp/raster-ca.crt /tmp/raster-postgres-ca.crt
+cp /tmp/lexe-ca.crt /tmp/lexe-postgres-ca.crt
 
 chown postgres:postgres \\
-  /tmp/raster-postgres.key \\
-  /tmp/raster-postgres.crt \\
-  /tmp/raster-ca.crt \\
-  /tmp/raster-postgres-ca.crt
-chmod 600 /tmp/raster-postgres.key /tmp/raster-ca.key
+  /tmp/lexe-postgres.key \\
+  /tmp/lexe-postgres.crt \\
+  /tmp/lexe-ca.crt \\
+  /tmp/lexe-postgres-ca.crt
+chmod 600 /tmp/lexe-postgres.key /tmp/lexe-ca.key
 
 exec docker-entrypoint.sh postgres \\
   -c ssl=on \\
-  -c ssl_cert_file=/tmp/raster-postgres.crt \\
-  -c ssl_key_file=/tmp/raster-postgres.key
+  -c ssl_cert_file=/tmp/lexe-postgres.crt \\
+  -c ssl_key_file=/tmp/lexe-postgres.key
 `;
 
     const runArgs = [
@@ -1323,16 +1323,16 @@ exec docker-entrypoint.sh postgres \\
       "--detach",
       "--rm",
       "--env",
-      "POSTGRES_DB=raster_compat",
+      "POSTGRES_DB=lexe_compat",
       "--env",
-      "POSTGRES_USER=raster",
+      "POSTGRES_USER=lexe",
       "--env",
-      "POSTGRES_PASSWORD=raster-compat-secret",
+      "POSTGRES_PASSWORD=lexe-compat-secret",
       "--env",
       "POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256",
       "--publish",
       `${POSTGRES_DOCKER_HOST}::5432`,
-      "--health-cmd=pg_isready -U raster -d raster_compat",
+      "--health-cmd=pg_isready -U lexe -d lexe_compat",
       "--health-interval=2s",
       "--health-timeout=5s",
       "--health-retries=30",
@@ -1387,7 +1387,7 @@ exec docker-entrypoint.sh postgres \\
     );
 
     certDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "raster-node-postgres-")
+      path.join(os.tmpdir(), "lexe-node-postgres-")
     );
     const caPath = path.join(certDir, "postgres-ca.crt");
     await copyPostgresCa(containerId, caPath, logParts);
@@ -1398,9 +1398,9 @@ exec docker-entrypoint.sh postgres \\
     const pgpassLine = [
       POSTGRES_DOCKER_HOST,
       port,
-      "raster_compat",
-      "raster",
-      "raster-compat-secret",
+      "lexe_compat",
+      "lexe",
+      "lexe-compat-secret",
     ].join(":");
     await fs.writeFile(pgpassPath, `${pgpassLine}\n`, { mode: 0o600 });
     // Ensure mode even when umask interfered with writeFile mode on some hosts.
@@ -1410,14 +1410,14 @@ exec docker-entrypoint.sh postgres \\
       ...process.env,
       PGHOST: POSTGRES_DOCKER_HOST,
       PGPORT: port,
-      PGDATABASE: "raster_compat",
-      PGUSER: "raster",
-      PGPASSWORD: "raster-compat-secret",
+      PGDATABASE: "lexe_compat",
+      PGUSER: "lexe",
+      PGPASSWORD: "lexe-compat-secret",
       PG_CA_FILE: caPath,
       PGPASSFILE: pgpassPath,
     };
     logParts.push(
-      `\n# Database config\nhost: ${POSTGRES_DOCKER_HOST}\nport: ${port}\ndatabase: raster_compat\nuser: raster\nca: ${caPath}\npgpass: ${pgpassPath}`
+      `\n# Database config\nhost: ${POSTGRES_DOCKER_HOST}\nport: ${port}\ndatabase: lexe_compat\nuser: lexe\nca: ${caPath}\npgpass: ${pgpassPath}`
     );
 
     const scripts = testCase.scripts ?? [
@@ -1426,38 +1426,38 @@ exec docker-entrypoint.sh postgres \\
         successMarker: testCase.successMarker,
         maxDurationMs: SCRIPT_TIMEOUT_MS,
         expectCode: 0,
-        allowRasterFailure: testCase.allowRasterFailure === true,
+        allowLexeFailure: testCase.allowLexeFailure === true,
       },
     ];
 
-    let rasterPassed = true;
+    let lexePassed = true;
     for (const spec of scripts) {
       const result = await runCompatScript(
         spec,
         directory,
-        raster,
+        lexe,
         logParts,
         root,
         logPath,
         testEnv,
         () => resetPostgresSchema(containerId, logParts)
       );
-      if (result && result.rasterPassed === false) {
-        rasterPassed = false;
+      if (result && result.lexePassed === false) {
+        lexePassed = false;
       }
     }
 
     const compatMode =
       process.env.COMPAT_SKIP_NODE_BASELINE === "1"
-        ? "Raster only"
-        : "Node baseline + Raster";
-    if (rasterPassed) {
+        ? "Lexe only"
+        : "Node baseline + Lexe";
+    if (lexePassed) {
       console.log(
         `${name} compatibility passed (${scripts.length} script(s), ${compatMode})`
       );
     } else {
       console.log(
-        "node-postgres compatibility probe completed with Raster failures"
+        "node-postgres compatibility probe completed with Lexe failures"
       );
     }
   } catch (err) {
@@ -1483,26 +1483,26 @@ exec docker-entrypoint.sh postgres \\
   }
 }
 
-async function assertRasterExecutable(rasterPath, logParts) {
-  logParts.push(`\n# Raster preflight\nraster: ${rasterPath}`);
+async function assertLexeExecutable(lexePath, logParts) {
+  logParts.push(`\n# Lexe preflight\nlexe: ${lexePath}`);
   try {
-    const stat = await fs.stat(rasterPath);
+    const stat = await fs.stat(lexePath);
     if (!stat.isFile()) {
-      throw new Error(`Raster runtime is not a file: ${rasterPath}`);
+      throw new Error(`Lexe runtime is not a file: ${lexePath}`);
     }
-    await fs.access(rasterPath, fsConstants.X_OK);
+    await fs.access(lexePath, fsConstants.X_OK);
   } catch (err) {
     const code =
       err && typeof err === "object" && "code" in err ? err.code : null;
     if (code === "ENOENT" || code === "ENOTDIR") {
       throw new Error(
-        `Raster runtime not found: ${rasterPath}\n` +
+        `Lexe runtime not found: ${lexePath}\n` +
           "Build it first with: cargo build"
       );
     }
     if (code === "EACCES") {
       throw new Error(
-        `Raster runtime is not executable: ${rasterPath}\n` +
+        `Lexe runtime is not executable: ${lexePath}\n` +
           "Build it first with: cargo build"
       );
     }
@@ -1548,10 +1548,10 @@ async function flushMysqlAuthCache(containerId, logParts) {
   ];
   const loggedCmd = redactSecrets(`docker ${flushArgs.join(" ")}`);
   logParts.push(
-    `\n# Flush authentication cache before Raster run\n$ ${loggedCmd}`
+    `\n# Flush authentication cache before Lexe run\n$ ${loggedCmd}`
   );
   console.log(
-    "[compat-mysql2] flushing authentication cache before Raster run"
+    "[compat-mysql2] flushing authentication cache before Lexe run"
   );
 
   const result = await execDocker(flushArgs);
@@ -1567,7 +1567,7 @@ async function flushMysqlAuthCache(containerId, logParts) {
 
 async function resetPostgresSchema(containerId, logParts) {
   const sql =
-    "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO raster;";
+    "DROP SCHEMA public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO lexe;";
   const resetArgs = [
     "exec",
     containerId,
@@ -1575,17 +1575,17 @@ async function resetPostgresSchema(containerId, logParts) {
     "-v",
     "ON_ERROR_STOP=1",
     "-U",
-    "raster",
+    "lexe",
     "-d",
-    "raster_compat",
+    "lexe_compat",
     "-c",
     sql,
   ];
   const loggedCmd = redactSecrets(`docker ${resetArgs.join(" ")}`);
   logParts.push(
-    `\n# Reset public schema before Raster run\n$ ${loggedCmd}`
+    `\n# Reset public schema before Lexe run\n$ ${loggedCmd}`
   );
-  console.log("[compat-node-postgres] resetting public schema before Raster run");
+  console.log("[compat-node-postgres] resetting public schema before Lexe run");
 
   const result = await execDocker(resetArgs);
   logParts.push(
@@ -1602,7 +1602,7 @@ async function copyPostgresCa(containerId, caPath, logParts) {
   // Prefer the dedicated CA path; fall back to legacy single-cert layout.
   const copyArgs = [
     "cp",
-    `${containerId}:/tmp/raster-postgres-ca.crt`,
+    `${containerId}:/tmp/lexe-postgres-ca.crt`,
     caPath,
   ];
   logParts.push(
@@ -1648,7 +1648,7 @@ function emitGitHubWarning(message) {
     .replace(/\r/g, "%0D")
     .replace(/\n/g, "%0A");
   console.warn(
-    `::warning title=node-postgres Raster compatibility::${escaped}`
+    `::warning title=node-postgres Lexe compatibility::${escaped}`
   );
 }
 
@@ -1763,7 +1763,7 @@ async function waitForPostgresHealthy(containerId, logParts, appendDiagnostics) 
   );
 }
 
-async function runNextStandalone(directory, raster, logPath, root) {
+async function runNextStandalone(directory, lexe, logPath, root) {
   const logParts = [];
   const outputDir = path.join(directory, ".next");
   const standaloneDir = path.join(outputDir, "standalone");
@@ -1772,7 +1772,7 @@ async function runNextStandalone(directory, raster, logPath, root) {
 
   await fs.rm(outputDir, { recursive: true, force: true });
 
-  // --- Phase 1: Node builds standalone (not Raster) ---
+  // --- Phase 1: Node builds standalone (not Lexe) ---
   const buildCmd = `${process.execPath} ${nextCli} build`;
   logParts.push(`# Node build\n$ ${buildCmd}`);
   console.log(`[compat-next] building with system Node: ${buildCmd}`);
@@ -1805,7 +1805,7 @@ async function runNextStandalone(directory, raster, logPath, root) {
     throw new Error(
       `Next Node build timed out after ${BUILD_TIMEOUT_MS}ms. ` +
         `See ${path.relative(root, logPath)} for Node build stdout/stderr. ` +
-        `Raster was not started.`
+        `Lexe was not started.`
     );
   }
 
@@ -1814,7 +1814,7 @@ async function runNextStandalone(directory, raster, logPath, root) {
     throw new Error(
       `Next Node build failed (exit ${buildResult.code ?? buildResult.signal}). ` +
         `See ${path.relative(root, logPath)} for Node build stdout/stderr. ` +
-        `Raster was not started.`
+        `Lexe was not started.`
     );
   }
 
@@ -1830,7 +1830,7 @@ async function runNextStandalone(directory, raster, logPath, root) {
     `\n# Standalone entry present\n${path.relative(root, serverEntry)}`
   );
 
-  // --- Phase 2: Raster runs standalone server ---
+  // --- Phase 2: Lexe runs standalone server ---
   const port = await getFreePort();
   const host = "127.0.0.1";
   const baseUrl = `http://${host}:${port}`;
@@ -1842,13 +1842,13 @@ async function runNextStandalone(directory, raster, logPath, root) {
     NEXT_TELEMETRY_DISABLED: "1",
   };
 
-  const startCmd = `${raster} ${serverEntry}`;
+  const startCmd = `${lexe} ${serverEntry}`;
   logParts.push(
-    `\n# Raster start\n$ ${startCmd}\n` +
+    `\n# Lexe start\n$ ${startCmd}\n` +
       `cwd: ${standaloneDir}\n` +
       `HOSTNAME=${host} PORT=${port} NODE_ENV=production NEXT_TELEMETRY_DISABLED=1`
   );
-  console.log(`[compat-next] starting with Raster on ${baseUrl}`);
+  console.log(`[compat-next] starting with Lexe on ${baseUrl}`);
 
   let server = null;
   let serverExit = null;
@@ -1858,7 +1858,7 @@ async function runNextStandalone(directory, raster, logPath, root) {
   let teardownFailure = null;
 
   try {
-    server = spawn(raster, [serverEntry], {
+    server = spawn(lexe, [serverEntry], {
       cwd: standaloneDir,
       env: serverEnv,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1894,7 +1894,7 @@ async function runNextStandalone(directory, raster, logPath, root) {
         ? `last readiness error: ${ready.lastError}\n`
         : "last readiness error: (none recorded)\n";
       logParts.push(
-        `\n# Raster early exit / readiness\n` +
+        `\n# Lexe early exit / readiness\n` +
           `reason: ${ready.reason}\n` +
           lastErrorLine +
           `exit: ${formatExit(serverExit)}\n\n` +
@@ -1903,25 +1903,25 @@ async function runNextStandalone(directory, raster, logPath, root) {
       await writeLog(logPath, logParts);
       if (ready.reason === "exited") {
         throw new Error(
-          `Raster exited before listening (${formatExit(serverExit)}). ` +
+          `Lexe exited before listening (${formatExit(serverExit)}). ` +
             (ready.lastError
               ? `Last readiness error: ${ready.lastError}. `
               : "") +
-            `See ${path.relative(root, logPath)} for Raster stdout/stderr.`
+            `See ${path.relative(root, logPath)} for Lexe stdout/stderr.`
         );
       }
       throw new Error(
-        `Raster standalone server readiness timed out after ${READINESS_TIMEOUT_MS / 1000}s ` +
+        `Lexe standalone server readiness timed out after ${READINESS_TIMEOUT_MS / 1000}s ` +
           `(health ${baseUrl}/api/health). ` +
           (ready.lastError
             ? `Last readiness error: ${ready.lastError}. `
             : "") +
-          `See ${path.relative(root, logPath)} for Raster stdout/stderr.`
+          `See ${path.relative(root, logPath)} for Lexe stdout/stderr.`
       );
     }
 
     logParts.push(
-      `\n# Raster ready\nhealth: ${baseUrl}/api/health OK\n\nstdout so far:\n${stdout}\n\nstderr so far:\n${stderr}`
+      `\n# Lexe ready\nhealth: ${baseUrl}/api/health OK\n\nstdout so far:\n${stdout}\n\nstderr so far:\n${stderr}`
     );
 
     // --- Phase 3: HTTP assertions ---
@@ -1931,8 +1931,8 @@ async function runNextStandalone(directory, raster, logPath, root) {
         path: "/",
         expectStatus: 200,
         assert: (body) => {
-          if (!body.includes("Raster Next compatibility fixture")) {
-            return 'body missing "Raster Next compatibility fixture"';
+          if (!body.includes("Lexe Next compatibility fixture")) {
+            return 'body missing "Lexe Next compatibility fixture"';
           }
           return null;
         },
@@ -1973,10 +1973,10 @@ async function runNextStandalone(directory, raster, logPath, root) {
     for (const check of checks) {
       if (serverExit) {
         failures.push(
-          `${check.name}: skipped (Raster already exited: ${formatExit(serverExit)})`
+          `${check.name}: skipped (Lexe already exited: ${formatExit(serverExit)})`
         );
         logParts.push(
-          `\n# HTTP ${check.name}\nskipped: Raster exited ${formatExit(serverExit)}`
+          `\n# HTTP ${check.name}\nskipped: Lexe exited ${formatExit(serverExit)}`
         );
         continue;
       }
@@ -2060,16 +2060,16 @@ async function runNextStandalone(directory, raster, logPath, root) {
       }
     } else {
       failures.push(
-        `concurrent ALS: skipped (Raster already exited: ${formatExit(serverExit)})`
+        `concurrent ALS: skipped (Lexe already exited: ${formatExit(serverExit)})`
       );
       logParts.push(
-        `\n# HTTP concurrent ALS\nskipped: Raster exited ${formatExit(serverExit)}`
+        `\n# HTTP concurrent ALS\nskipped: Lexe exited ${formatExit(serverExit)}`
       );
     }
 
     // Capture any additional server output after requests
     logParts.push(
-      `\n# Raster output after HTTP checks\nstdout:\n${stdout}\n\nstderr:\n${stderr}\n` +
+      `\n# Lexe output after HTTP checks\nstdout:\n${stdout}\n\nstderr:\n${stderr}\n` +
         `exit so far: ${formatExit(serverExit)}`
     );
 
@@ -2085,11 +2085,11 @@ async function runNextStandalone(directory, raster, logPath, root) {
     const healthLoops = positiveLoopCount("COMPAT_NEXT_HEALTH_LOOPS", 20);
     for (let i = 0; i < healthLoops; i++) {
       if (serverExit) {
-        failures.push(`health loop ${i + 1}: skipped (Raster already exited)`);
+        failures.push(`health loop ${i + 1}: skipped (Lexe already exited)`);
         healthResults.push({
           loop: i + 1,
           skipped: true,
-          reason: `Raster exited ${formatExit(serverExit)}`,
+          reason: `Lexe exited ${formatExit(serverExit)}`,
         });
         break;
       }
@@ -2150,7 +2150,7 @@ async function runNextStandalone(directory, raster, logPath, root) {
 
     console.log(
       "next compatibility standalone runtime passed " +
-        `(Node build + Raster run; HTTP / /api/health /posts/42 + concurrent ALS + ${healthLoops}x health OK)`
+        `(Node build + Lexe run; HTTP / /api/health /posts/42 + concurrent ALS + ${healthLoops}x health OK)`
     );
   } finally {
     if (server) {
@@ -2230,11 +2230,11 @@ function spawnStillRunning(command, args, options, checkMs, killAfterMs) {
 async function spawnRedirected(command, args, options, timeoutMs) {
   const stdoutPath = path.join(
     os.tmpdir(),
-    `raster-stdout-${process.pid}-${Date.now()}.log`
+    `lexe-stdout-${process.pid}-${Date.now()}.log`
   );
   const stderrPath = path.join(
     os.tmpdir(),
-    `raster-stderr-${process.pid}-${Date.now()}.log`
+    `lexe-stderr-${process.pid}-${Date.now()}.log`
   );
 
   const stdout = fsSync.openSync(stdoutPath, "w");

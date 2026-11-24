@@ -1,5 +1,5 @@
 /**
- * The `util` module supports the needs of raster_runtime internal APIs. Many of the
+ * The `util` module supports the needs of lexe internal APIs. Many of the
  * utilities are useful for application and module developers as well. To access
  * it:
  *

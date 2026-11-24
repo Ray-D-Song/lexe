@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SQLite ASan gate: instrument raster_runtime (Rust + bundled sqlite3.c) and the
+# SQLite ASan gate: instrument lexe (Rust + bundled sqlite3.c) and the
 # loadable SQLite extension (extension.c).
 #
 # Critical isolation (host == target triple on Linux CI):
@@ -7,8 +7,8 @@
 #   to host build scripts / proc-macros (Cargo's documented behavior).
 # - Do NOT export global CFLAGS/CXXFLAGS during `cargo build` (would poison host
 #   rquickjs-sys used by rquickjs_macro → E0463 / link failure).
-# - Instrument SQLite C via package-scoped RASTER_SQLITE_SANITIZE=address
-#   (raster_runtime_sqlite/build.rs + build-extension.mjs only).
+# - Instrument SQLite C via package-scoped LEXE_SQLITE_SANITIZE=address
+#   (lexe_sqlite/build.rs + build-extension.mjs only).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -31,8 +31,8 @@ export CARGO_TARGET_DIR="$ROOT/target-sqlite-asan"
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="\
 -Zsanitizer=address \
 -Cdebuginfo=1"
-# Package-scoped: only raster_runtime_sqlite's cc::Build and the extension builder.
-export RASTER_SQLITE_SANITIZE=address
+# Package-scoped: only lexe_sqlite's cc::Build and the extension builder.
+export LEXE_SQLITE_SANITIZE=address
 # Intentionally no global CFLAGS/CXXFLAGS — see file header.
 export CC="${CC:-clang}"
 export CXX="${CXX:-clang++}"
@@ -122,7 +122,7 @@ trap 'rm -f "$build_log"' EXIT
 
 set +e
 cargo +nightly build \
-  -p raster_runtime \
+  -p lexe \
   --target "$TARGET" 2>&1 | tee "$build_log"
 build_status=${PIPESTATUS[0]}
 set -e
@@ -134,7 +134,7 @@ if [[ "$build_status" -ne 0 ]]; then
     echo "[sqlite-asan] re-running failed build with -vv (macro / E0463 / link)" >&2
     echo "[sqlite-asan] inspect: rquickjs_macro rustc line, artifact path, --extern, ldd" >&2
     cargo +nightly build \
-      -p raster_runtime \
+      -p lexe \
       --target "$TARGET" \
       -vv || true
   fi
@@ -143,7 +143,7 @@ fi
 
 assert_proc_macro_host_clean
 
-# Loadable extension: flags come from RASTER_SQLITE_SANITIZE via build-extension.mjs
+# Loadable extension: flags come from LEXE_SQLITE_SANITIZE via build-extension.mjs
 # (not ambient CFLAGS — spawnSync does not pass env CFLAGS to the compiler).
 node compat/node-sqlite/build-extension.mjs
 
@@ -158,12 +158,12 @@ if ! has_asan_syms "$EXTENSION"; then
 fi
 echo "[sqlite-asan] SQLite extension is ASan-instrumented: $EXTENSION"
 
-RASTER_RUNTIME="$CARGO_TARGET_DIR/$TARGET/debug/raster_runtime"
-if ! has_asan_syms "$RASTER_RUNTIME"; then
-  echo "binary is not ASan-instrumented: $RASTER_RUNTIME" >&2
+LEXE_BIN="$CARGO_TARGET_DIR/$TARGET/debug/lexe"
+if ! has_asan_syms "$LEXE_BIN"; then
+  echo "binary is not ASan-instrumented: $LEXE_BIN" >&2
   exit 1
 fi
-echo "[sqlite-asan] raster_runtime is ASan-instrumented: $RASTER_RUNTIME"
+echo "[sqlite-asan] lexe is ASan-instrumented: $LEXE_BIN"
 
 SANITIZER_FAIL_RE='ERROR: AddressSanitizer|LeakSanitizer|runtime error:|SIGABRT|assert'
 
@@ -187,7 +187,7 @@ run_and_scan "node-sqlite parity" \
   env COMPAT_SKIP_NODE_BASELINE=1 \
   COMPAT_SQLITE_LIFECYCLE_LOOPS="${COMPAT_SQLITE_LIFECYCLE_LOOPS:-20}" \
   COMPAT_SQLITE_BACKUP_LOOPS="${COMPAT_SQLITE_BACKUP_LOOPS:-5}" \
-  node compat/run.mjs node-sqlite "$RASTER_RUNTIME"
+  node compat/run.mjs node-sqlite "$LEXE_BIN"
 
 run_and_scan "sqlite unit tests" \
-  "$RASTER_RUNTIME" test -d bundle/js/__tests__/unit --filter sqlite
+  "$LEXE_BIN" test -d bundle/js/__tests__/unit --filter sqlite

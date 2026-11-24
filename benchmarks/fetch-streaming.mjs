@@ -22,7 +22,7 @@ if (process.env.BENCH_PORT) {
   const { spawn } = await import("node:child_process");
 
   const RUNTIMES = [
-    ["raster_runtime", "raster_runtime"],
+    ["lexe", "lexe"],
     ["Node.js", "node"],
     ["Bun", "bun"],
   ];

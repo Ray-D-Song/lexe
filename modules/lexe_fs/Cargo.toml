@@ -1,0 +1,56 @@
+[package]
+name = "lexe_fs"
+description = "lexe Module fs"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_fs"
+path = "src/lib.rs"
+
+[dependencies]
+either = { version = "1", default-features = false }
+lexe_buffer = { version = "0.1.0", path = "../lexe_buffer" }
+lexe_context = { version = "0.1.0", path = "../../libs/lexe_context" }
+lexe_encoding = { version = "0.1.0", path = "../../libs/lexe_encoding" }
+lexe_events = { version = "0.1.0", path = "../lexe_events" }
+lexe_path = { version = "0.1.0", path = "../lexe_path" }
+lexe_url = { version = "0.1.0", path = "../lexe_url" }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", features = [
+  "fs",
+], default-features = false }
+notify = "8.2"
+rand = { version = "0.10.1", features = [
+  "alloc",
+  "thread_rng",
+], default-features = false }
+rquickjs = { version = "=0.12.1", features = ["either"], default-features = false }
+tokio = { version = "1", features = [
+  "fs",
+  "io-util",
+  "rt",
+  "sync",
+], default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+junction = "2"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+tokio = { version = "1", features = [
+  "test-util",
+  "macros",
+  "rt",
+  "fs",
+  "io-util",
+], default-features = false }

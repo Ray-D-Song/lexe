@@ -1,7 +1,7 @@
 /**
  * The `node:vm` module exposes APIs for executing JavaScript in isolated contexts.
  *
- * Raster implements a subset focused on synchronous `runInNewContext` compatibility.
+ * Lexe implements a subset focused on synchronous `runInNewContext` compatibility.
  *
  * @see [source](https://github.com/nodejs/node/blob/v22.x/lib/vm.js)
  */

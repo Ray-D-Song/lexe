@@ -1,0 +1,15 @@
+[package]
+name = "lexe_exceptions"
+description = "lexe Module exception"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[lib]
+name = "lexe_exceptions"
+path = "src/lib.rs"
+
+[dependencies]
+rquickjs = { version = "=0.12.1", default-features = false }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }

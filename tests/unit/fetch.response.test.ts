@@ -235,11 +235,11 @@ describe("Response class", () => {
 
   // ── Body unusable: locked ──
   // Note: These tests require body to be a ReadableStream, which only happens
-  // for fetched responses in raster_runtime. User-provided bodies return raw values.
+  // for fetched responses in lexe. User-provided bodies return raw values.
 
   it("should reject text() when body stream is locked", async () => {
     const res = new Response("locked test");
-    // Skip if body is not a ReadableStream (raster_runtime returns raw value for user-provided bodies)
+    // Skip if body is not a ReadableStream (lexe returns raw value for user-provided bodies)
     if (!res.body || typeof res.body.getReader !== "function") {
       return;
     }

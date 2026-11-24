@@ -69,9 +69,9 @@ function baseConfig(overrides = {}) {
   return {
     host: process.env.PGHOST || "127.0.0.1",
     port: Number(process.env.PGPORT || 5432),
-    database: process.env.PGDATABASE || "raster_compat",
-    user: process.env.PGUSER || "raster",
-    password: process.env.PGPASSWORD || "raster-compat-secret",
+    database: process.env.PGDATABASE || "lexe_compat",
+    user: process.env.PGUSER || "lexe",
+    password: process.env.PGPASSWORD || "lexe-compat-secret",
     connectionTimeoutMillis: 2_000,
     ...overrides,
   };
@@ -322,8 +322,8 @@ test("PG-002", "plain SCRAM connection", async () => {
         1 AS value
     `);
     assertEqual(result.rowCount, 1, "rowCount should be 1");
-    assertEqual(result.rows[0].current_user, "raster");
-    assertEqual(result.rows[0].current_database, "raster_compat");
+    assertEqual(result.rows[0].current_user, "lexe");
+    assertEqual(result.rows[0].current_database, "lexe_compat");
     assertEqual(result.rows[0].value, 1);
   });
 });
@@ -410,14 +410,14 @@ test("PG-005", "parameter encoding", async () => {
         $4::text AS null_value,
         $5::text AS quoted_value
     `,
-      [42, "hello", true, null, "Raster's PostgreSQL"]
+      [42, "hello", true, null, "Lexe's PostgreSQL"]
     );
     const row = result.rows[0];
     assertEqual(row.integer_value, 42);
     assertEqual(row.text_value, "hello");
     assertEqual(row.boolean_value, true);
     assertEqual(row.null_value, null);
-    assertEqual(row.quoted_value, "Raster's PostgreSQL");
+    assertEqual(row.quoted_value, "Lexe's PostgreSQL");
   });
 });
 
@@ -464,14 +464,14 @@ test("PG-007", "query config and rowMode", async () => {
 test("PG-008", "named prepared statements", async () => {
   await withClient({}, async (client) => {
     const first = await client.query({
-      name: "raster-compat-by-id",
+      name: "lexe-compat-by-id",
       text: "SELECT $1::int AS value",
       values: [1],
     });
     assertEqual(first.rows[0].value, 1);
 
     const second = await client.query({
-      name: "raster-compat-by-id",
+      name: "lexe-compat-by-id",
       text: "SELECT $1::int AS value",
       values: [2],
     });
@@ -481,16 +481,16 @@ test("PG-008", "named prepared statements", async () => {
 
 test("PG-009", "DML metadata", async () => {
   await withClient({}, async (client) => {
-    await client.query("DROP TABLE IF EXISTS raster_pg_items");
+    await client.query("DROP TABLE IF EXISTS lexe_pg_items");
     await client.query(`
-      CREATE TABLE raster_pg_items (
+      CREATE TABLE lexe_pg_items (
         id integer PRIMARY KEY,
         name text NOT NULL UNIQUE
       )
     `);
 
     const insert = await client.query(
-      "INSERT INTO raster_pg_items (id, name) VALUES ($1, $2) RETURNING id, name",
+      "INSERT INTO lexe_pg_items (id, name) VALUES ($1, $2) RETURNING id, name",
       [1, "alpha"]
     );
     assertEqual(insert.command, "INSERT");
@@ -502,7 +502,7 @@ test("PG-009", "DML metadata", async () => {
     );
 
     const update = await client.query(
-      "UPDATE raster_pg_items SET name = $1 WHERE id = $2 RETURNING id, name",
+      "UPDATE lexe_pg_items SET name = $1 WHERE id = $2 RETURNING id, name",
       ["beta", 1]
     );
     assertEqual(update.command, "UPDATE");
@@ -514,7 +514,7 @@ test("PG-009", "DML metadata", async () => {
     );
 
     const del = await client.query(
-      "DELETE FROM raster_pg_items WHERE id = $1 RETURNING id, name",
+      "DELETE FROM lexe_pg_items WHERE id = $1 RETURNING id, name",
       [1]
     );
     assertEqual(del.command, "DELETE");
@@ -529,23 +529,23 @@ test("PG-009", "DML metadata", async () => {
 
 test("PG-010", "transaction commit", async () => {
   await withClient({}, async (client) => {
-    await client.query("DROP TABLE IF EXISTS raster_pg_tx");
+    await client.query("DROP TABLE IF EXISTS lexe_pg_tx");
     await client.query(`
-      CREATE TABLE raster_pg_tx (
+      CREATE TABLE lexe_pg_tx (
         id integer PRIMARY KEY,
         value text NOT NULL
       )
     `);
     await client.query("BEGIN");
     await client.query(
-      "INSERT INTO raster_pg_tx (id, value) VALUES (1, 'committed')"
+      "INSERT INTO lexe_pg_tx (id, value) VALUES (1, 'committed')"
     );
     await client.query("COMMIT");
   });
 
   await withClient({}, async (client) => {
     const result = await client.query(
-      "SELECT id, value FROM raster_pg_tx WHERE id = 1"
+      "SELECT id, value FROM lexe_pg_tx WHERE id = 1"
     );
     assertEqual(result.rowCount, 1);
     assertDeepEqual(result.rows[0], { id: 1, value: "committed" });
@@ -554,32 +554,32 @@ test("PG-010", "transaction commit", async () => {
 
 test("PG-011", "transaction rollback", async () => {
   await withClient({}, async (client) => {
-    await client.query("DROP TABLE IF EXISTS raster_pg_tx_rollback");
+    await client.query("DROP TABLE IF EXISTS lexe_pg_tx_rollback");
     await client.query(`
-      CREATE TABLE raster_pg_tx_rollback (
+      CREATE TABLE lexe_pg_tx_rollback (
         id integer PRIMARY KEY,
         value text NOT NULL
       )
     `);
     await client.query(
-      "INSERT INTO raster_pg_tx_rollback (id, value) VALUES (1, 'baseline')"
+      "INSERT INTO lexe_pg_tx_rollback (id, value) VALUES (1, 'baseline')"
     );
 
     await client.query("BEGIN");
     await client.query(
-      "INSERT INTO raster_pg_tx_rollback (id, value) VALUES (2, 'rolled-back')"
+      "INSERT INTO lexe_pg_tx_rollback (id, value) VALUES (2, 'rolled-back')"
     );
     await client.query("ROLLBACK");
   });
 
   await withClient({}, async (client) => {
     const rolled = await client.query(
-      "SELECT id FROM raster_pg_tx_rollback WHERE id = 2"
+      "SELECT id FROM lexe_pg_tx_rollback WHERE id = 2"
     );
     assertEqual(rolled.rowCount, 0, "id=2 should not exist after rollback");
 
     const baseline = await client.query(
-      "SELECT id, value FROM raster_pg_tx_rollback WHERE id = 1"
+      "SELECT id, value FROM lexe_pg_tx_rollback WHERE id = 1"
     );
     assertEqual(baseline.rowCount, 1, "id=1 baseline should still exist");
     assertDeepEqual(baseline.rows[0], { id: 1, value: "baseline" });
@@ -588,16 +588,16 @@ test("PG-011", "transaction rollback", async () => {
 
 test("PG-012", "SQL error then connection reuse", async () => {
   await withClient({}, async (client) => {
-    await client.query("DROP TABLE IF EXISTS raster_pg_unique");
+    await client.query("DROP TABLE IF EXISTS lexe_pg_unique");
     await client.query(`
-      CREATE TABLE raster_pg_unique (
+      CREATE TABLE lexe_pg_unique (
         id integer PRIMARY KEY
       )
     `);
-    await client.query("INSERT INTO raster_pg_unique (id) VALUES (1)");
+    await client.query("INSERT INTO lexe_pg_unique (id) VALUES (1)");
 
     await expectReject(
-      client.query("INSERT INTO raster_pg_unique (id) VALUES (1)"),
+      client.query("INSERT INTO lexe_pg_unique (id) VALUES (1)"),
       (error) => {
         assert(error instanceof Error, "error should be an Error");
         assertEqual(error.code, "23505");
@@ -701,7 +701,7 @@ test("PG-016", "statement timeout", async () => {
     await client.query("SET statement_timeout = 200");
     const startedAt = Date.now();
     await expectReject(
-      client.query("SELECT pg_sleep(3) /* raster-pg-statement-timeout */"),
+      client.query("SELECT pg_sleep(3) /* lexe-pg-statement-timeout */"),
       (error) => {
         assertEqual(error.code, "57014");
       },
@@ -727,10 +727,10 @@ test("PG-017", "pg_cancel_backend", async () => {
       .pid;
 
     const sleepPromise = clientA.query(
-      "SELECT pg_sleep(10) /* raster-pg-cancel */"
+      "SELECT pg_sleep(10) /* lexe-pg-cancel */"
     );
 
-    await waitForActivity(admin, pid, "raster-pg-cancel");
+    await waitForActivity(admin, pid, "lexe-pg-cancel");
 
     const cancel = await admin.query(
       "SELECT pg_cancel_backend($1) AS cancelled",
@@ -935,7 +935,7 @@ test("PG-023", "LISTEN/NOTIFY", async () => {
     await listener.connect();
     await sender.connect();
 
-    await listener.query("LISTEN raster_compat_channel");
+    await listener.query("LISTEN lexe_compat_channel");
 
     const notificationPromise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -948,12 +948,12 @@ test("PG-023", "LISTEN/NOTIFY", async () => {
     });
 
     await sender.query(
-      "SELECT pg_notify('raster_compat_channel', 'hello-raster')"
+      "SELECT pg_notify('lexe_compat_channel', 'hello-lexe')"
     );
 
     const notification = await notificationPromise;
-    assertEqual(notification.channel, "raster_compat_channel");
-    assertEqual(notification.payload, "hello-raster");
+    assertEqual(notification.channel, "lexe_compat_channel");
+    assertEqual(notification.payload, "hello-lexe");
     assert(notification.processId > 0, "processId should be > 0");
   } finally {
     await Promise.allSettled([closeClient(listener), closeClient(sender)]);

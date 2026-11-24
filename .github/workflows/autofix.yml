@@ -68,13 +68,13 @@ jobs:
         if: steps.guard.outputs.skip != 'true'
         run: >
           cargo clippy
-          -p raster_runtime_napi
-          -p raster_runtime_events
-          -p raster_runtime_tty
-          -p raster_runtime_modules
-          -p raster_runtime_fs
-          -p raster_runtime_util
-          -p raster_runtime_sqlite
+          -p lexe_napi
+          -p lexe_events
+          -p lexe_tty
+          -p lexe_modules
+          -p lexe_fs
+          -p lexe_util
+          -p lexe_sqlite
           --all-targets --no-deps
           --fix --allow-dirty --allow-staged
 

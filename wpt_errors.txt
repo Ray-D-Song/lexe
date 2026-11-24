@@ -261,28 +261,28 @@ TypeError: Error converting from js 'object' into type 'AbortSignal'
     at toString (native)
     at concat (native)
     at anonymous (<input>:29:16)
-    at runTestDynamic (/Users/shinya/Workspaces/raster_runtime/bundle/js/__tests__/wpt/streams.piping.test.js:8657:29)
-    at <anonymous> (/Users/shinya/Workspaces/raster_runtime/bundle/js/__tests__/wpt/streams.piping.test.js:8697:24)
-    at <anonymous> (raster_runtime:test/worker:6815:28)
+    at runTestDynamic (/Users/shinya/Workspaces/lexe/bundle/js/__tests__/wpt/streams.piping.test.js:8657:29)
+    at <anonymous> (/Users/shinya/Workspaces/lexe/bundle/js/__tests__/wpt/streams.piping.test.js:8697:24)
+    at <anonymous> (lexe:test/worker:6815:28)
     at Promise (native)
-    at executeAsyncOrCallbackFn (raster_runtime:test/worker:6806:17)
-    at runTests (raster_runtime:test/worker:6879:45)
+    at executeAsyncOrCallbackFn (lexe:test/worker:6806:17)
+    at runTests (lexe:test/worker:6879:45)
 
 streams/piping > should pass pipe-through.any.js tests
 TypeError: Error converting from js 'object' into type 'AbortSignal'
     at toString (native)
     at concat (native)
     at anonymous (<input>:182:3)
-    at runTestDynamic (/Users/shinya/Workspaces/raster_runtime/bundle/js/__tests__/wpt/streams.piping.test.js:8657:29)
-    at <anonymous> (/Users/shinya/Workspaces/raster_runtime/bundle/js/__tests__/wpt/streams.piping.test.js:8697:24)
-    at <anonymous> (raster_runtime:test/worker:6815:28)
+    at runTestDynamic (/Users/shinya/Workspaces/lexe/bundle/js/__tests__/wpt/streams.piping.test.js:8657:29)
+    at <anonymous> (/Users/shinya/Workspaces/lexe/bundle/js/__tests__/wpt/streams.piping.test.js:8697:24)
+    at <anonymous> (lexe:test/worker:6815:28)
     at Promise (native)
-    at executeAsyncOrCallbackFn (raster_runtime:test/worker:6806:17)
-    at runTests (raster_runtime:test/worker:6879:45)
+    at executeAsyncOrCallbackFn (lexe:test/worker:6806:17)
+    at runTests (lexe:test/worker:6879:45)
 
 
 Error: Test did not exit within 1s. It does not properly clean up created resources (servers, timeouts etc)
-    at <anonymous> (raster_runtime:test/index:448:27)
+    at <anonymous> (lexe:test/index:448:27)
 
 
 🧪/wpt/streams.readable-byte-streams.test.js 

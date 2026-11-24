@@ -53,6 +53,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ahash"
+version = "0.8.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fca89247609239eeb6915e6991111866b92d7b31025e69302bbf430cc4d2c38"
+dependencies = [
+ "cfg-if",
+ "getrandom 0.4.2",
+ "once_cell",
+ "version_check",
+ "zerocopy 0.8.47",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -133,7 +146,7 @@ checksum = "965c2d33e53cb6b267e148a4cb0760bc01f4904c1cd4bb4002a085bb016d1490"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -145,7 +158,7 @@ checksum = "7b18050c2cd6fe86c3a76584ef5e0baf286d038cda203eb6223df2cc413565f7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -254,7 +267,7 @@ dependencies = [
  "regex",
  "rustc-hash",
  "shlex",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -334,6 +347,24 @@ name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
+
+[[package]]
+name = "bytemuck"
+version = "1.25.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
+
+[[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
+name = "byteorder-lite"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "bytes"
@@ -732,7 +763,7 @@ checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -793,7 +824,7 @@ checksum = "59600e2c2d636fde9b65e99cc6445ac770c63d3628195ff39932b8d6d7409903"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -832,7 +863,7 @@ checksum = "97369cbbc041bc366949bc74d34658d6cda5621039731c6310521892a3a20ae0"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -980,6 +1011,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fdeflate"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e6853b52649d4ac5c0bd02320cddc5ba956bdb407c4b75a2c6b75bf51500f8c"
+dependencies = [
+ "simd-adler32",
+]
+
+[[package]]
 name = "fiat-crypto"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1124,7 +1164,7 @@ checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1196,11 +1236,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "rand_core 0.10.0",
  "wasip2",
  "wasip3",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1255,7 +1297,7 @@ checksum = "6ea2d84b969582b4b1864a92dc5d27cd2b77b622a8d79306834f1be5ba20d84b"
 dependencies = [
  "cfg-if",
  "crunchy",
- "zerocopy",
+ "zerocopy 0.8.47",
 ]
 
 [[package]]
@@ -1265,6 +1307,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c7ed2f2edad8a14c8186b847909a41fbb9c3eafa44f88bd891114ed5019da09"
 dependencies = [
  "hashbrown 0.16.1",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
 ]
 
 [[package]]
@@ -1594,6 +1645,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "image"
+version = "0.25.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
+dependencies = [
+ "bytemuck",
+ "byteorder-lite",
+ "moxcms",
+ "num-traits",
+ "png",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1673,7 +1737,7 @@ checksum = "e000de030ff8022ea1da3f466fbb0f3a809f5e51ed31f6dd931c35181ad8e6d7"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1699,6 +1763,16 @@ checksum = "9afb3de4395d6b3e67a780b6de64b51c978ecf11cb9a462c66be7d4ca9039d33"
 dependencies = [
  "getrandom 0.3.4",
  "libc",
+]
+
+[[package]]
+name = "js-sys"
+version = "0.3.107"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8dc09d2154098bbf4ef54eab6b117a3c24cbbffe94046b16ee6d6d4510584d3a"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1744,6 +1818,906 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
+name = "lexe"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "cc",
+ "constcat",
+ "crossterm",
+ "http-body-util",
+ "hyper",
+ "jiff",
+ "lexe_child_process",
+ "lexe_core",
+ "lexe_http",
+ "lexe_napi",
+ "lexe_process",
+ "lexe_sqlite",
+ "lexe_test",
+ "lexe_timers",
+ "lexe_utils",
+ "lexe_worker_threads",
+ "libc",
+ "libsui",
+ "rquickjs",
+ "sha2 0.10.9",
+ "snmalloc-rs",
+ "tokio",
+ "tracing",
+ "tracing-core",
+ "url",
+ "v8_compat",
+]
+
+[[package]]
+name = "lexe_abort"
+version = "0.1.0"
+dependencies = [
+ "lexe_async_hooks",
+ "lexe_events",
+ "lexe_exceptions",
+ "lexe_test",
+ "lexe_timers",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_assert"
+version = "0.1.0"
+dependencies = [
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_async_hooks"
+version = "0.1.0"
+dependencies = [
+ "lexe_hooking",
+ "lexe_utils",
+ "rquickjs",
+ "tracing",
+]
+
+[[package]]
+name = "lexe_buffer"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "lexe_encoding",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "ryu",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_build"
+version = "0.1.0"
+dependencies = [
+ "rustc_version",
+]
+
+[[package]]
+name = "lexe_child_process"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_events",
+ "lexe_stream",
+ "lexe_test",
+ "lexe_utils",
+ "libc",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_compression"
+version = "0.1.0"
+dependencies = [
+ "brotli",
+ "brotlic",
+ "flate2",
+ "zstd",
+]
+
+[[package]]
+name = "lexe_console"
+version = "0.1.0"
+dependencies = [
+ "lexe_logging",
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_constants"
+version = "0.1.0"
+dependencies = [
+ "lexe_fs",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_context"
+version = "0.1.0"
+dependencies = [
+ "lexe_build",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lexe_core"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "itoa",
+ "jiff",
+ "lexe_build",
+ "lexe_context",
+ "lexe_encoding",
+ "lexe_hooking",
+ "lexe_json",
+ "lexe_logging",
+ "lexe_modules",
+ "lexe_numbers",
+ "lexe_test",
+ "lexe_utils",
+ "libc",
+ "md-5",
+ "once_cell",
+ "openssl",
+ "phf",
+ "phf_codegen",
+ "quick-xml",
+ "rand 0.10.1",
+ "rquickjs",
+ "rustls",
+ "rustls-pemfile",
+ "ryu",
+ "simd-json",
+ "terminal_size",
+ "tokio",
+ "tracing",
+ "unicode-width",
+ "uuid",
+ "walkdir",
+ "wiremock",
+ "zstd",
+]
+
+[[package]]
+name = "lexe_crypto"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "aes-kw",
+ "cbc",
+ "const-oid",
+ "crc32c",
+ "crc32fast",
+ "ctr",
+ "der",
+ "ecdsa",
+ "ed25519-dalek",
+ "elliptic-curve",
+ "graviola",
+ "hkdf",
+ "hmac",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_encoding",
+ "lexe_json",
+ "lexe_test",
+ "lexe_utils",
+ "md-5",
+ "once_cell",
+ "openssl",
+ "openssl-sys",
+ "p256",
+ "p384",
+ "p521",
+ "pbkdf2",
+ "pkcs8",
+ "rand 0.10.1",
+ "ring",
+ "rquickjs",
+ "rsa",
+ "sha1 0.11.0",
+ "spki",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "lexe_dgram"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_events",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lexe_diagnostics_channel"
+version = "0.1.0"
+dependencies = [
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_dns"
+version = "0.1.0"
+dependencies = [
+ "either",
+ "lexe_context",
+ "lexe_hooking",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_dns_cache"
+version = "0.1.0"
+dependencies = [
+ "hyper-util",
+ "lexe_context",
+ "lexe_utils",
+ "quick_cache",
+ "tokio",
+ "tower-service",
+]
+
+[[package]]
+name = "lexe_encoding"
+version = "0.1.0"
+dependencies = [
+ "base64-simd",
+ "hex-simd",
+ "lexe_build",
+ "memchr",
+ "phf",
+]
+
+[[package]]
+name = "lexe_events"
+version = "0.1.0"
+dependencies = [
+ "lexe_utils",
+ "rquickjs",
+ "tracing",
+]
+
+[[package]]
+name = "lexe_exceptions"
+version = "0.1.0"
+dependencies = [
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_fetch"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "either",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "itoa",
+ "lexe_abort",
+ "lexe_buffer",
+ "lexe_compression",
+ "lexe_context",
+ "lexe_encoding",
+ "lexe_http",
+ "lexe_json",
+ "lexe_stream_web",
+ "lexe_test",
+ "lexe_test_tls",
+ "lexe_url",
+ "lexe_utils",
+ "once_cell",
+ "percent-encoding",
+ "pin-project-lite",
+ "rand 0.10.1",
+ "rquickjs",
+ "tokio",
+ "tracing",
+ "wiremock",
+]
+
+[[package]]
+name = "lexe_fs"
+version = "0.1.0"
+dependencies = [
+ "either",
+ "junction",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_encoding",
+ "lexe_events",
+ "lexe_path",
+ "lexe_test",
+ "lexe_url",
+ "lexe_utils",
+ "libc",
+ "notify",
+ "rand 0.10.1",
+ "rquickjs",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "lexe_hooking"
+version = "0.1.0"
+dependencies = [
+ "lexe_utils",
+ "once_cell",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_http"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "fastwebsockets",
+ "getrandom 0.3.4",
+ "http-body-util",
+ "hyper",
+ "hyper-openssl",
+ "hyper-rustls",
+ "hyper-util",
+ "lexe_async_hooks",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_dns_cache",
+ "lexe_events",
+ "lexe_net",
+ "lexe_test",
+ "lexe_test_tls",
+ "lexe_timers",
+ "lexe_tls",
+ "lexe_utils",
+ "once_cell",
+ "openssl",
+ "rquickjs",
+ "rustls",
+ "rustls-pemfile",
+ "sha1 0.10.7",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+]
+
+[[package]]
+name = "lexe_http2"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "h2",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "lexe_async_hooks",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_events",
+ "lexe_test",
+ "lexe_test_tls",
+ "lexe_timers",
+ "lexe_tls",
+ "lexe_utils",
+ "once_cell",
+ "rquickjs",
+ "rustls",
+ "rustls-pemfile",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "lexe_inspector"
+version = "0.1.0"
+dependencies = [
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_intl"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "jiff",
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_json"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "itoa",
+ "lexe_build",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "ryu",
+ "simd-json",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_logging"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "lexe_context",
+ "lexe_encoding",
+ "lexe_json",
+ "lexe_numbers",
+ "lexe_utils",
+ "rquickjs",
+ "ryu",
+]
+
+[[package]]
+name = "lexe_modules"
+version = "0.1.0"
+dependencies = [
+ "home",
+ "lexe_abort",
+ "lexe_assert",
+ "lexe_async_hooks",
+ "lexe_buffer",
+ "lexe_child_process",
+ "lexe_console",
+ "lexe_constants",
+ "lexe_crypto",
+ "lexe_dgram",
+ "lexe_diagnostics_channel",
+ "lexe_dns",
+ "lexe_events",
+ "lexe_exceptions",
+ "lexe_fetch",
+ "lexe_fs",
+ "lexe_hooking",
+ "lexe_http",
+ "lexe_http2",
+ "lexe_inspector",
+ "lexe_intl",
+ "lexe_json",
+ "lexe_napi",
+ "lexe_navigator",
+ "lexe_net",
+ "lexe_os",
+ "lexe_path",
+ "lexe_perf_hooks",
+ "lexe_process",
+ "lexe_querystring",
+ "lexe_sqlite",
+ "lexe_stream_web",
+ "lexe_string_decoder",
+ "lexe_temporal",
+ "lexe_test",
+ "lexe_timers",
+ "lexe_tls",
+ "lexe_tty",
+ "lexe_url",
+ "lexe_util",
+ "lexe_utils",
+ "lexe_v8",
+ "lexe_vm",
+ "lexe_webassembly",
+ "lexe_worker_threads",
+ "lexe_zlib",
+ "once_cell",
+ "openssl",
+ "rquickjs",
+ "simd-json",
+ "tokio",
+ "tracing",
+ "v8_compat",
+]
+
+[[package]]
+name = "lexe_napi"
+version = "0.1.0"
+dependencies = [
+ "lexe_context",
+ "lexe_test",
+ "lexe_utils",
+ "libc",
+ "libloading",
+ "once_cell",
+ "parking_lot",
+ "rquickjs",
+ "tokio",
+ "tracing",
+ "v8_compat",
+]
+
+[[package]]
+name = "lexe_navigator"
+version = "0.1.0"
+dependencies = [
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_net"
+version = "0.1.0"
+dependencies = [
+ "itoa",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_events",
+ "lexe_stream",
+ "lexe_test",
+ "lexe_utils",
+ "rand 0.10.1",
+ "rquickjs",
+ "socket2",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lexe_numbers"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "itoa",
+ "lexe_test",
+ "lexe_utils",
+ "rand 0.10.1",
+ "rquickjs",
+ "ryu",
+]
+
+[[package]]
+name = "lexe_os"
+version = "0.1.0"
+dependencies = [
+ "home",
+ "lexe_test",
+ "lexe_utils",
+ "libc",
+ "num_cpus",
+ "once_cell",
+ "rquickjs",
+ "sysinfo",
+ "tokio",
+ "users",
+ "whoami",
+ "windows-registry",
+ "windows-result 0.4.1",
+ "windows-version",
+]
+
+[[package]]
+name = "lexe_path"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "lexe_utils",
+ "memchr",
+ "once_cell",
+ "rand 0.10.1",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_perf_hooks"
+version = "0.1.0"
+dependencies = [
+ "lexe_events",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_process"
+version = "0.1.0"
+dependencies = [
+ "lexe_events",
+ "lexe_hooking",
+ "lexe_napi",
+ "lexe_test",
+ "lexe_tty",
+ "lexe_utils",
+ "libc",
+ "once_cell",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_querystring"
+version = "0.1.0"
+dependencies = [
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_sqlite"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_process",
+ "lexe_test",
+ "lexe_url",
+ "lexe_utils",
+ "libc",
+ "once_cell",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_stream"
+version = "0.1.0"
+dependencies = [
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_events",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_stream_web"
+version = "0.1.0"
+dependencies = [
+ "lexe_abort",
+ "lexe_test",
+ "lexe_util",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_string_decoder"
+version = "0.1.0"
+dependencies = [
+ "lexe_buffer",
+ "lexe_encoding",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_temporal"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
+name = "lexe_test"
+version = "0.1.0"
+dependencies = [
+ "rquickjs",
+ "uuid",
+]
+
+[[package]]
+name = "lexe_test_tls"
+version = "0.1.0"
+dependencies = [
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "openssl",
+ "rustls",
+ "rustls-graviola",
+ "tokio",
+ "tokio-openssl",
+ "tokio-rustls",
+]
+
+[[package]]
+name = "lexe_timers"
+version = "0.1.0"
+dependencies = [
+ "lexe_context",
+ "lexe_hooking",
+ "lexe_test",
+ "lexe_utils",
+ "once_cell",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_tls"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "idna",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_events",
+ "lexe_net",
+ "lexe_stream",
+ "lexe_test",
+ "lexe_test_tls",
+ "lexe_utils",
+ "once_cell",
+ "openssl",
+ "rquickjs",
+ "rustls",
+ "rustls-graviola",
+ "rustls-native-certs",
+ "rustls-webpki 0.102.8",
+ "sha1 0.10.7",
+ "sha2 0.10.9",
+ "tokio",
+ "tokio-openssl",
+ "tokio-rustls",
+ "tracing",
+ "webpki-roots",
+ "x509-parser",
+]
+
+[[package]]
+name = "lexe_tty"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "lexe_buffer",
+ "lexe_context",
+ "lexe_events",
+ "lexe_test",
+ "lexe_utils",
+ "libc",
+ "rquickjs",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lexe_url"
+version = "0.1.0"
+dependencies = [
+ "idna",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "lexe_util"
+version = "0.1.0"
+dependencies = [
+ "lexe_context",
+ "lexe_encoding",
+ "lexe_logging",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_utils"
+version = "0.1.0"
+dependencies = [
+ "lexe_build",
+ "lexe_test",
+ "libc",
+ "rquickjs",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "lexe_v8"
+version = "0.1.0"
+dependencies = [
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_vm"
+version = "0.1.0"
+dependencies = [
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
+name = "lexe_webassembly"
+version = "0.1.0"
+dependencies = [
+ "lexe_test",
+ "lexe_utils",
+ "once_cell",
+ "rquickjs",
+ "tokio",
+ "wasmi",
+ "wasmparser 0.239.0",
+ "wat",
+]
+
+[[package]]
+name = "lexe_worker_threads"
+version = "0.1.0"
+dependencies = [
+ "lexe_context",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "lexe_zlib"
+version = "0.1.0"
+dependencies = [
+ "lexe_buffer",
+ "lexe_compression",
+ "lexe_context",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1764,6 +2738,22 @@ name = "libm"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
+
+[[package]]
+name = "libsui"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cd44dd0a322ec9fb05619e59067d1c767718238677369d9c5f004ea26a1184b"
+dependencies = [
+ "image",
+ "indexmap",
+ "libc",
+ "object",
+ "sha2 0.10.9",
+ "thiserror",
+ "windows 0.58.0",
+ "zerocopy 0.7.35",
+]
 
 [[package]]
 name = "libz-ng-sys"
@@ -1865,6 +2855,16 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "moxcms"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
+dependencies = [
+ "num-traits",
+ "pxfm",
 ]
 
 [[package]]
@@ -1977,6 +2977,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.36.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27b64972346851a39438c60b341ebc01bba47464ae329e55cf343eb93964efd9"
+dependencies = [
+ "crc32fast",
+ "hashbrown 0.14.5",
+ "indexmap",
+ "memchr",
+]
+
+[[package]]
 name = "oid-registry"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2019,7 +3031,7 @@ checksum = "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2194,7 +3206,7 @@ dependencies = [
  "phf_shared",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2223,7 +3235,7 @@ checksum = "d9b20ed30f105399776b9c883e68e536ef602a16ae6f596d2c473591d6ad64c6"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2257,6 +3269,19 @@ name = "pkg-config"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
+
+[[package]]
+name = "png"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
+dependencies = [
+ "bitflags",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "polyval"
@@ -2305,7 +3330,7 @@ version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
- "zerocopy",
+ "zerocopy 0.8.47",
 ]
 
 [[package]]
@@ -2315,7 +3340,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
 dependencies = [
  "proc-macro2",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2358,6 +3383,12 @@ checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
 ]
+
+[[package]]
+name = "pxfm"
+version = "0.1.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "quick-xml"
@@ -2447,900 +3478,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c8d0fd677905edcbeedbf2edb6494d676f0e98d54d5cf9bda0b061cb8fb8aba"
 
 [[package]]
-name = "raster_runtime"
-version = "0.1.0"
-dependencies = [
- "cc",
- "constcat",
- "crossterm",
- "jiff",
- "libc",
- "raster_runtime_child_process",
- "raster_runtime_core",
- "raster_runtime_napi",
- "raster_runtime_process",
- "raster_runtime_sqlite",
- "raster_runtime_test",
- "raster_runtime_timers",
- "raster_runtime_utils",
- "raster_runtime_worker_threads",
- "rquickjs",
- "snmalloc-rs",
- "tokio",
- "tracing",
- "tracing-core",
- "url",
- "v8_compat",
-]
-
-[[package]]
-name = "raster_runtime_abort"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_async_hooks",
- "raster_runtime_events",
- "raster_runtime_exceptions",
- "raster_runtime_test",
- "raster_runtime_timers",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_assert"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_async_hooks"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_hooking",
- "raster_runtime_utils",
- "rquickjs",
- "tracing",
-]
-
-[[package]]
-name = "raster_runtime_buffer"
-version = "0.1.0"
-dependencies = [
- "itoa",
- "raster_runtime_encoding",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "ryu",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_build"
-version = "0.1.0"
-dependencies = [
- "rustc_version",
-]
-
-[[package]]
-name = "raster_runtime_child_process"
-version = "0.1.0"
-dependencies = [
- "itoa",
- "libc",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_events",
- "raster_runtime_stream",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_compression"
-version = "0.1.0"
-dependencies = [
- "brotli",
- "brotlic",
- "flate2",
- "zstd",
-]
-
-[[package]]
-name = "raster_runtime_console"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_logging",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_constants"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_fs",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_context"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_build",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raster_runtime_core"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "http-body-util",
- "hyper",
- "itoa",
- "jiff",
- "libc",
- "md-5",
- "once_cell",
- "openssl",
- "phf",
- "phf_codegen",
- "quick-xml",
- "rand 0.10.1",
- "raster_runtime_build",
- "raster_runtime_context",
- "raster_runtime_encoding",
- "raster_runtime_hooking",
- "raster_runtime_json",
- "raster_runtime_logging",
- "raster_runtime_modules",
- "raster_runtime_numbers",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "rustls",
- "rustls-pemfile",
- "ryu",
- "simd-json",
- "terminal_size",
- "tokio",
- "tracing",
- "unicode-width",
- "uuid",
- "walkdir",
- "wiremock",
- "zstd",
-]
-
-[[package]]
-name = "raster_runtime_crypto"
-version = "0.1.0"
-dependencies = [
- "aes",
- "aes-gcm",
- "aes-kw",
- "cbc",
- "const-oid",
- "crc32c",
- "crc32fast",
- "ctr",
- "der",
- "ecdsa",
- "ed25519-dalek",
- "elliptic-curve",
- "graviola",
- "hkdf",
- "hmac",
- "md-5",
- "once_cell",
- "openssl",
- "openssl-sys",
- "p256",
- "p384",
- "p521",
- "pbkdf2",
- "pkcs8",
- "rand 0.10.1",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_encoding",
- "raster_runtime_json",
- "raster_runtime_test",
- "raster_runtime_utils",
- "ring",
- "rquickjs",
- "rsa",
- "sha1 0.11.0",
- "spki",
- "x25519-dalek",
-]
-
-[[package]]
-name = "raster_runtime_dgram"
-version = "0.1.0"
-dependencies = [
- "itoa",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_events",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raster_runtime_diagnostics_channel"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_dns"
-version = "0.1.0"
-dependencies = [
- "either",
- "raster_runtime_context",
- "raster_runtime_hooking",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_dns_cache"
-version = "0.1.0"
-dependencies = [
- "hyper-util",
- "quick_cache",
- "raster_runtime_context",
- "raster_runtime_utils",
- "tokio",
- "tower-service",
-]
-
-[[package]]
-name = "raster_runtime_encoding"
-version = "0.1.0"
-dependencies = [
- "base64-simd",
- "hex-simd",
- "memchr",
- "phf",
- "raster_runtime_build",
-]
-
-[[package]]
-name = "raster_runtime_events"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_utils",
- "rquickjs",
- "tracing",
-]
-
-[[package]]
-name = "raster_runtime_exceptions"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_fetch"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "either",
- "http-body",
- "http-body-util",
- "hyper",
- "itoa",
- "once_cell",
- "percent-encoding",
- "pin-project-lite",
- "rand 0.10.1",
- "raster_runtime_abort",
- "raster_runtime_buffer",
- "raster_runtime_compression",
- "raster_runtime_context",
- "raster_runtime_encoding",
- "raster_runtime_http",
- "raster_runtime_json",
- "raster_runtime_stream_web",
- "raster_runtime_test",
- "raster_runtime_test_tls",
- "raster_runtime_url",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "tracing",
- "wiremock",
-]
-
-[[package]]
-name = "raster_runtime_fs"
-version = "0.1.0"
-dependencies = [
- "either",
- "junction",
- "libc",
- "notify",
- "rand 0.10.1",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_encoding",
- "raster_runtime_events",
- "raster_runtime_path",
- "raster_runtime_test",
- "raster_runtime_url",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "raster_runtime_hooking"
-version = "0.1.0"
-dependencies = [
- "once_cell",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_http"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bytes",
- "fastwebsockets",
- "getrandom 0.3.4",
- "http-body-util",
- "hyper",
- "hyper-openssl",
- "hyper-rustls",
- "hyper-util",
- "once_cell",
- "openssl",
- "raster_runtime_async_hooks",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_dns_cache",
- "raster_runtime_events",
- "raster_runtime_net",
- "raster_runtime_test",
- "raster_runtime_test_tls",
- "raster_runtime_timers",
- "raster_runtime_tls",
- "raster_runtime_utils",
- "rquickjs",
- "rustls",
- "rustls-pemfile",
- "sha1 0.10.7",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
-]
-
-[[package]]
-name = "raster_runtime_http2"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "h2",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "once_cell",
- "raster_runtime_async_hooks",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_events",
- "raster_runtime_test",
- "raster_runtime_test_tls",
- "raster_runtime_timers",
- "raster_runtime_tls",
- "raster_runtime_utils",
- "rquickjs",
- "rustls",
- "rustls-pemfile",
- "tokio",
- "tokio-rustls",
-]
-
-[[package]]
-name = "raster_runtime_inspector"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_intl"
-version = "0.1.0"
-dependencies = [
- "itoa",
- "jiff",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_json"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "itoa",
- "raster_runtime_build",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "ryu",
- "simd-json",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_logging"
-version = "0.1.0"
-dependencies = [
- "itoa",
- "raster_runtime_context",
- "raster_runtime_encoding",
- "raster_runtime_json",
- "raster_runtime_numbers",
- "raster_runtime_utils",
- "rquickjs",
- "ryu",
-]
-
-[[package]]
-name = "raster_runtime_modules"
-version = "0.1.0"
-dependencies = [
- "home",
- "once_cell",
- "openssl",
- "raster_runtime_abort",
- "raster_runtime_assert",
- "raster_runtime_async_hooks",
- "raster_runtime_buffer",
- "raster_runtime_child_process",
- "raster_runtime_console",
- "raster_runtime_constants",
- "raster_runtime_crypto",
- "raster_runtime_dgram",
- "raster_runtime_diagnostics_channel",
- "raster_runtime_dns",
- "raster_runtime_events",
- "raster_runtime_exceptions",
- "raster_runtime_fetch",
- "raster_runtime_fs",
- "raster_runtime_hooking",
- "raster_runtime_http",
- "raster_runtime_http2",
- "raster_runtime_inspector",
- "raster_runtime_intl",
- "raster_runtime_json",
- "raster_runtime_napi",
- "raster_runtime_navigator",
- "raster_runtime_net",
- "raster_runtime_os",
- "raster_runtime_path",
- "raster_runtime_perf_hooks",
- "raster_runtime_process",
- "raster_runtime_querystring",
- "raster_runtime_sqlite",
- "raster_runtime_stream_web",
- "raster_runtime_string_decoder",
- "raster_runtime_temporal",
- "raster_runtime_test",
- "raster_runtime_timers",
- "raster_runtime_tls",
- "raster_runtime_tty",
- "raster_runtime_url",
- "raster_runtime_util",
- "raster_runtime_utils",
- "raster_runtime_v8",
- "raster_runtime_vm",
- "raster_runtime_webassembly",
- "raster_runtime_worker_threads",
- "raster_runtime_zlib",
- "rquickjs",
- "simd-json",
- "tokio",
- "tracing",
- "v8_compat",
-]
-
-[[package]]
-name = "raster_runtime_napi"
-version = "0.1.0"
-dependencies = [
- "libc",
- "libloading",
- "once_cell",
- "parking_lot",
- "raster_runtime_context",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "tracing",
- "v8_compat",
-]
-
-[[package]]
-name = "raster_runtime_navigator"
-version = "0.1.0"
-dependencies = [
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_net"
-version = "0.1.0"
-dependencies = [
- "itoa",
- "rand 0.10.1",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_events",
- "raster_runtime_stream",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "socket2",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raster_runtime_numbers"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "itoa",
- "rand 0.10.1",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "ryu",
-]
-
-[[package]]
-name = "raster_runtime_os"
-version = "0.1.0"
-dependencies = [
- "home",
- "libc",
- "num_cpus",
- "once_cell",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "sysinfo",
- "tokio",
- "users",
- "whoami",
- "windows-registry",
- "windows-result",
- "windows-version",
-]
-
-[[package]]
-name = "raster_runtime_path"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "memchr",
- "once_cell",
- "rand 0.10.1",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_perf_hooks"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_events",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_process"
-version = "0.1.0"
-dependencies = [
- "libc",
- "once_cell",
- "raster_runtime_events",
- "raster_runtime_hooking",
- "raster_runtime_napi",
- "raster_runtime_test",
- "raster_runtime_tty",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_querystring"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_sqlite"
-version = "0.1.0"
-dependencies = [
- "cc",
- "libc",
- "once_cell",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_process",
- "raster_runtime_test",
- "raster_runtime_url",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_stream"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_events",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_stream_web"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_abort",
- "raster_runtime_test",
- "raster_runtime_util",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_string_decoder"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_buffer",
- "raster_runtime_encoding",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_temporal"
-version = "0.1.0"
-dependencies = [
- "jiff",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
-name = "raster_runtime_test"
-version = "0.1.0"
-dependencies = [
- "rquickjs",
- "uuid",
-]
-
-[[package]]
-name = "raster_runtime_test_tls"
-version = "0.1.0"
-dependencies = [
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "openssl",
- "rustls",
- "rustls-graviola",
- "tokio",
- "tokio-openssl",
- "tokio-rustls",
-]
-
-[[package]]
-name = "raster_runtime_timers"
-version = "0.1.0"
-dependencies = [
- "once_cell",
- "raster_runtime_context",
- "raster_runtime_hooking",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_tls"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "idna",
- "once_cell",
- "openssl",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_events",
- "raster_runtime_net",
- "raster_runtime_stream",
- "raster_runtime_test",
- "raster_runtime_test_tls",
- "raster_runtime_utils",
- "rquickjs",
- "rustls",
- "rustls-graviola",
- "rustls-native-certs",
- "rustls-webpki 0.102.8",
- "sha1 0.10.7",
- "sha2 0.10.9",
- "tokio",
- "tokio-openssl",
- "tokio-rustls",
- "tracing",
- "webpki-roots",
- "x509-parser",
-]
-
-[[package]]
-name = "raster_runtime_tty"
-version = "0.1.0"
-dependencies = [
- "crossterm",
- "libc",
- "raster_runtime_buffer",
- "raster_runtime_context",
- "raster_runtime_events",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raster_runtime_url"
-version = "0.1.0"
-dependencies = [
- "idna",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "url",
-]
-
-[[package]]
-name = "raster_runtime_util"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_context",
- "raster_runtime_encoding",
- "raster_runtime_logging",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_utils"
-version = "0.1.0"
-dependencies = [
- "libc",
- "raster_runtime_build",
- "raster_runtime_test",
- "rquickjs",
- "tokio",
- "tracing",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "raster_runtime_v8"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_vm"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
-]
-
-[[package]]
-name = "raster_runtime_webassembly"
-version = "0.1.0"
-dependencies = [
- "once_cell",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "wasmi",
- "wasmparser 0.239.0",
- "wat",
-]
-
-[[package]]
-name = "raster_runtime_worker_threads"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_context",
- "raster_runtime_utils",
- "rquickjs",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "raster_runtime_zlib"
-version = "0.1.0"
-dependencies = [
- "raster_runtime_buffer",
- "raster_runtime_compression",
- "raster_runtime_context",
- "raster_runtime_test",
- "raster_runtime_utils",
- "rquickjs",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3366,7 +3503,7 @@ checksum = "b7186006dcb21920990093f30e3dea63b7d6e977bf1256be20c3563a5db070da"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3469,7 +3606,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rquickjs-core",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3636,6 +3773,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustversion"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3735,7 +3878,7 @@ checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3972,6 +4115,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "syn"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
 name = "synstructure"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3979,7 +4133,7 @@ checksum = "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -3993,7 +4147,7 @@ dependencies = [
  "ntapi",
  "objc2-core-foundation",
  "objc2-io-kit",
- "windows",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -4023,7 +4177,7 @@ checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4101,7 +4255,7 @@ checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4392,6 +4546,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-bindgen"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0181c14ddd6c7b8b0b0132a5f1ea2f32be0d893cd3ea97b6e3b28886b8a3d1c"
+dependencies = [
+ "cfg-if",
+ "rustversion",
+ "wasm-bindgen-macro",
+ "wasm-bindgen-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-macro"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e931a02a39abdbf66966fc35902b5ed58344750a70885bed4ebb3d8eaf28ed9"
+dependencies = [
+ "quote",
+ "wasm-bindgen-macro-support",
+]
+
+[[package]]
+name = "wasm-bindgen-macro-support"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ca4b54280e455bd831e33a6b8e734baf432fe63fbc35c42ac14ce67a043a53a"
+dependencies = [
+ "bumpalo",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+ "wasm-bindgen-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-shared"
+version = "0.2.130"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
+dependencies = [
+ "unicode-ident",
+]
+
+[[package]]
 name = "wasm-encoder"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4566,12 +4764,22 @@ checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd04d41d93c4992d421894c18c8b43496aa748dd4c081bac0dc93eb0489272b6"
+dependencies = [
+ "windows-core 0.58.0",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
+name = "windows"
 version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "527fadee13e0c05939a6a05d5bd6eec6cd2e3dbd648b9f8e447c6518133d8580"
 dependencies = [
  "windows-collections",
- "windows-core",
+ "windows-core 0.62.2",
  "windows-future",
  "windows-numerics",
 ]
@@ -4582,7 +4790,20 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b2d95af1a8a14a3c7367e1ed4fc9c20e0a26e79551b1454d72583c97cc6610"
 dependencies = [
- "windows-core",
+ "windows-core 0.62.2",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ba6d44ec8c2591c134257ce647b7ea6b20335bf6379a27dac5f1641fcf59f99"
+dependencies = [
+ "windows-implement 0.58.0",
+ "windows-interface 0.58.0",
+ "windows-result 0.2.0",
+ "windows-strings 0.1.0",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -4591,11 +4812,11 @@ version = "0.62.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
 dependencies = [
- "windows-implement",
- "windows-interface",
+ "windows-implement 0.60.2",
+ "windows-interface 0.59.3",
  "windows-link",
- "windows-result",
- "windows-strings",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
 ]
 
 [[package]]
@@ -4604,9 +4825,20 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1d6f90251fe18a279739e78025bd6ddc52a7e22f921070ccdc67dde84c605cb"
 dependencies = [
- "windows-core",
+ "windows-core 0.62.2",
  "windows-link",
  "windows-threading",
+]
+
+[[package]]
+name = "windows-implement"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bbd5b46c938e506ecbce286b6628a02171d56153ba733b6c741fc627ec9579b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4617,7 +4849,18 @@ checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "windows-interface"
+version = "0.58.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "053c4c462dc91d3b1504c6fe5a726dd15e216ba718e84a0e46a88fbe5ded3515"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4628,7 +4871,7 @@ checksum = "3f316c4a2570ba26bbec722032c4099d8c8bc095efccdc15688708623367e358"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -4643,7 +4886,7 @@ version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
 dependencies = [
- "windows-core",
+ "windows-core 0.62.2",
  "windows-link",
 ]
 
@@ -4654,8 +4897,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
 dependencies = [
  "windows-link",
- "windows-result",
- "windows-strings",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
+]
+
+[[package]]
+name = "windows-result"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d1043d8214f791817bab27572aaa8af63732e11bf84aa21a45a78d6c317ae0e"
+dependencies = [
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -4665,6 +4917,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
 dependencies = [
  "windows-link",
+]
+
+[[package]]
+name = "windows-strings"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cd9b125c486025df0eabcb585e62173c6c9eddcec5d117d3b6e8c30e2ee4d10"
+dependencies = [
+ "windows-result 0.2.0",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -4912,7 +5174,7 @@ dependencies = [
  "heck",
  "indexmap",
  "prettyplease",
- "syn",
+ "syn 2.0.117",
  "wasm-metadata",
  "wit-bindgen-core",
  "wit-component",
@@ -4928,7 +5190,7 @@ dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "wit-bindgen-core",
  "wit-bindgen-rust",
 ]
@@ -5023,8 +5285,18 @@ checksum = "b659052874eb698efe5b9e8cf382204678a0086ebf46982b79d6ca3182927e5d"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b9b4fd18abc82b8136838da5d50bae7bdea537c574d8dc1a34ed098d6c166f0"
+dependencies = [
+ "byteorder",
+ "zerocopy-derive 0.7.35",
 ]
 
 [[package]]
@@ -5033,7 +5305,18 @@ version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "efbb2a062be311f2ba113ce66f697a4dc589f85e78a4aea276200804cea0ed87"
 dependencies = [
- "zerocopy-derive",
+ "zerocopy-derive 0.8.47",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.7.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5044,7 +5327,7 @@ checksum = "0e8bc7269b54418e7aeeef514aa68f8690b8c0489a06b0136e5f57c4c5ccab89"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -5064,7 +5347,7 @@ checksum = "d71e5d6e06ab090c67b5e44993ec16b72dcbaabc526db883a360057678b48502"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
  "synstructure",
 ]
 
@@ -5104,7 +5387,7 @@ checksum = "eadce39539ca5cb3985590102671f2567e659fca9666581ad3411d59207951f3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn",
+ "syn 2.0.117",
 ]
 
 [[package]]

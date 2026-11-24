@@ -16,7 +16,7 @@ import http from "node:http";
 // gate, not a test problem, and it is gone: the worker now exits as soon as it
 // has reported. So the listener lives here, and every case closes what it opens.
 
-const DATA_DIR = path.resolve("libs/raster_runtime_test_tls/data");
+const DATA_DIR = path.resolve("libs/lexe_test_tls/data");
 
 /// A TLS listener that answers one request with a fixed HTTP/1.1 response,
 /// echoing any request body back as `got:<body>`.

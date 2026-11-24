@@ -28,7 +28,7 @@ V8_HELLO_ADDON="${ROOT}/compat/v8-hello/build/Release/v8_hello.node"
 NAPI_HELLO_ADDON="${ROOT}/compat/napi-hello/build/Release/hello.node"
 BETTER_SQLITE3_ADDON="${ROOT}/compat/better-sqlite3/node_modules/better-sqlite3/build/Release/better_sqlite3.node"
 
-unset RASTER_SANITIZE
+unset LEXE_SANITIZE
 unset RUSTFLAGS
 unset CFLAGS
 unset CXXFLAGS
@@ -52,7 +52,7 @@ if [[ "${SANITIZER}" == "address" ]]; then
 else
   export CC=clang
   export CXX=clang++
-  export RASTER_SANITIZE=undefined
+  export LEXE_SANITIZE=undefined
   export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=clang++
   # Rust passes -nodefaultlibs; clang++ as linker will not pull libstdc++ unless
   # asked. UBSan C++ runtime needs RTTI / __dynamic_cast from the C++ ABI.
@@ -143,19 +143,19 @@ run_compat() {
 
 run_v8_hello_compat() {
   assert_addon_sanitized "${V8_HELLO_ADDON}"
-  run_compat v8-hello "${RASTER_RUNTIME}"
+  run_compat v8-hello "${LEXE_BIN}"
   assert_addon_sanitized "${V8_HELLO_ADDON}"
 }
 
 run_napi_compat() {
   assert_addon_sanitized "${NAPI_HELLO_ADDON}"
-  run_compat napi-hello "${RASTER_RUNTIME}"
+  run_compat napi-hello "${LEXE_BIN}"
   assert_addon_sanitized "${NAPI_HELLO_ADDON}"
 }
 
 run_better_sqlite3_compat() {
   assert_addon_sanitized "${BETTER_SQLITE3_ADDON}"
-  run_compat better-sqlite3 "${RASTER_RUNTIME}"
+  run_compat better-sqlite3 "${LEXE_BIN}"
   assert_addon_sanitized "${BETTER_SQLITE3_ADDON}"
 }
 
@@ -169,32 +169,32 @@ if [[ "${SANITIZER}" == "address" ]]; then
   # N-API tests reset process-global GC/external registries; ASan reordering
   # exposes races when multiple tests free runtimes concurrently. Serialize
   # the suite under ASan (not a production serialisation of the runtime).
-  echo "[sanitizer:address] rustc unit tests (raster_runtime_napi, serial)"
-  "${CARGO[@]}" test -p raster_runtime_napi --lib --target "${TARGET}" -- --test-threads=1
+  echo "[sanitizer:address] rustc unit tests (lexe_napi, serial)"
+  "${CARGO[@]}" test -p lexe_napi --lib --target "${TARGET}" -- --test-threads=1
 else
   echo "[sanitizer:undefined] rustc unit tests (v8_compat shim only)"
   "${CARGO[@]}" test -p v8_compat --lib --target "${TARGET}"
 
-  echo "[sanitizer:undefined] rustc unit tests (raster_runtime_napi)"
-  "${CARGO[@]}" test -p raster_runtime_napi --lib --target "${TARGET}"
+  echo "[sanitizer:undefined] rustc unit tests (lexe_napi)"
+  "${CARGO[@]}" test -p lexe_napi --lib --target "${TARGET}"
 fi
 
-echo "[sanitizer:${SANITIZER}] build raster_runtime (v8-compat)"
+echo "[sanitizer:${SANITIZER}] build lexe (v8-compat)"
 make js JS_MINIFY=0
-"${CARGO[@]}" build -p raster_runtime --features v8-compat --target "${TARGET}"
+"${CARGO[@]}" build -p lexe --features v8-compat --target "${TARGET}"
 
-RASTER_RUNTIME="${CARGO_TARGET_DIR}/${TARGET}/debug/raster_runtime"
-export RASTER_RUNTIME
+LEXE_BIN="${CARGO_TARGET_DIR}/${TARGET}/debug/lexe"
+export LEXE_BIN
 
-if [[ ! -x "${RASTER_RUNTIME}" ]]; then
-  echo "missing raster_runtime binary: ${RASTER_RUNTIME}" >&2
+if [[ ! -x "${LEXE_BIN}" ]]; then
+  echo "missing lexe binary: ${LEXE_BIN}" >&2
   exit 1
 fi
 
 if [[ "${SANITIZER}" == "address" ]]; then
-  assert_asan_binary "${RASTER_RUNTIME}"
+  assert_asan_binary "${LEXE_BIN}"
 else
-  assert_ubsan_binary "${RASTER_RUNTIME}"
+  assert_ubsan_binary "${LEXE_BIN}"
 fi
 
 echo "[sanitizer:${SANITIZER}] build instrumented addons"

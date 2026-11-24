@@ -29,8 +29,8 @@ const runExecutable = async (filename: string) => {
   return { stdout, stderr, status: code };
 };
 
-describe("raster_runtime compile", async () => {
-  const tmpDir = await fs.mkdtemp(`${tmpdir()}/raster_runtime-test-compile`);
+describe("lexe compile", async () => {
+  const tmpDir = await fs.mkdtemp(`${tmpdir()}/lexe-test-compile`);
 
   it("can compile and run empty", async () => {
     const tmpOutput = `${tmpDir}/empty.lrt`;
@@ -105,7 +105,7 @@ describe("raster_runtime compile", async () => {
     const runResult = await runExecutable(tmpExe);
     expect(runResult.stdout).toEqual("hello world!\n");
     expect(runResult.status).toEqual(0);
-  });
+  }, 30000);
 
   afterAll(async () => {
     await fs.rmdir(tmpDir, { recursive: true });

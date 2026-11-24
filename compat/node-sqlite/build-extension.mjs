@@ -4,15 +4,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const vendor = path.resolve(here, "../../modules/raster_runtime_sqlite/vendor");
+const vendor = path.resolve(here, "../../modules/lexe_sqlite/vendor");
 const buildDir = path.join(here, "build");
 fs.mkdirSync(buildDir, { recursive: true });
 
 /** Compiler/link flags for optional ASan (env is not auto-applied by cc). */
 function sanitizeFlags() {
-  // Explicit RASTER_SQLITE_SANITIZE wins: none|0 disables even if CFLAGS is set.
-  if (Object.prototype.hasOwnProperty.call(process.env, "RASTER_SQLITE_SANITIZE")) {
-    const sanitize = process.env.RASTER_SQLITE_SANITIZE || "";
+  // Explicit LEXE_SQLITE_SANITIZE wins: none|0 disables even if CFLAGS is set.
+  if (Object.prototype.hasOwnProperty.call(process.env, "LEXE_SQLITE_SANITIZE")) {
+    const sanitize = process.env.LEXE_SQLITE_SANITIZE || "";
     if (sanitize === "address") {
       return ["-fsanitize=address", "-fno-omit-frame-pointer", "-g"];
     }
@@ -20,7 +20,7 @@ function sanitizeFlags() {
       return [];
     }
     console.error(
-      `unsupported RASTER_SQLITE_SANITIZE=${sanitize} (expected address|none)`,
+      `unsupported LEXE_SQLITE_SANITIZE=${sanitize} (expected address|none)`,
     );
     process.exit(1);
   }

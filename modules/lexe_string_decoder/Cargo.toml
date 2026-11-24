@@ -1,0 +1,22 @@
+[package]
+name = "lexe_string_decoder"
+description = "lexe Module string_decoder"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+readme = "README.md"
+
+[lib]
+name = "lexe_string_decoder"
+path = "src/lib.rs"
+
+[dependencies]
+lexe_buffer = { version = "0.1.0", path = "../lexe_buffer" }
+lexe_encoding = { version = "0.1.0", path = "../../libs/lexe_encoding" }
+lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", default-features = false }
+
+[dev-dependencies]
+lexe_test = { path = "../../libs/lexe_test" }
+tokio = { version = "1", features = ["test-util"], default-features = false }

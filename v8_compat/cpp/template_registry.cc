@@ -2,7 +2,7 @@
 
 #include "registry_ownership.h"
 
-namespace raster_v8 {
+namespace lexe_v8 {
 
 TemplateRegistry& TemplateRegistry::instance() {
   static TemplateRegistry registry;
@@ -90,4 +90,4 @@ void TemplateRegistry::erase_function_template(uint32_t id) {
   function_templates_.erase(it);
 }
 
-}  // namespace raster_v8
+}  // namespace lexe_v8
