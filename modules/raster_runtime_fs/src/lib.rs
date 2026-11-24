@@ -3,6 +3,7 @@
 mod access;
 mod chmod;
 mod errors;
+pub mod fd_sync;
 mod file_handle;
 mod fs_extra;
 mod mkdir;
@@ -31,6 +32,7 @@ use rquickjs::{Class, Ctx, IntoJs, Object, Result, Value};
 
 use self::access::{access, access_callback, access_sync};
 use self::chmod::{chmod, chmod_sync};
+use self::fd_sync::{close_sync, fstat_sync, open_sync, read_sync, write_sync};
 use self::file_handle::FileHandle;
 use self::mkdir::{mkdir, mkdir_sync, mkdtemp, mkdtemp_sync};
 use self::open::open;
@@ -281,7 +283,12 @@ impl ModuleDef for FsModule {
         declare.declare("access")?;
         declare.declare("accessSync")?;
         declare.declare("open")?;
+        declare.declare("openSync")?;
         declare.declare("close")?;
+        declare.declare("closeSync")?;
+        declare.declare("writeSync")?;
+        declare.declare("readSync")?;
+        declare.declare("fstatSync")?;
         declare.declare("mkdirSync")?;
         declare.declare("mkdtempSync")?;
         declare.declare("readdir")?;
@@ -491,7 +498,12 @@ impl ModuleDef for FsModule {
 })()"#,
             )?;
             default.set("open", cb_helpers.get::<_, Value>("open")?)?;
+            default.set("openSync", Func::from(open_sync))?;
             default.set("close", cb_helpers.get::<_, Value>("close")?)?;
+            default.set("closeSync", Func::from(close_sync))?;
+            default.set("writeSync", Func::from(write_sync))?;
+            default.set("readSync", Func::from(read_sync))?;
+            default.set("fstatSync", Func::from(fstat_sync))?;
             default.set("readFile", cb_helpers.get::<_, Value>("readFile")?)?;
             default.set("writeFile", cb_helpers.get::<_, Value>("writeFile")?)?;
             default.set("appendFile", cb_helpers.get::<_, Value>("appendFile")?)?;

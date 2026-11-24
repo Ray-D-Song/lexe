@@ -26,6 +26,11 @@ const {
   lstatSync,
   symlinkSync,
   writeFileSync,
+  openSync,
+  closeSync,
+  writeSync,
+  readSync,
+  fstatSync,
   appendFile: appendFileCb,
   appendFileSync,
   realpathSync,
@@ -1476,3 +1481,199 @@ describe("appendFile / appendFileSync", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("fd sync family", () => {
+  const tmp = (contents = "") => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "test-fd-"));
+    const file = path.join(dir, "f.txt");
+    writeFileSync(file, contents);
+    return { dir, file, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  };
+
+  it("openSync returns a numeric descriptor and closes cleanly", () => {
+    const { file, cleanup } = tmp("abc");
+    const fd = openSync(file, "r");
+    expect(typeof fd).toBe("number");
+    expect(Number.isInteger(fd)).toBe(true);
+    expect(() => closeSync(fd)).not.toThrow();
+    cleanup();
+  });
+
+  it("writeSync returns the number of bytes written", () => {
+    const { file, cleanup } = tmp();
+    const fd = openSync(file, "w");
+    expect(writeSync(fd, "hello")).toBe(5);
+    expect(writeSync(fd, Buffer.from([1, 2, 3]))).toBe(3);
+    closeSync(fd);
+    expect(readFileSync(file, "utf8")).toBe("hello\u0001\u0002\u0003");
+    cleanup();
+  });
+
+  it("readSync returns bytesRead, and 0 at end of file", () => {
+    const { file, cleanup } = tmp("0123456789");
+    const fd = openSync(file, "r");
+    const buf = Buffer.alloc(4);
+    expect(readSync(fd, buf, 0, 4, 0)).toBe(4);
+    expect(buf.toString()).toBe("0123");
+    expect(readSync(fd, Buffer.alloc(4), 0, 4, 999)).toBe(0);
+    closeSync(fd);
+    cleanup();
+  });
+
+  it("readSync honours offset and length", () => {
+    const { file, cleanup } = tmp("0123456789");
+    const fd = openSync(file, "r");
+    const buf = Buffer.alloc(6);
+    expect(readSync(fd, buf, 2, 3, 0)).toBe(3);
+    expect(buf.subarray(2, 5).toString()).toBe("012");
+    closeSync(fd);
+    cleanup();
+  });
+
+  it("position null continues from the shared offset", () => {
+    const { file, cleanup } = tmp("0123456789");
+    const fd = openSync(file, "r");
+    const a = Buffer.alloc(3);
+    expect(readSync(fd, a, 0, 3, null)).toBe(3);
+    expect(a.toString()).toBe("012");
+    const b = Buffer.alloc(3);
+    expect(readSync(fd, b, 0, 3, null)).toBe(3);
+    expect(b.toString()).toBe("345");
+    closeSync(fd);
+    cleanup();
+  });
+
+  it("an explicit position does not move the shared offset", () => {
+    const { file, cleanup } = tmp("0123456789");
+    const fd = openSync(file, "r");
+    const a = Buffer.alloc(2);
+    expect(readSync(fd, a, 0, 2, 5)).toBe(2);
+    expect(a.toString()).toBe("56");
+    const b = Buffer.alloc(2);
+    expect(readSync(fd, b, 0, 2, null)).toBe(2);
+    expect(b.toString()).toBe("01");
+    closeSync(fd);
+    cleanup();
+  });
+
+  it("fstatSync reports size for an open descriptor", () => {
+    const { file, cleanup } = tmp("abcdef");
+    const fd = openSync(file, "r");
+    const st = fstatSync(fd);
+    expect(st.size).toBe(6);
+    expect(st.isFile()).toBe(true);
+    closeSync(fd);
+    cleanup();
+  });
+
+  it("EBADF carries the failing syscall", () => {
+    const cases: Array<[string, () => void]> = [
+      ["close", () => closeSync(999999)],
+      ["write", () => writeSync(999999, "x")],
+      ["read", () => readSync(999999, Buffer.alloc(1), 0, 1, 0)],
+      ["fstat", () => fstatSync(999999)],
+    ];
+    for (const [syscall, run] of cases) {
+      let err: any;
+      try {
+        run();
+      } catch (e) {
+        err = e;
+      }
+      expect(`${syscall}:${err && err.code}:${err && err.syscall}`).toBe(
+        `${syscall}:EBADF:${syscall}`
+      );
+    }
+  });
+
+  it("closing twice is EBADF on the second call", () => {
+    const { file, cleanup } = tmp("x");
+    const fd = openSync(file, "r");
+    closeSync(fd);
+    let err: any;
+    try {
+      closeSync(fd);
+    } catch (e) {
+      err = e;
+    }
+    expect(err && err.code).toBe("EBADF");
+    cleanup();
+  });
+
+  it("rejects bad arguments with ERR_OUT_OF_RANGE, not a TypeError", () => {
+    const { file, cleanup } = tmp("abc");
+    // `r+` so the write cases fail on the argument check, not on a read-only
+    // descriptor.
+    const fd = openSync(file, "r+");
+    // `writeSync` does not validate `position` (measured on Node: a string, an
+    // object and a fraction are all accepted and behave like `null`), so only
+    // `readSync` appears with a bad `position` here.
+    const cases = [
+      () => readSync(fd, Buffer.alloc(2), 0, 10, 0),
+      () => readSync(fd, Buffer.alloc(2), 5, 1, 0),
+      () => writeSync(fd, Buffer.from("x"), 5, 1, 0),
+      () => readSync(fd, Buffer.alloc(2), 0, 2, 1.5),
+    ];
+    for (const run of cases) {
+      let err: any;
+      try {
+        run();
+      } catch (e) {
+        err = e;
+      }
+      expect(err && err.code).toBe("ERR_OUT_OF_RANGE");
+    }
+    closeSync(fd);
+    cleanup();
+  });
+
+  it("openSync maps flags to the same errors as Node", () => {
+    const { dir, file, cleanup } = tmp("x");
+    let err: any;
+    try {
+      openSync(path.join(dir, "missing.txt"), "r");
+    } catch (e) {
+      err = e;
+    }
+    expect(err && err.code).toBe("ENOENT");
+
+    err = undefined;
+    try {
+      openSync(file, "wx");
+    } catch (e) {
+      err = e;
+    }
+    expect(err && err.code).toBe("EEXIST");
+
+    err = undefined;
+    try {
+      openSync(file, "notaflag");
+    } catch (e) {
+      err = e;
+    }
+    expect(err && err.code).toBe("ERR_INVALID_ARG_VALUE");
+    cleanup();
+  });
+
+  it("sync and async access to one descriptor share the cursor", async () => {
+    const { file, cleanup } = tmp("0123456789");
+    const handle: any = await (defaultImport as any).promises.open(file, "r");
+    try {
+      const a = Buffer.alloc(3);
+      expect(readSync(handle.fd, a, 0, 3, null)).toBe(3);
+      expect(a.toString()).toBe("012");
+
+      const r = await handle.read(Buffer.alloc(3), 0, 3, null);
+      expect(r.bytesRead).toBe(3);
+      expect(r.buffer.subarray(0, r.bytesRead).toString()).toBe("345");
+
+      const c = Buffer.alloc(3);
+      expect(readSync(handle.fd, c, 0, 3, null)).toBe(3);
+      expect(c.toString()).toBe("678");
+    } finally {
+      await handle.close();
+    }
+    cleanup();
+  });
+});
+

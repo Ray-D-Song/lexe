@@ -5,6 +5,16 @@ use std::io;
 use rquickjs::{function::Args, Ctx, Exception, Function, Null, Result, Value};
 
 pub fn io_error_code(err: &io::Error) -> &'static str {
+    // Windows and Unix disagree on which `ErrorKind` an invalid descriptor
+    // maps to, so the platform code wins when it is `EBADF`.
+    #[cfg(unix)]
+    if err.raw_os_error() == Some(9) {
+        return "EBADF";
+    }
+    #[cfg(windows)]
+    if err.raw_os_error() == Some(6) || err.raw_os_error() == Some(9) {
+        return "EBADF";
+    }
     match err.kind() {
         io::ErrorKind::NotFound => "ENOENT",
         io::ErrorKind::PermissionDenied => "EACCES",
@@ -24,6 +34,10 @@ pub fn io_error_code(err: &io::Error) -> &'static str {
         io::ErrorKind::AddrNotAvailable => "EADDRNOTAVAIL",
         io::ErrorKind::OutOfMemory => "ENOMEM",
         io::ErrorKind::WriteZero => "EIO",
+        // `EBADF` has no stable `ErrorKind` on all platforms; the raw code is
+        // checked below so a closed or write-only descriptor reports what Node
+        // reports instead of `UNKNOWN`.
+        io::ErrorKind::Unsupported => "EBADF",
         io::ErrorKind::UnexpectedEof => "EOF",
         _ => "UNKNOWN",
     }

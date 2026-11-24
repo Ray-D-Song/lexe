@@ -121,6 +121,21 @@ pub struct FileHandle {
     crt_fd: Option<OwnedCrtFd>,
 }
 
+/// A `dup` of a tokio `File`'s descriptor, sharing its file offset.
+///
+/// `tokio::fs::File::try_clone` is async; this only needs the descriptor
+/// number, so it duplicates straight from the fd.
+#[cfg(not(windows))]
+fn try_clone_sync(file: &File) -> io::Result<std::fs::File> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    let raw = file.as_raw_fd();
+    let dup = unsafe { libc::dup(raw) };
+    if dup < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { std::fs::File::from_raw_fd(dup) })
+}
+
 impl FileHandle {
     /// Create a FileHandle. On Windows, `crt_flags` must match open access
     /// (`crt_flags_for_node_open`); ignored on Unix.
@@ -150,6 +165,14 @@ impl FileHandle {
         #[cfg(not(windows))]
         {
             let _ = crt_flags;
+            // Register the descriptor so the sync fd family (`readSync` and
+            // friends) works on a handle opened through `fs.promises`. The
+            // duplicate shares the file offset, which is what Node does: measured
+            // there, `readSync` and `handle.read` advance the same cursor.
+            if let Ok(shared) = try_clone_sync(&file) {
+                use std::os::fd::AsRawFd;
+                crate::fd_sync::register(file.as_raw_fd(), shared, path.clone());
+            }
             Ok(Self {
                 file: Some(file),
                 path,
