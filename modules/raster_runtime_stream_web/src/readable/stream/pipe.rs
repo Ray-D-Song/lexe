@@ -462,7 +462,15 @@ impl<'js> PipeTo<'js> {
                                 chunk,
                             )?;
 
-                        let write_promise: Promise<'js> = write_promise.catch()?.call((
+                        // Store the write's own promise, as Node does
+                        // (`this.state.currentWrite = writableStreamDefaultWriterWrite(...)`),
+                        // and mark it handled by attaching and discarding a
+                        // rejection handler, instead of keeping the promise
+                        // `.catch()` returns. A derived promise settles only once
+                        // the original one does, so awaiting it in
+                        // `wait_for_writes_to_finish` can wait on something
+                        // nothing will ever settle.
+                        let _: Promise<'js> = write_promise.catch()?.call((
                             This(write_promise.clone()),
                             Function::new(ctx.clone(), || {}),
                         ))?;
