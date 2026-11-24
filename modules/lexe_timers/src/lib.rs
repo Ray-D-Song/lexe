@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use std::{
+    collections::VecDeque,
     pin::{pin, Pin},
     ptr::NonNull,
     rc::Rc,
@@ -25,13 +26,16 @@ use rquickjs::{
     class::Trace,
     module::{Declarations, Exports, ModuleDef},
     prelude::{Func, Opt},
-    qjs, Class, Ctx, Exception, Function, IntoJs, Object, Persistent, Result, Value,
+    qjs, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Persistent, Result, Symbol,
+    Value,
 };
 use tokio::{
     select,
     sync::Notify,
     time::{Instant, Sleep},
 };
+
+const MAX_CLEARED_ID_HISTORY: usize = 4096;
 
 static TIMER_ID: AtomicUsize = AtomicUsize::new(0);
 static RT_TIMER_STATE: Lazy<Mutex<Vec<RuntimeTimerState>>> = Lazy::new(|| Mutex::new(Vec::new()));
@@ -47,6 +51,9 @@ pub struct RuntimeTimerState {
     /// and defer destroy until after After, matching Node's lifecycle order
     /// (init → before → after → destroy).
     executing_hook_id: usize,
+    /// Bounded recent numeric IDs explicitly cleared via `clearTimeout(id)`/`clearInterval(id)`
+    /// so `handle.refresh()` stays a no-op even after a numeric clear.
+    cleared_ids: VecDeque<usize>,
 }
 impl RuntimeTimerState {
     fn new(rt: *mut qjs::JSRuntime) -> Self {
@@ -58,6 +65,16 @@ impl RuntimeTimerState {
             running: false,
             notify: Default::default(),
             executing_hook_id: 0,
+            cleared_ids: VecDeque::new(),
+        }
+    }
+
+    fn record_cleared_id(&mut self, id: usize) {
+        if !self.cleared_ids.contains(&id) {
+            if self.cleared_ids.len() >= MAX_CLEARED_ID_HISTORY {
+                self.cleared_ids.pop_front();
+            }
+            self.cleared_ids.push_back(id);
         }
     }
 }
@@ -101,25 +118,204 @@ impl Default for Timeout {
     }
 }
 
-/// Node-compatible timer handle returned from `setTimeout` / `setInterval` / `setImmediate`.
+/// Node-compatible `Timeout` handle returned from `setTimeout` / `setInterval`.
+#[rquickjs::class]
+pub struct TimerHandle<'js> {
+    id: usize,
+    rt: RtKey,
+    loop_ref: Arc<EventLoopRef>,
+    /// GC-traced JS callback so `refresh()` can re-arm a fired one-shot timer without
+    /// leaking a `Persistent` root across isolate teardown.
+    callback: Option<Function<'js>>,
+    interval: u64,
+    repeating: bool,
+    referenced: bool,
+    destroyed: bool,
+}
+
+type RtKey = usize;
+
+unsafe impl<'js> JsLifetime<'js> for TimerHandle<'js> {
+    type Changed<'to> = TimerHandle<'to>;
+}
+
+impl<'js> Trace<'js> for TimerHandle<'js> {
+    fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
+        if let Some(cb) = &self.callback {
+            tracer.mark(cb);
+        }
+    }
+}
+
+#[rquickjs::methods(rename_all = "camelCase")]
+impl<'js> TimerHandle<'js> {
+    #[qjs(rename = "ref")]
+    pub fn js_ref(this: rquickjs::prelude::This<Class<'js, Self>>) -> Class<'js, Self> {
+        {
+            let mut h = this.borrow_mut();
+            h.referenced = true;
+            h.loop_ref.reference();
+            set_timer_referenced(h.rt, h.id, true);
+        }
+        this.0
+    }
+
+    pub fn unref(this: rquickjs::prelude::This<Class<'js, Self>>) -> Class<'js, Self> {
+        {
+            let mut h = this.borrow_mut();
+            h.referenced = false;
+            h.loop_ref.unreference();
+            set_timer_referenced(h.rt, h.id, false);
+        }
+        this.0
+    }
+
+    #[qjs(rename = "hasRef")]
+    pub fn has_ref(&self) -> bool {
+        self.loop_ref.is_referenced()
+    }
+
+    pub fn refresh(this: rquickjs::prelude::This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Class<'js, Self>> {
+        let (id, rt_key, interval, repeating, referenced, destroyed, callback, loop_ref) = {
+            let h = this.borrow();
+            (
+                h.id,
+                h.rt,
+                h.interval,
+                h.repeating,
+                h.referenced,
+                h.destroyed,
+                h.callback.clone(),
+                h.loop_ref.clone(),
+            )
+        };
+        if destroyed {
+            return Ok(this.0);
+        }
+
+        let rt_ptr = rt_key as *mut qjs::JSRuntime;
+        let now = Instant::now();
+        let new_deadline = now + Duration::from_millis(interval);
+
+        enum RefreshOutcome {
+            Updated,
+            ClearedBefore,
+            Missing,
+        }
+
+        let outcome = {
+            let mut rt_timers = RT_TIMER_STATE.lock().unwrap();
+            let state = get_timer_state(&mut rt_timers, rt_ptr);
+            if state.cleared_ids.contains(&id) {
+                RefreshOutcome::ClearedBefore
+            } else if let Some(timeout) = state.timers.iter_mut().find(|t| t.id == id) {
+                if timeout.callback.is_some() && !timeout.pending_destroy {
+                    timeout.deadline = new_deadline;
+                    if new_deadline < state.deadline {
+                        state.deadline = new_deadline;
+                    }
+                    state.notify.notify_one();
+                    RefreshOutcome::Updated
+                } else {
+                    RefreshOutcome::Missing
+                }
+            } else {
+                RefreshOutcome::Missing
+            }
+        };
+
+        match outcome {
+            RefreshOutcome::Updated => return Ok(this.0),
+            RefreshOutcome::ClearedBefore => {
+                {
+                    let mut h = this.borrow_mut();
+                    h.destroyed = true;
+                    h.callback = None;
+                }
+                return Ok(this.0);
+            },
+            RefreshOutcome::Missing => {},
+        }
+
+        // One-shot timer already fired; re-arm using the same ID and settings.
+        let Some(cb) = callback else {
+            return Ok(this.0);
+        };
+
+        let hook_id = allocate_hook_resource_id();
+        let provider_type = if repeating {
+            ProviderType::Interval
+        } else {
+            ProviderType::Timeout
+        };
+        invoke_async_hook(&ctx, HookType::Init, provider_type, hook_id)?;
+        let persistent_cb = Persistent::<Function>::save(&ctx, cb);
+        if referenced {
+            loop_ref.reference();
+        } else {
+            loop_ref.unreference();
+        }
+
+        let timeout = Timeout {
+            deadline: new_deadline,
+            callback: Some(persistent_cb),
+            raw_ctx: ctx.as_raw(),
+            id,
+            hook_id,
+            repeating,
+            interval,
+            pending_destroy: false,
+            referenced,
+            loop_ref,
+        };
+
+        let mut rt_timer = RT_TIMER_STATE.lock().unwrap();
+        let state = get_timer_state(&mut rt_timer, rt_ptr);
+        state.timers.push(timeout);
+        if state.running {
+            if new_deadline < state.deadline {
+                state.deadline = new_deadline;
+                state.notify.notify_one();
+            }
+        } else if should_keep_timer_loop(state, rt_key) {
+            state.running = true;
+            let timer_abort = state.notify.clone();
+            drop(rt_timer);
+            create_spawn_loop(rt_ptr, &ctx, timer_abort, new_deadline)?;
+        }
+
+        Ok(this.0)
+    }
+
+    pub fn close(this: rquickjs::prelude::This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Class<'js, Self>> {
+        let val = this.0.clone().into_value();
+        clear_timeout_interval(ctx, Opt(Some(val)))?;
+        Ok(this.0)
+    }
+
+    #[qjs(rename = "valueOf")]
+    pub fn value_of(&self) -> f64 {
+        self.id as f64
+    }
+}
+
+/// Node-compatible `Immediate` handle returned from `setImmediate`.
 #[derive(rquickjs::JsLifetime)]
 #[rquickjs::class]
-pub struct TimerHandle {
+pub struct ImmediateHandle {
     id: usize,
     rt: RtKey,
     loop_ref: Arc<EventLoopRef>,
 }
 
-type RtKey = usize;
+unsafe impl Send for ImmediateHandle {}
 
-unsafe impl Send for TimerHandle {}
-
-impl Trace<'_> for TimerHandle {
+impl Trace<'_> for ImmediateHandle {
     fn trace<'a>(&self, _tracer: rquickjs::class::Tracer<'a, '_>) {}
 }
 
 #[rquickjs::methods(rename_all = "camelCase")]
-impl TimerHandle {
+impl ImmediateHandle {
     #[qjs(rename = "ref")]
     pub fn js_ref(this: rquickjs::prelude::This<Class<'_, Self>>) -> Class<'_, Self> {
         this.borrow().loop_ref.reference();
@@ -133,14 +329,9 @@ impl TimerHandle {
         this.0
     }
 
-    #[qjs(get)]
+    #[qjs(rename = "hasRef")]
     pub fn has_ref(&self) -> bool {
         self.loop_ref.is_referenced()
-    }
-
-    #[qjs(rename = "valueOf")]
-    pub fn value_of(&self) -> f64 {
-        self.id as f64
     }
 }
 
@@ -165,6 +356,12 @@ fn timer_id_from_value<'js>(_ctx: &Ctx<'js>, value: Value<'js>) -> Option<usize>
         return Some(n as usize);
     }
     if let Ok(handle) = Class::<TimerHandle>::from_value(&value) {
+        let mut h = handle.borrow_mut();
+        h.destroyed = true;
+        h.callback = None;
+        return Some(h.id);
+    }
+    if let Ok(handle) = Class::<ImmediateHandle>::from_value(&value) {
         return Some(handle.borrow().id);
     }
     None
@@ -241,6 +438,7 @@ pub fn set_timeout_interval<'js>(
     // NOTE: https://noncodersuccess.medium.com/understanding-setimmediate-vs-settimeout-in-node-js-6a3ef8fc02d4
     // If `setImmediate(fn)` and `setTimeout(fn, 0) are queued at the exact same time,
     // `setImmediate(fn) takes precedence in Node.js, regardless of their execution order.
+    let is_immediate = matches!(provider_type, ProviderType::Immediate);
     let (repeating, deadline) = match provider_type {
         ProviderType::Immediate => (false, Instant::now() - Duration::from_secs(600)),
         ProviderType::Timeout => (false, Instant::now() + Duration::from_millis(delay)),
@@ -261,6 +459,7 @@ pub fn set_timeout_interval<'js>(
     let hook_id = allocate_hook_resource_id();
     invoke_async_hook(ctx, HookType::Init, provider_type, hook_id)?;
 
+    let js_callback = cb.clone();
     let callback = Persistent::<Function>::save(ctx, cb);
 
     let rt_ptr = unsafe { qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
@@ -302,15 +501,32 @@ pub fn set_timeout_interval<'js>(
         drop(rt_timer);
     }
 
-    let handle = Class::instance(
-        ctx.clone(),
-        TimerHandle {
-            id,
-            rt: rt_key,
-            loop_ref,
-        },
-    )?;
-    handle.into_js(ctx)
+    if is_immediate {
+        let handle = Class::instance(
+            ctx.clone(),
+            ImmediateHandle {
+                id,
+                rt: rt_key,
+                loop_ref,
+            },
+        )?;
+        handle.into_js(ctx)
+    } else {
+        let handle = Class::instance(
+            ctx.clone(),
+            TimerHandle {
+                id,
+                rt: rt_key,
+                loop_ref,
+                callback: Some(js_callback),
+                interval: delay,
+                repeating,
+                referenced,
+                destroyed: false,
+            },
+        )?;
+        handle.into_js(ctx)
+    }
 }
 
 fn get_timer_state<'a>(
@@ -349,6 +565,7 @@ fn clear_timeout_interval<'js>(ctx: Ctx<'js>, id: Opt<Value<'js>>) -> Result<()>
         let mut rt_timers = RT_TIMER_STATE.lock().unwrap();
 
         let state = get_timer_state(&mut rt_timers, rt);
+        state.record_cleared_id(id);
         if let Some(timeout) = state.timers.iter_mut().find(|t| t.id == id) {
             let _ = timeout.callback.take();
             timeout.repeating = false;
@@ -393,9 +610,10 @@ const INSTALL_TIMER_WRAPPERS_JS: &str = r#"(function (nativeSetTimeout, nativeSe
       throw new TypeError('The "callback" argument must be of type function. Received type ' + typeof callback);
     }
     const ms = delay === undefined || delay === null ? 0 : Number(delay);
-    return nativeSetTimeout(function () {
-      callback(...args);
+    const handle = nativeSetTimeout(function () {
+      callback.apply(handle, args);
     }, ms);
+    return handle;
   }
 
   function setInterval(callback, delay, ...args) {
@@ -403,23 +621,69 @@ const INSTALL_TIMER_WRAPPERS_JS: &str = r#"(function (nativeSetTimeout, nativeSe
       throw new TypeError('The "callback" argument must be of type function. Received type ' + typeof callback);
     }
     const ms = delay === undefined || delay === null ? 0 : Number(delay);
-    return nativeSetInterval(function () {
-      callback(...args);
+    const handle = nativeSetInterval(function () {
+      callback.apply(handle, args);
     }, ms);
+    return handle;
   }
 
   function setImmediate(callback, ...args) {
     if (typeof callback !== "function") {
       throw new TypeError('The "callback" argument must be of type function. Received type ' + typeof callback);
     }
-    return nativeSetImmediate(function () {
-      callback(...args);
+    const handle = nativeSetImmediate(function () {
+      callback.apply(handle, args);
     });
+    return handle;
   }
 
-  // Next stores util.promisify(setImmediate) at startup. Provide custom so
-  // promisify resolves a value without loading timers/promises (avoids cycles).
   const kCustom = Symbol.for("nodejs.util.promisify.custom");
+  setTimeout[kCustom] = function setTimeoutPromisify(delay, value, options) {
+    if (options !== undefined && options !== null) {
+      if (typeof options !== "object") {
+        return Promise.reject(
+          new TypeError('The "options" argument must be of type object. Received type ' + typeof options)
+        );
+      }
+      if (options.signal !== undefined && options.signal !== null) {
+        if (typeof options.signal !== "object" || typeof options.signal.aborted !== "boolean") {
+          return Promise.reject(new TypeError('The "options.signal" property must be an AbortSignal.'));
+        }
+        if (options.signal.aborted) {
+          return Promise.reject(options.signal.reason);
+        }
+      }
+      if (options.ref !== undefined && typeof options.ref !== "boolean") {
+        return Promise.reject(new TypeError('The "options.ref" property must be of type boolean.'));
+      }
+    }
+    const opts = options || {};
+    const signal = opts.signal;
+    const ms = delay === undefined || delay === null ? 0 : Number(delay);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const onAbort = () => {
+        if (settled) return;
+        settled = true;
+        nativeClear(id);
+        signal.removeEventListener("abort", onAbort);
+        reject(signal.reason);
+      };
+      const id = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        if (signal) signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      }, ms);
+      if (opts.ref === false && typeof id.unref === "function") {
+        id.unref();
+      }
+      if (signal && typeof signal.addEventListener === "function") {
+        signal.addEventListener("abort", onAbort);
+      }
+    });
+  };
+
   setImmediate[kCustom] = function setImmediatePromisify(value) {
     return new Promise((resolve) => {
       setImmediate(resolve, value);
@@ -701,6 +965,18 @@ const TIMERS_PROMISES_FACTORY_JS: &str = r#"(function () {
   };
 })"#;
 
+fn get_or_create_timers_promises<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
+    let key = Symbol::new_global(ctx.clone(), "__lexeTimersPromises")?;
+    let globals = ctx.globals();
+    if let Some(existing) = globals.get::<_, Option<Object<'js>>>(key.clone())? {
+        return Ok(existing);
+    }
+    let factory: Function = ctx.eval(TIMERS_PROMISES_FACTORY_JS)?;
+    let api: Object = factory.call(())?;
+    globals.set(key, api.clone())?;
+    Ok(api)
+}
+
 pub struct TimersModule;
 
 impl ModuleDef for TimersModule {
@@ -712,12 +988,14 @@ impl ModuleDef for TimersModule {
         declare.declare("setImmediate")?;
         declare.declare("clearImmediate")?;
         declare.declare("queueMicrotask")?;
+        declare.declare("promises")?;
         declare.declare("default")?;
         Ok(())
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         let globals = ctx.globals();
+        let promises = get_or_create_timers_promises(ctx)?;
 
         export_default(ctx, exports, |default| {
             let functions = [
@@ -733,6 +1011,7 @@ impl ModuleDef for TimersModule {
                 let function: Function = globals.get(func_name)?;
                 default.set(func_name, function)?;
             }
+            default.set("promises", promises)?;
             Ok(())
         })?;
 
@@ -763,8 +1042,7 @@ impl ModuleDef for TimersPromisesModule {
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
-        let factory: Function = ctx.eval(TIMERS_PROMISES_FACTORY_JS)?;
-        let api: Object = factory.call(())?;
+        let api = get_or_create_timers_promises(ctx)?;
 
         // Export a single mutable object for both named and default so CJS
         // assignment (Next patches setImmediate) works without freezing.
@@ -773,10 +1051,10 @@ impl ModuleDef for TimersPromisesModule {
         let set_immediate: Function = api.get("setImmediate")?;
         let scheduler: Object = api.get("scheduler")?;
 
-        exports.export("setTimeout", set_timeout.clone())?;
-        exports.export("setInterval", set_interval.clone())?;
-        exports.export("setImmediate", set_immediate.clone())?;
-        exports.export("scheduler", scheduler.clone())?;
+        exports.export("setTimeout", set_timeout)?;
+        exports.export("setInterval", set_interval)?;
+        exports.export("setImmediate", set_immediate)?;
+        exports.export("scheduler", scheduler)?;
         exports.export("default", api)?;
         Ok(())
     }
@@ -825,6 +1103,31 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         "__lexeCreateLoopRefController",
         Func::from(create_loop_ref_controller),
     )?;
+
+    // Install Symbol.dispose / Symbol.toPrimitive on Timeout and Immediate prototypes.
+    if let Some(proto) = Class::<TimerHandle>::prototype(ctx)? {
+        let install_timeout_syms: Function = ctx.eval(
+            r#"(function (proto) {
+  proto[Symbol.dispose] = function () {
+    this.close();
+  };
+  proto[Symbol.toPrimitive] = function () {
+    return this.valueOf();
+  };
+})"#,
+        )?;
+        install_timeout_syms.call::<_, ()>((proto,))?;
+    }
+    if let Some(proto) = Class::<ImmediateHandle>::prototype(ctx)? {
+        let install_imm_syms: Function = ctx.eval(
+            r#"(function (proto) {
+  proto[Symbol.dispose] = function () {
+    globalThis.clearImmediate(this);
+  };
+})"#,
+        )?;
+        install_imm_syms.call::<_, ()>((proto,))?;
+    }
 
     Ok(())
 }

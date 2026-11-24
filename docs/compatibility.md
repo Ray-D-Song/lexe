@@ -41,8 +41,8 @@
 | node:stream/web | ✔︎ | ✔︎⚠️ | `TransformStream` rejects `readableType`/`writableType`; BYOB/transfer and piping WPT edge cases ([details](#nodestreamweb)) |
 | node:string_decoder | ✔︎ | ✔︎ | — |
 | node:test | ✔︎ | ✔︎\* | JS polyfill (not native) |
-| node:timers | ✔︎ | ✔︎⚠️ | `Timeout` lacks `refresh`/`Symbol.dispose`; `Immediate` lacks `hasRef`/`Symbol.dispose`; no `enroll`/`unenroll` ([details](#nodetimers-and-nodetimerspromises)) |
-| node:timers/promises | ✔︎ | ✔︎⚠️ | Same `Timeout`/`Immediate` handle limitations as `node:timers` ([details](#nodetimers-and-nodetimerspromises)) |
+| node:timers | ✔︎ | ✔︎ | — |
+| node:timers/promises | ✔︎ | ✔︎ | — |
 | node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
 | node:tty | ✔︎ | ✔︎⚠️ | Non-stdio fd writes and Windows non-stdio TTY reads unsupported; no automatic `SIGWINCH` `resize` event ([details](#nodetty)) |
 | node:url | ✔︎ | ✔︎⚠️ | Missing `URLPattern`; minor `url`-crate parser quirks ([details](#nodeurl)) |
@@ -237,12 +237,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - `TransformStream` rejects `readableType` and `writableType` options.
 - WPT edge cases around non-transferable `ArrayBuffer` / BYOB transfer, owning-type byte streams, and some `pipeTo` / `TransformStream` cases are not yet compliant.
-
-#### `node:timers` and `node:timers/promises`
-
-- `Timeout` supports `ref()`, `unref()`, and `hasRef()`, but lacks `refresh()` and `Symbol.dispose`.
-- `Immediate` lacks `hasRef()` and `Symbol.dispose`.
-- Legacy `enroll()` and `unenroll()` helpers are not implemented.
 
 #### `node:tls`
 

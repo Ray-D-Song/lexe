@@ -868,7 +868,11 @@ _Also available globally_
 
 [setTimeout](https://nodejs.org/api/timers.html#settimeoutcallback-delay-args)
 
-> Timer handles are `Timeout` objects with Node-compatible `ref()` / `unref()`. Unref'd timers do not keep the process alive when they are the only remaining handle.
+[promises](https://nodejs.org/api/timers.html#timers-promises-api)
+
+[queueMicrotask](https://nodejs.org/api/globals.html#queuemicrotaskcallback)
+
+> `setTimeout` / `setInterval` return `Timeout` handles supporting `ref()`, `unref()`, `hasRef()`, `refresh()`, `close()`, `[Symbol.dispose]()`, and `[Symbol.toPrimitive]()`; `setImmediate` returns `Immediate` handles supporting `ref()`, `unref()`, `hasRef()`, and `[Symbol.dispose]()`. Both `setTimeout` and `setImmediate` support `util.promisify`. Unref'd timers do not keep the process alive when they are the only remaining handle.
 
 ## timers/promises
 
