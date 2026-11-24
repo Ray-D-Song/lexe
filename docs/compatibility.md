@@ -63,7 +63,7 @@
 
 | [Web Platform API](https://min-common-api.proposal.wintertc.org/) | raster_runtime |
 | ----------------------------------------------------------------- | -------------- |
-| COMPRESSION                                                       | ✘⏱             |
+| COMPRESSION                                                       | ✔︎⚠️            |
 | CONSOLE                                                           | ✔︎⚠️            |
 | DOM                                                               | ✔︎⚠️            |
 | ECMASCRIPT                                                        | ✔︎⚠️            |
