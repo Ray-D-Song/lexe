@@ -1,36 +1,74 @@
-// Helpers for driving `http.WebSocket` from a child process.
+// Helpers for driving `http.WebSocket` against the Python echo fixture.
 //
-// Every case in `http-websocket.test.ts` runs entirely inside a child: it starts
-// the Python echo fixture, drives the client, prints one line and exits. The
-// test worker never owns a socket or a long-lived child — a listener or a
-// detached process left in the worker makes it exit non-zero at teardown, which
-// would fail the run for reasons unrelated to what is being tested.
+// These cases used to run in a child process, because a listener or a detached
+// child left in the test worker made the worker exit non-zero at teardown. That
+// was a harness gate rather than a test requirement, and it is gone: the worker
+// now exits as soon as it has reported. So the fixture is started here, in the
+// worker, and every case stops it in a `finally`.
 
-/// Source for starting the fixture inside a child script.
-///
-/// `MODE` is substituted by the caller. The helper resolves the fixture path
-/// relative to the repository root, which the child inherits as its cwd.
-export const startFixtureSource = (mode: string): string => `
 import { spawn } from "node:child_process";
 import path from "node:path";
 
-const FIXTURE = path.resolve("tests/unit/fixtures/ws_echo_server.py");
-const fixture = spawn("python3", [FIXTURE, "0", ${JSON.stringify(mode)}], {
-  stdio: ["ignore", "pipe", "ignore"],
-});
-let fixturePort = 0;
-await new Promise((resolve, reject) => {
-  let buffered = "";
-  fixture.stdout.on("data", (chunk) => {
-    buffered += chunk.toString();
-    const match = /^(\\d+)/m.exec(buffered);
-    if (match) {
-      fixturePort = Number(match[1]);
-      resolve();
+export type Fixture = {
+  port: number;
+  stop: () => void;
+};
+
+/// Start `ws_echo_server.py` in `mode` and resolve once it reports its port.
+export const startFixture = async (mode: string): Promise<Fixture> => {
+  const fixturePath = path.resolve("tests/unit/fixtures/ws_echo_server.py");
+  const child = spawn("python3", [fixturePath, "0", mode], {
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  const port = await new Promise<number>((resolve, reject) => {
+    let buffered = "";
+    const timer = setTimeout(
+      () => reject(new Error("ws fixture did not start")),
+      5000
+    );
+    child.stdout.on("data", (chunk: any) => {
+      buffered += chunk.toString();
+      const match = /^(\d+)/m.exec(buffered);
+      if (match) {
+        clearTimeout(timer);
+        resolve(Number(match[1]));
+      }
+    });
+    child.on("error", (err: any) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+
+  const stop = () => {
+    try {
+      child.kill();
+    } catch {}
+  };
+
+  return { port, stop };
+};
+
+/// Resolve with whatever `settle` is called with, or reject on timeout so a hung
+/// socket fails the individual test instead of hanging the file.
+export const withTimeout = <T>(
+  run: (settle: (value: T) => void) => void,
+  timeoutMs = 6000
+): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("websocket case timed out")),
+      timeoutMs
+    );
+    const settle = (value: T) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    try {
+      run(settle);
+    } catch (err) {
+      clearTimeout(timer);
+      reject(err);
     }
   });
-  fixture.on("error", reject);
-  setTimeout(() => reject(new Error("ws fixture did not start")), 5000);
-});
-const stopFixture = () => { try { fixture.kill(); } catch {} };
-`;
