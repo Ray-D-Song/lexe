@@ -28,6 +28,7 @@ pub use self::security::{
     set_deny_list,
 };
 
+mod blocklist;
 mod security;
 mod server;
 mod socket;
@@ -157,17 +158,19 @@ fn is_valid_ipv6_zone_id(zone: &str) -> bool {
 
 /// Node-compatible `net.isIP(input)` → `0 | 4 | 6`.
 ///
-/// Non-strings, empty strings, strings with whitespace, and illegal addresses
-/// return `0`. IPv6 zone IDs (`fe80::1%lo0`) are accepted only when:
+/// Node coerces the input with `String(input)` only after checking it is a
+/// string or a typed array: a `Buffer`/`Uint8Array` of ASCII digits and a
+/// `new String("1.2.3.4")` both pass, while `null`, numbers, plain objects and
+/// arrays all return `0` (`internal/net` → `isIP`). It never throws.
+///
+/// IPv6 zone IDs (`fe80::1%lo0`) are accepted only when:
 /// - there is exactly one `%`
 /// - the zone id is non-empty and uses the allowed character set
 /// - the host part is a valid IPv6 address (IPv4 must not carry a zone id)
-pub fn is_ip(value: Value<'_>) -> i32 {
-    let Some(js_string) = value.as_string() else {
-        return 0;
-    };
-    let Ok(input) = js_string.to_string() else {
-        return 0;
+pub fn is_ip<'js>(ctx: Ctx<'js>, value: Value<'js>) -> i32 {
+    let input = match coerce_address_input(&ctx, &value) {
+        Some(input) => input,
+        None => return 0,
     };
     if input.is_empty() || input.chars().any(|c| c.is_whitespace()) {
         return 0;
@@ -203,6 +206,106 @@ pub fn is_ip(value: Value<'_>) -> i32 {
         return 6;
     }
     0
+}
+
+/// Coerce a `net.isIP` argument the way Node does: strings, `String` objects
+/// and typed arrays are stringified; anything else is rejected.
+///
+/// Node's check is `typeof input === 'string' || isArrayBufferView(input)` and
+/// then `String(input)` — so `Buffer.from("1.2.3.4")` passes and `null`,
+/// numbers, plain objects and arrays do not.
+fn coerce_address_input<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Option<String> {
+    if let Some(s) = value.as_string() {
+        return s.to_string().ok();
+    }
+    let obj = value.as_object()?;
+    let is_wrapper_or_view = obj
+        .get::<_, Value<'js>>("constructor")
+        .ok()
+        .and_then(|c| c.as_object().cloned())
+        .and_then(|c| c.get::<_, Value<'js>>("name").ok())
+        .and_then(|n| n.as_string().and_then(|n| n.to_string().ok()))
+        .is_some_and(|name| matches!(name.as_str(), "String" | "Buffer" | "Uint8Array"));
+    if !is_wrapper_or_view {
+        return None;
+    }
+    // Defer to JS `String(x)` for the exact coercion.
+    let global: Object<'js> = ctx.globals();
+    let string_fn: Function = global.get("String").ok()?;
+    let coerced: rquickjs::String = string_fn.call((value.clone(),)).ok()?;
+    coerced.to_string().ok()
+}
+
+/// Node-compatible `net.isIPv4(input)`.
+///
+/// Strictly `isIP(input) === 4`. Node stringifies non-string inputs (a
+/// `Buffer` or `new String("1.2.3.4")` is accepted) and never throws, so this
+/// delegates to the same coercion path as `isIP`.
+pub fn is_ipv4<'js>(ctx: Ctx<'js>, value: Value<'js>) -> bool {
+    is_ip(ctx, value) == 4
+}
+
+/// Node-compatible `net.isIPv6(input)`.
+pub fn is_ipv6<'js>(ctx: Ctx<'js>, value: Value<'js>) -> bool {
+    is_ip(ctx, value) == 6
+}
+
+/// `net.getDefaultAutoSelectFamily()` — process-wide flag, default `true`.
+static AUTO_SELECT_FAMILY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// `net.getDefaultAutoSelectFamilyAttemptTimeout()` — default `250` ms.
+static AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(250);
+
+pub fn get_default_auto_select_family() -> bool {
+    AUTO_SELECT_FAMILY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `net.setDefaultAutoSelectFamily(value)`.
+///
+/// Only stores the flag: this runtime has no Happy-Eyeballs connect logic, so
+/// toggling it does not change connection behaviour (documented in the PR).
+pub fn set_default_auto_select_family(ctx: Ctx<'_>, value: Value<'_>) -> Result<bool> {
+    let Some(value) = value.as_bool() else {
+        return Err(crate::blocklist::throw_coded(
+            &ctx,
+            crate::blocklist::CodedError::Type,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"value\" argument must be of type boolean",
+        ));
+    };
+    AUTO_SELECT_FAMILY.store(value, std::sync::atomic::Ordering::Relaxed);
+    Ok(value)
+}
+
+pub fn get_default_auto_select_family_attempt_timeout() -> u32 {
+    AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `net.setDefaultAutoSelectFamilyAttemptTimeout(value)` — `1..=2147483647`.
+pub fn set_default_auto_select_family_attempt_timeout(
+    ctx: Ctx<'_>,
+    value: Value<'_>,
+) -> Result<u32> {
+    let Some(value) = value.as_number() else {
+        return Err(crate::blocklist::throw_coded(
+            &ctx,
+            crate::blocklist::CodedError::Type,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"value\" argument must be of type number",
+        ));
+    };
+    let value = value.trunc();
+    if !(1.0..=2147483647.0).contains(&value) {
+        return Err(crate::blocklist::throw_coded(
+            &ctx,
+            crate::blocklist::CodedError::Range,
+            "ERR_OUT_OF_RANGE",
+            "The value of \"value\" is out of range. It must be >= 1 && <= 2147483647",
+        ));
+    }
+    AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT.store(value as u32, std::sync::atomic::Ordering::Relaxed);
+    Ok(value as u32)
 }
 
 /// JS implementation of `net.Socket`.
@@ -459,6 +562,14 @@ impl ModuleDef for NetModule {
         declare.declare("connect")?;
         declare.declare("createServer")?;
         declare.declare("isIP")?;
+        declare.declare("isIPv4")?;
+        declare.declare("isIPv6")?;
+        declare.declare("BlockList")?;
+        declare.declare("SocketAddress")?;
+        declare.declare("getDefaultAutoSelectFamily")?;
+        declare.declare("setDefaultAutoSelectFamily")?;
+        declare.declare("getDefaultAutoSelectFamilyAttemptTimeout")?;
+        declare.declare("setDefaultAutoSelectFamilyAttemptTimeout")?;
         declare.declare(stringify!(Socket))?;
         declare.declare(stringify!(Server))?;
         declare.declare("default")?;
@@ -519,6 +630,25 @@ impl ModuleDef for NetModule {
             default.set("createConnection", connect.clone())?;
             default.set("connect", connect)?;
             default.set("isIP", Func::from(is_ip))?;
+            blocklist::export(ctx, &default)?;
+            default.set("isIPv4", Func::from(is_ipv4))?;
+            default.set("isIPv6", Func::from(is_ipv6))?;
+            default.set(
+                "getDefaultAutoSelectFamily",
+                Func::from(get_default_auto_select_family),
+            )?;
+            default.set(
+                "setDefaultAutoSelectFamily",
+                Func::from(set_default_auto_select_family),
+            )?;
+            default.set(
+                "getDefaultAutoSelectFamilyAttemptTimeout",
+                Func::from(get_default_auto_select_family_attempt_timeout),
+            )?;
+            default.set(
+                "setDefaultAutoSelectFamilyAttemptTimeout",
+                Func::from(set_default_auto_select_family_attempt_timeout),
+            )?;
             default.set(
                 "createServer",
                 Func::from(|ctx, args| {
