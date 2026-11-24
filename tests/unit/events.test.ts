@@ -1,4 +1,9 @@
-import defaultImport from "node:events";
+import defaultImport, {
+  EventEmitterAsyncResource,
+  captureRejectionSymbol,
+  errorMonitor,
+} from "node:events";
+import { AsyncLocalStorage } from "node:async_hooks";
 import legacyImport from "events";
 
 it("node:events should be the same as events", () => {
@@ -683,5 +688,130 @@ describe("max listener bookkeeping", () => {
     const ee = new EventEmitter();
     expect(() => ee.setMaxListeners(-1 as any)).toThrow();
     expect(() => ee.setMaxListeners("x" as any)).toThrow();
+  });
+});
+
+describe("errorMonitor and unhandled error semantics", () => {
+  it("invokes errorMonitor listeners before error listeners and before throwing", () => {
+    const ee = new EventEmitter();
+    const order: string[] = [];
+    ee.on(errorMonitor, (err: any) => {
+      order.push("monitor:" + err.message);
+    });
+    expect(() => ee.emit("error", new Error("unhandled"))).toThrow("unhandled");
+    expect(order).toEqual(["monitor:unhandled"]);
+
+    ee.on("error", (err: any) => {
+      order.push("handler:" + err.message);
+    });
+    expect(ee.emit("error", new Error("handled"))).toBe(true);
+    expect(order).toEqual(["monitor:unhandled", "monitor:handled", "handler:handled"]);
+  });
+
+  it("throws ERR_UNHANDLED_ERROR when emitting non-Error error events without a listener", () => {
+    const ee = new EventEmitter();
+    let caughtUndef: any;
+    try {
+      ee.emit("error");
+    } catch (e) {
+      caughtUndef = e;
+    }
+    expect(caughtUndef).toBeInstanceOf(Error);
+    expect(caughtUndef.code).toBe("ERR_UNHANDLED_ERROR");
+    expect(caughtUndef.message).toContain("undefined");
+
+    let caughtStr: any;
+    try {
+      ee.emit("error", "boom");
+    } catch (e) {
+      caughtStr = e;
+    }
+    expect(caughtStr).toBeInstanceOf(Error);
+    expect(caughtStr.code).toBe("ERR_UNHANDLED_ERROR");
+    expect(caughtStr.context).toBe("boom");
+    expect(caughtStr.message).toContain("'boom'");
+  });
+});
+
+describe("captureRejections", () => {
+  it("routes rejected listener promises to captureRejectionSymbol or error event", async () => {
+    const eeCustom = new EventEmitter({ captureRejections: true });
+    let captured: any[] | null = null;
+    (eeCustom as any)[captureRejectionSymbol] = (err: Error, ev: string, arg: number) => {
+      captured = [err.message, ev, arg];
+    };
+    eeCustom.on("work", async (n: number) => {
+      throw new Error("fail-" + n);
+    });
+    eeCustom.emit("work", 7);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(captured).toEqual(["fail-7", "work", 7]);
+
+    const eeFallback = new EventEmitter({ captureRejections: true });
+    let errMsg = "";
+    eeFallback.on("error", (err: Error) => {
+      errMsg = err.message;
+    });
+    eeFallback.on("work", async () => {
+      throw new Error("fallback-err");
+    });
+    eeFallback.emit("work");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(errMsg).toBe("fallback-err");
+  });
+
+  it("supports EventEmitter.captureRejections global default and rejects invalid values", async () => {
+    const prev = (EventEmitter as any).captureRejections;
+    try {
+      expect(prev).toBe(false);
+      expect(() => new EventEmitter({ captureRejections: "yes" as any })).toThrow(TypeError);
+      expect(() => {
+        (EventEmitter as any).captureRejections = 123;
+      }).toThrow(TypeError);
+
+      (EventEmitter as any).captureRejections = true;
+      const ee = new EventEmitter();
+      let seen = "";
+      ee.on("error", (e: Error) => {
+        seen = e.message;
+      });
+      ee.on("ping", () => Promise.reject(new Error("global-default")));
+      ee.emit("ping");
+      await new Promise((r) => setTimeout(r, 10));
+      expect(seen).toBe("global-default");
+    } finally {
+      (EventEmitter as any).captureRejections = prev;
+    }
+  });
+});
+
+describe("EventEmitterAsyncResource", () => {
+  it("preserves AsyncLocalStorage context across emit() and exposes resource metadata", () => {
+    const als = new AsyncLocalStorage<{ req: number }>();
+    const resource = als.run({ req: 42 }, () => new EventEmitterAsyncResource({ name: "MySource" }));
+    expect(resource).toBeInstanceOf(EventEmitter);
+    expect(resource).toBeInstanceOf(EventEmitterAsyncResource);
+    expect(typeof resource.asyncId).toBe("number");
+    expect(typeof resource.triggerAsyncId).toBe("number");
+    expect(resource.asyncResource).toBeTruthy();
+
+    let observed: any = null;
+    resource.on("msg", (payload: string) => {
+      observed = { payload, store: als.getStore() };
+    });
+
+    als.exit(() => {
+      expect(als.getStore()).toBeUndefined();
+      resource.emit("msg", "hello");
+    });
+
+    expect(observed).toEqual({ payload: "hello", store: { req: 42 } });
+    expect(resource.emitDestroy()).toBe(resource);
+
+    const byStr = new EventEmitterAsyncResource("StringName");
+    expect(typeof byStr.asyncId).toBe("number");
+    byStr.emitDestroy();
+
+    expect(() => new EventEmitterAsyncResource({} as any)).toThrow(TypeError);
   });
 });

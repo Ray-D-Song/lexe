@@ -412,6 +412,8 @@ Lightweight and fast hash classes for lexe.
 
 [EventEmitter](https://nodejs.org/api/events.html#class-eventemitter)
 
+[EventEmitterAsyncResource](https://nodejs.org/api/events.html#class-eventemitterasyncresource)
+
 [once](https://nodejs.org/api/events.html#eventsonceemitter-name-options)
 
 [on](https://nodejs.org/api/events.html#eventsonemitter-eventname-options)
@@ -422,11 +424,11 @@ Lightweight and fast hash classes for lexe.
 
 [setMaxListeners](https://nodejs.org/api/events.html#eventssetmaxlistenersn-...eventtargets)
 
+[listenerCount](https://nodejs.org/api/events.html#eventemitterlistenercountemitter-eventname)
+
 [addAbortListener](https://nodejs.org/api/events.html#eventsaddabortlistenersignal-listener)
 
-`errorMonitor`, `captureRejectionSymbol` and `defaultMaxListeners` are exported and also attached to the `EventEmitter` constructor, matching Node where the default export is that constructor.
-
-> `EventEmitterAsyncResource` and automatic `captureRejections` behaviour are not implemented.
+`errorMonitor`, `captureRejectionSymbol`, `captureRejections`, `EventEmitterAsyncResource`, and `defaultMaxListeners` are exported and also attached to the `EventEmitter` constructor, matching Node where the default export is that constructor. `captureRejections` (via `new EventEmitter({ captureRejections: true })` or `EventEmitter.captureRejections`), `errorMonitor`, and `EventEmitterAsyncResource` async-context tracking are supported.
 
 ## fs
 

@@ -17,7 +17,7 @@
 | node:diagnostics_channel | ✔︎ | ✔︎⚠️ | Missing `TracingChannel` and `AsyncLocalStorage` store binding (`bindStore`/`runStores`); no built-in runtime channels ([details](#nodediagnostics_channel)) |
 | node:dns | ✔︎ | ✔︎⚠️ | Exports `lookup` and `promises.lookup` only; missing `Resolver`, `resolve*`, `reverse`, `lookupService`, and server/order settings ([details](#nodedns-and-nodednspromises)) |
 | node:dns/promises | ✔︎ | ✔︎⚠️ | Exports `lookup` only; missing `Resolver` and `resolve*`/`reverse`/`lookupService` ([details](#nodedns-and-nodednspromises)) |
-| node:events | ✔︎ | ✔︎⚠️ | Missing `EventEmitterAsyncResource` and automatic `captureRejections` handling ([details](#nodeevents)) |
+| node:events | ✔︎ | ✔︎ | — |
 | node:fs | ✔︎ | ✔︎⚠️ | Missing callback `unlink`/`chmod`/`read`/`write`, `copyFile*`, `cpSync`, `globSync`, `opendirSync`, `statfsSync`, `watchFile`, `openAsBlob`, and `BigIntStats` ([details](#nodefs-and-nodefspromises)) |
 | node:fs/promises | ✔︎ | ✔︎⚠️ | Missing `unlink`, `copyFile`, `watch`, `lchmod`, `openAsBlob`, and `BigIntStats` ([details](#nodefs-and-nodefspromises)) |
 | node:http | ✔︎ | ✔︎⚠️ | Minimal `ClientRequest` (no header/timeout/socket setters); `Server` rejects `insecureHTTPParser` and lacks some HTTP/1.1 lifecycle APIs ([details](#nodehttp-and-nodehttps)) |
@@ -161,11 +161,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Only `dns.lookup()` and `dns.promises.lookup()` (exposed by `node:dns/promises`) are implemented.
 - Missing `Resolver`, `lookupService()`, `reverse()`, all `resolve*()` record methods (`resolve`, `resolve4`, `resolve6`, `resolveAny`, `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNaptr`, `resolveNs`, `resolvePtr`, `resolveSoa`, `resolveSrv`, `resolveTxt`), `getServers()`/`setServers()`, `getDefaultResultOrder()`/`setDefaultResultOrder()`, and lookup flag constants (`ADDRCONFIG`, `V4MAPPED`, `ALL`).
-
-#### `node:events`
-
-- Missing `EventEmitterAsyncResource`.
-- Automatic `captureRejections` handling (`{ captureRejections: true }` / `EventEmitter.captureRejections`) is not implemented; `captureRejectionSymbol` is exported without async rejection routing.
 
 #### `node:fs` and `node:fs/promises`
 

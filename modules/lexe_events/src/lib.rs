@@ -624,12 +624,56 @@ where
         defer: bool,
     ) -> Result<bool> {
         let events = Self::resolve_events_from(ctx, &this)?;
-        let mut events = events.write().or_throw(ctx)?;
         let key = EventKey::from_value(ctx, event.clone())?;
+        let is_error_event = matches!(&key, EventKey::String(s) if s.as_ref() == "error");
 
-        if let Some(index) = events.iter_mut().position(|(k, _)| k == &key) {
+        // Node invokes `errorMonitor` listeners before handling/throwing an `"error"` event.
+        if is_error_event {
+            let monitor_sym: Value<'js> = ctx.eval("Symbol.for('events.errorMonitor')")?;
+            let monitor_key = EventKey::from_value(ctx, monitor_sym)?;
+            let monitor_cbs: Vec<(u64, Function<'js>, bool, Rc<Cell<bool>>)> = {
+                let events_read = events.read().or_throw(ctx)?;
+                events_read
+                    .iter()
+                    .find(|(k, _)| k == &monitor_key)
+                    .map(|(_, items)| {
+                        items
+                            .iter()
+                            .map(|item| {
+                                (
+                                    item.id,
+                                    item.callback.clone(),
+                                    item.once,
+                                    Rc::clone(&item.fired),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            for (id, callback, was_once, fired) in monitor_cbs {
+                if was_once {
+                    if fired.get() {
+                        continue;
+                    }
+                    let _ = remove_listener_by_id(ctx, &this, &monitor_key, id, true)?;
+                    fired.set(true);
+                }
+                let call_args: Vec<Value<'js>> = args.iter().map(|arg| arg.to_owned()).collect();
+                let this_val = This(this.0.clone().into_value());
+                if defer {
+                    callback.defer((this_val, Rest(call_args)))?;
+                } else {
+                    let ret: Value<'js> = callback.call((this_val, Rest(call_args)))?;
+                    attach_capture_rejection(ctx, &this.0, ret, &event, &args.0)?;
+                }
+            }
+        }
+
+        let events_read = events.read().or_throw(ctx)?;
+        if let Some(index) = events_read.iter().position(|(k, _)| k == &key) {
             // Snapshot by ID + shared fired flag (Node onceWrapper semantics).
-            let items = &events[index].1;
+            let items = &events_read[index].1;
             let callbacks: Vec<(u64, Function<'js>, bool, Rc<Cell<bool>>)> = items
                 .iter()
                 .map(|item| {
@@ -641,7 +685,7 @@ where
                     )
                 })
                 .collect();
-            drop(events);
+            drop(events_read);
 
             for (id, callback, was_once, fired) in callbacks {
                 if was_once {
@@ -654,16 +698,20 @@ where
                     fired.set(true);
                 }
                 let call_args: Vec<Value<'js>> = args.iter().map(|arg| arg.to_owned()).collect();
-                let call_args = Rest(call_args);
                 let this_val = This(this.0.clone().into_value());
                 if defer {
-                    callback.defer((this_val, call_args))?;
+                    callback.defer((this_val, Rest(call_args)))?;
                 } else {
-                    callback.call::<_, ()>((this_val, call_args))?;
+                    let ret: Value<'js> = callback.call((this_val, Rest(call_args)))?;
+                    attach_capture_rejection(ctx, &this.0, ret, &event, &args.0)?;
                 }
             }
             Ok(true)
         } else {
+            drop(events_read);
+            if is_error_event {
+                return Err(throw_unhandled_error(ctx, &args.0));
+            }
             Ok(false)
         }
     }
@@ -864,6 +912,125 @@ fn has_key<'js>(event_list: Arc<RwLock<EventList<'js>>>, key: EventKey<'js>) -> 
     event_list.read().unwrap().iter().any(|(k, _)| k == &key)
 }
 
+fn is_capture_rejections_enabled<'js>(ctx: &Ctx<'js>, this: &Object<'js>) -> Result<bool> {
+    let capture_sym = Symbol::new_global(ctx.clone(), "__lexeCaptureRejections")?;
+    let inst_val: Value<'js> = this.get(capture_sym)?;
+    if let Some(b) = inst_val.as_bool() {
+        return Ok(b);
+    }
+    let ctor: Value<'js> = ctx.globals().get("__lexeEventEmitterCtor")?;
+    if let Some(ctor_obj) = ctor.as_object() {
+        if let Some(b) = ctor_obj
+            .get::<_, Value<'js>>("captureRejections")?
+            .as_bool()
+        {
+            return Ok(b);
+        }
+    }
+    Ok(false)
+}
+
+fn throw_unhandled_error<'js>(
+    ctx: &Ctx<'js>,
+    args: &[Value<'js>],
+) -> rquickjs::Error {
+    let make_err: Result<Value<'js>> = (|| {
+        let helper: Function<'js> = ctx.eval(
+            r#"(function (hasArg, er) {
+  if (er instanceof Error) return er;
+  let err;
+  if (hasArg) {
+    let stringified;
+    try {
+      stringified = typeof er === "string" ? "'" + er + "'" : String(er);
+    } catch (_) {
+      stringified = String(typeof er);
+    }
+    err = new Error("Unhandled error. (" + stringified + ")");
+    err.context = er;
+  } else {
+    err = new Error("Unhandled error. (undefined)");
+  }
+  err.code = "ERR_UNHANDLED_ERROR";
+  return err;
+})"#,
+        )?;
+        match args.first() {
+            Some(arg) => helper.call((true, arg.clone())),
+            None => helper.call((false, rquickjs::Undefined)),
+        }
+    })();
+
+    match make_err {
+        Ok(err_val) => ctx.throw(err_val),
+        Err(e) => e,
+    }
+}
+
+fn attach_capture_rejection<'js>(
+    ctx: &Ctx<'js>,
+    this: &Object<'js>,
+    ret: Value<'js>,
+    event: &Value<'js>,
+    args: &[Value<'js>],
+) -> Result<()> {
+    let Some(ret_obj) = ret.as_object() else {
+        return Ok(());
+    };
+    let Ok(then_val) = ret_obj.get::<_, Value<'js>>("then") else {
+        return Ok(());
+    };
+    if then_val.as_function().is_none() {
+        return Ok(());
+    }
+    if !is_capture_rejections_enabled(ctx, this)? {
+        return Ok(());
+    }
+
+    let handler: Function<'js> = ctx.eval(
+        r#"(function (emitter, ret, thenFn, event, args) {
+  const kRejection = Symbol.for("nodejs.rejection");
+  thenFn.call(ret, undefined, function (err) {
+    try {
+      if (event === "error") {
+        throw err;
+      }
+      const custom = emitter[kRejection];
+      if (typeof custom === "function") {
+        const res = custom.apply(emitter, [err, event].concat(args));
+        if (res && typeof res.then === "function") {
+          res.then(undefined, function (err2) {
+            if (typeof process !== "undefined" && typeof process.nextTick === "function") {
+              process.nextTick(function () { throw err2; });
+            } else {
+              queueMicrotask(function () { throw err2; });
+            }
+          });
+        }
+      } else {
+        emitter.emit("error", err);
+      }
+    } catch (syncErr) {
+      if (typeof process !== "undefined" && typeof process.nextTick === "function") {
+        process.nextTick(function () { throw syncErr; });
+      } else {
+        queueMicrotask(function () { throw syncErr; });
+      }
+    }
+  });
+})"#,
+    )?;
+    let args_vec: Vec<Value<'js>> = args.to_vec();
+    handler.call::<_, ()>((
+        this.clone(),
+        ret.clone(),
+        then_val,
+        event.clone(),
+        args_vec,
+    ))?;
+    Ok(())
+}
+
 fn to_event<'js>(ctx: &Ctx<'js>, event: &str) -> Result<Value<'js>> {
     let event = JsString::from_str(ctx.clone(), event)?;
     Ok(event.into_value())
@@ -874,14 +1041,17 @@ pub struct EventsModule;
 impl ModuleDef for EventsModule {
     fn declare(declare: &Declarations) -> Result<()> {
         declare.declare(stringify!(EventEmitter))?;
+        declare.declare("EventEmitterAsyncResource")?;
         declare.declare("on")?;
         declare.declare("once")?;
         declare.declare("getEventListeners")?;
         declare.declare("getMaxListeners")?;
         declare.declare("setMaxListeners")?;
+        declare.declare("listenerCount")?;
         declare.declare("addAbortListener")?;
         declare.declare("errorMonitor")?;
         declare.declare("captureRejectionSymbol")?;
+        declare.declare("captureRejections")?;
         declare.declare("defaultMaxListeners")?;
         declare.declare("default")?;
 
@@ -889,9 +1059,145 @@ impl ModuleDef for EventsModule {
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
-        let ctor = Class::<EventEmitter>::create_constructor(ctx)?
+        let native_ctor = Class::<EventEmitter>::create_constructor(ctx)?
             .expect("Can't create EventEmitter constructor");
-        ctor.set(stringify!(EventEmitter), ctor.clone())?;
+        EventEmitter::add_event_emitter_prototype(ctx)?;
+
+        let capture_sym = Symbol::new_global(ctx.clone(), "__lexeCaptureRejections")?;
+        let ee_factory: Function<'js> = ctx.eval(
+            r#"(function (nativeCtor, captureSym) {
+  function EventEmitter(options) {
+    if (options !== undefined && options !== null && typeof options === "object") {
+      const cr = options.captureRejections;
+      if (cr !== undefined) {
+        if (typeof cr !== "boolean") {
+          const err = new TypeError(
+            'The "options.captureRejections" property must be of type boolean. Received type ' +
+              typeof cr
+          );
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        Object.defineProperty(this, captureSym, {
+          value: cr,
+          writable: true,
+          configurable: true,
+          enumerable: false,
+        });
+      }
+    }
+  }
+
+  EventEmitter.prototype = nativeCtor.prototype;
+  Object.defineProperty(nativeCtor.prototype, "constructor", {
+    value: EventEmitter,
+    writable: true,
+    configurable: true,
+    enumerable: false,
+  });
+
+  let defaultCaptureRejections = false;
+  Object.defineProperty(EventEmitter, "captureRejections", {
+    enumerable: true,
+    configurable: true,
+    get() {
+      return defaultCaptureRejections;
+    },
+    set(value) {
+      if (typeof value !== "boolean") {
+        const err = new TypeError(
+          'The "EventEmitter.captureRejections" argument must be of type boolean. Received type ' +
+            typeof value
+        );
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      defaultCaptureRejections = value;
+    },
+  });
+
+  EventEmitter.listenerCount = function listenerCount(emitter, event) {
+    if (emitter == null || typeof emitter.listenerCount !== "function") {
+      throw new TypeError('The "emitter" argument must be an EventEmitter');
+    }
+    return emitter.listenerCount(event);
+  };
+
+  class EventEmitterAsyncResource extends EventEmitter {
+    #asyncResource;
+    constructor(options) {
+      let name;
+      let triggerAsyncId;
+      let requireManualDestroy;
+      let eeOpts;
+      if (typeof options === "string") {
+        name = options;
+      } else if (
+        options !== undefined &&
+        options !== null &&
+        typeof options === "object" &&
+        typeof options.name === "string"
+      ) {
+        name = options.name;
+        triggerAsyncId = options.triggerAsyncId;
+        requireManualDestroy = options.requireManualDestroy;
+        eeOpts = options;
+      } else {
+        const received =
+          options === null || typeof options !== "object"
+            ? "undefined"
+            : typeof options.name;
+        const err = new TypeError(
+          'The "options.name" property must be of type string. Received ' + received
+        );
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      super(eeOpts);
+      const { AsyncResource } = require("node:async_hooks");
+      const arOpts = {};
+      if (triggerAsyncId !== undefined) arOpts.triggerAsyncId = triggerAsyncId;
+      if (requireManualDestroy !== undefined) {
+        arOpts.requireManualDestroy = requireManualDestroy;
+      }
+      this.#asyncResource = new AsyncResource(name, arOpts);
+    }
+
+    emit(event, ...args) {
+      return this.#asyncResource.runInAsyncScope(
+        () => super.emit(event, ...args),
+        this
+      );
+    }
+
+    emitDestroy() {
+      this.#asyncResource.emitDestroy();
+      return this;
+    }
+
+    get asyncId() {
+      return this.#asyncResource.asyncId();
+    }
+
+    get triggerAsyncId() {
+      return this.#asyncResource.triggerAsyncId();
+    }
+
+    get asyncResource() {
+      return this.#asyncResource;
+    }
+  }
+
+  EventEmitter.EventEmitter = EventEmitter;
+  EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
+
+  return { EventEmitter, EventEmitterAsyncResource };
+})"#,
+        )?;
+        let built: Object<'js> = ee_factory.call((native_ctor, capture_sym))?;
+        let ctor: Function<'js> = built.get("EventEmitter")?;
+        let eear_ctor: Function<'js> = built.get("EventEmitterAsyncResource")?;
+        let listener_count_fn: Function<'js> = ctor.get("listenerCount")?;
 
         // Node: EventEmitter.on(emitter, eventName[, options]) → AsyncIterator
         // Semantics aligned with Node 24.3 (always yield args as array; watermark
@@ -1265,17 +1571,18 @@ impl ModuleDef for EventsModule {
             "captureRejectionSymbol",
             ctx.eval::<Value, _>("Symbol.for('nodejs.rejection')")?,
         )?;
+        exports.export("captureRejections", false)?;
         exports.export("defaultMaxListeners", 10i32)?;
+        exports.export("listenerCount", listener_count_fn)?;
+        exports.export("EventEmitterAsyncResource", eear_ctor)?;
 
         // Kept on the runtime globals (not on `globalThis`) so prototype methods
-        // can read `defaultMaxListeners` without threading it through Rust.
+        // can read `defaultMaxListeners` / `captureRejections` without threading through Rust.
         ctx.globals().set("__lexeEventEmitterCtor", ctor.clone())?;
 
         exports.export(stringify!(EventEmitter), ctor.clone())?;
         exports.export("on", on_static)?;
         exports.export("default", ctor)?;
-
-        EventEmitter::add_event_emitter_prototype(ctx)?;
 
         Ok(())
     }
