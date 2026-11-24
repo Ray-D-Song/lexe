@@ -49,8 +49,10 @@ it("should log module", () => {
     clearInterval: [function: (anonymous)],
     setImmediate: [function: setImmediate],
     clearImmediate: [function: (anonymous)],
-    queueMicrotask: [function: (anonymous)]
+    queueMicrotask: [function: (anonymous)],
+    promises: { setTimeout: [function: setTimeout], setInterval: [function: setInterval], setImmediate: [function: setImmediate], scheduler: { wait: [function: wait], yield: [function: yield] } }
   },
+  promises: [Circular],
   queueMicrotask: [function: (anonymous)],
   setImmediate: [function: setImmediate],
   setInterval: [function: setInterval],
