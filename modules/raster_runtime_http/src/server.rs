@@ -855,6 +855,12 @@ impl<'js> Server<'js> {
         }
         let server = this.borrow();
         server.closing.store(true, Ordering::Relaxed);
+        // The listening socket keeps the runtime referenced for as long as the
+        // server is open (see `listen`). `close()` has to drop that reference,
+        // or the event loop stays alive after the socket is gone and the
+        // process never exits - while the `close` callback has already fired,
+        // so it looks like close succeeded.
+        server.loop_ref.unreference();
         let _ = server.close_tx.send(());
         drop(server);
         emit_close_if_ready(&ctx, this.0.clone())?;
