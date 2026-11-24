@@ -596,6 +596,37 @@ fn format_raw_inner<'js>(
                     }
                 }
 
+                // `util.inspect.custom` in function form (Node's protocol) must run
+                // before the class prefix is written: Node's implementations return
+                // the complete rendering, prefix included.
+                if let Ok(inspector) = &obj.get::<_, Value>(options.custom_inspect_symbol.as_atom())
+                {
+                    if let Some(f) = inspector.as_function() {
+                        let custom_options = Object::new(obj.ctx().clone())?;
+                        let inspect_fn: Function = obj
+                            .ctx()
+                            .globals()
+                            .get::<_, Object>("__rasterInspectForCustom")
+                            .ok()
+                            .and_then(|o| o.get::<_, Function>("fn").ok())
+                            .unwrap_or_else(|| f.clone());
+                        // Node calls the custom inspect with `this` bound to the
+                        // value being inspected and `(depth, options, inspect)` as
+                        // arguments — the receiver is not an argument.
+                        let mut call = rquickjs::function::Args::new(obj.ctx().clone(), 3);
+                        call.this(obj.clone().into_value())?;
+                        call.push_arg(depth)?;
+                        call.push_arg(custom_options)?;
+                        call.push_arg(inspect_fn)?;
+                        if let Ok(inspected) = f.call_arg::<Value>(call) {
+                            if let Some(text) = inspected.as_string() {
+                                result.push_str(&text.to_string()?);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
                 let mut is_typed_array = false;
                 if let Some(class_name) = class_name {
                     result.push_str(&class_name);
@@ -621,29 +652,16 @@ fn format_raw_inner<'js>(
 
                 let is_array = is_typed_array || obj.is_array();
 
-                // `util.inspect.custom` may be either a function on the object
-                // (the usual Node protocol) or a getter that already returns the
-                // value to print (`Headers` uses the latter). Handle both:
-                // call a function, otherwise inspect whatever was returned.
+                // A getter form of `util.inspect.custom` (what `Headers` uses)
+                // returns a descriptor object; inspect its fields under the class
+                // prefix written above. Function-form was handled earlier.
                 if let Ok(inspector) = &obj.get::<_, Value>(options.custom_inspect_symbol.as_atom())
                 {
-                    let inspected = match inspector.as_function() {
-                        Some(f) => {
-                            let custom_options = Object::new(obj.ctx().clone())?;
-                            f.call::<_, Value>((obj.clone(), depth, custom_options))
-                                .ok()
-                        },
-                        None if !inspector.is_undefined() && !inspector.is_null() => {
-                            Some(inspector.clone())
-                        },
-                        None => None,
-                    };
-                    if let Some(inspected) = inspected {
-                        if let Some(text) = inspected.as_string() {
-                            result.push_str(&text.to_string()?);
-                            return Ok(());
-                        }
-                        if let Some(custom_obj) = inspected.as_object() {
+                    if inspector.as_function().is_none()
+                        && !inspector.is_undefined()
+                        && !inspector.is_null()
+                    {
+                        if let Some(custom_obj) = inspector.as_object() {
                             return write_object(
                                 result,
                                 custom_obj,

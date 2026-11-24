@@ -1400,6 +1400,20 @@ fn format_export<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<String> {
     Ok(formatted)
 }
 
+/// Install `util.inspect.custom` on the five built-ins that define one in Node.
+const INSPECT_CUSTOM_JS: &str = include_str!("inspect_custom.js");
+
+fn install_custom_inspect<'js>(
+    ctx: &Ctx<'js>,
+    symbol: Symbol<'js>,
+    inspect_fn: Value<'js>,
+) -> Result<()> {
+    let factory: Function<'js> = ctx.eval(INSPECT_CUSTOM_JS)?;
+    let installer: Function<'js> = factory.call((symbol,))?;
+    installer.call::<_, ()>((inspect_fn,))?;
+    Ok(())
+}
+
 pub fn define_text_encoding_constructors(ctx: &Ctx<'_>) -> Result<()> {
     let globals = ctx.globals();
     if globals.contains_key("TextEncoder")? && globals.contains_key("TextDecoder")? {
@@ -1485,7 +1499,11 @@ impl ModuleDef for UtilModule {
             inspect_value
                 .as_object()
                 .expect("inspect export")
-                .set("custom", inspect_symbol)?;
+                .set("custom", inspect_symbol.clone())?;
+
+            // Give the five built-ins that have `util.inspect.custom` in Node a
+            // function-form implementation. See `inspect_custom.js`.
+            install_custom_inspect(ctx, inspect_symbol, inspect_value)?;
 
             Ok(())
         })
