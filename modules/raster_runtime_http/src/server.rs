@@ -784,7 +784,7 @@ impl<'js> Server<'js> {
                 max_request_body_size: 16 * 1024 * 1024,
                 headers_timeout: 60_000,
                 request_timeout: 300_000,
-                keep_alive_timeout: 65_000,
+                keep_alive_timeout: 5_000,
                 loop_ref,
             },
         )?;
