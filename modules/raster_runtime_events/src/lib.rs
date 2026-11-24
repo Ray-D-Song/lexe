@@ -456,7 +456,46 @@ where
         event: Value<'js>,
         listener: Function<'js>,
     ) -> Result<Object<'js>> {
-        Self::add_event_listener(this, ctx, event, listener, false, true)
+        // Node's `once` is `this.on(event, _onceWrap(...))` — it routes through
+        // `on` rather than around it, so a subclass override still runs. That
+        // hook is load bearing: `readable-stream`'s `Readable.prototype.on`
+        // resumes the stream when a `data` listener appears, and registering
+        // straight into the native listener table skipped it. The visible
+        // symptom was `socket.once("data", …)` never firing at all, because the
+        // stream stayed paused — which in turn made `socket.end(body)` inside
+        // such a handler look like it dropped the data.
+        //
+        // Native `once` stays the source of truth for the self-removing entry
+        // (so `rawListeners` and re-entrant emits behave as before); we only
+        // replay the side effect a JS `on` override performs for a new listener.
+        let registered = Self::add_event_listener(
+            This(this.0.clone()),
+            ctx.clone(),
+            event.clone(),
+            listener,
+            false,
+            true,
+        )?;
+
+        let is_data = event
+            .as_string()
+            .and_then(|s| s.to_string().ok())
+            .map(|s| s == "data")
+            .unwrap_or(false);
+        if is_data {
+            // `Readable.prototype.on` starts flowing for a `data` listener by
+            // calling `resume()`; do the same without double-registering.
+            if let Some(resume) = this
+                .0
+                .get::<_, Value<'js>>("resume")
+                .ok()
+                .and_then(|v| v.into_function())
+            {
+                resume.call::<_, Value<'js>>((This(this.0.clone()),))?;
+            }
+        }
+
+        Ok(registered)
     }
 
     fn on(
