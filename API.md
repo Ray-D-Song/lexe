@@ -79,6 +79,9 @@
 
 ## buffer
 
+> [!NOTE]
+> `toString`, `from`, `write`, `alloc`, `byteLength` and `isEncoding` support the Node encodings utf8, utf16le (ucs2), latin1 (binary), ascii, base64, base64url and hex, matched case-insensitively without trimming.
+
 ### Static methods
 
 [alloc](https://nodejs.org/api/buffer.html#static-method-bufferallocsize-fill-encoding)

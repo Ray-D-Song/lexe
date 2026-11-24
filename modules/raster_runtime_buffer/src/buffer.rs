@@ -2,18 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{mem::MaybeUninit, slice};
 
-use raster_runtime_encoding::Encoder;
+use crate::codec::{
+    decoded_to_js, is_falsy, resolve_encoding, string_units, throw_coded, unknown_encoding,
+    validate_offset,
+};
+use raster_runtime_encoding::{Encoder, NodeEncoding};
 use raster_runtime_utils::{
     bytes::{get_array_bytes, get_start_end_indexes, ObjectBytes},
     error_messages::{ERROR_MSG_ARRAY_BUFFER_DETACHED, ERROR_MSG_NOT_ARRAY_BUFFER},
     iterable_enum,
-    option::Undefined,
     primordials::Primordial,
     result::ResultExt,
-    string::{get_coerced_string, get_string},
+    string::get_coerced_string,
 };
 use rquickjs::{
     atom::PredefinedAtom,
+    convert::Coerced,
     function::{Constructor, Opt},
     prelude::{Func, Rest, This},
     Array, ArrayBuffer, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Result, TypedArray,
@@ -51,6 +55,12 @@ impl<'js> Buffer {
     }
 
     pub fn to_string(&self, ctx: &Ctx<'js>, encoding: &str) -> Result<String> {
+        if let Some(node) = NodeEncoding::parse(encoding) {
+            return Ok(match node.decode_bytes(self.0.as_ref()) {
+                raster_runtime_encoding::DecodedText::Str(s) => s,
+                raster_runtime_encoding::DecodedText::Units(u) => String::from_utf16_lossy(&u),
+            });
+        }
         Encoder::from_str(encoding)
             .and_then(|enc| enc.encode_to_string(self.0.as_ref(), true))
             .or_throw(ctx)
@@ -73,30 +83,18 @@ impl<'js> Buffer {
             .construct((array_buffer, offset, length))
     }
 
-    fn from_encoding(
-        ctx: &Ctx<'js>,
-        mut bytes: Vec<u8>,
-        encoding: Option<String>,
-    ) -> Result<Value<'js>> {
-        if let Some(encoding) = encoding {
-            let encoder = Encoder::from_str(&encoding).or_throw(ctx)?;
-            bytes = encoder.decode(bytes).or_throw(ctx)?;
-        }
+    fn from_encoding(ctx: &Ctx<'js>, bytes: Vec<u8>) -> Result<Value<'js>> {
         Buffer(bytes).into_js(ctx)
     }
 
-    fn from_string_encoding(
-        ctx: &Ctx<'js>,
-        string: String,
-        encoding: Option<String>,
-    ) -> Result<Value<'js>> {
-        let bytes = if let Some(encoding) = encoding {
-            let encoder = Encoder::from_str(&encoding).or_throw(ctx)?;
-            encoder.decode_from_string(string).or_throw(ctx)?
-        } else {
-            string.into_bytes()
+    fn from_units(ctx: &Ctx<'js>, units: &[u16], encoding: Option<&str>) -> Result<Value<'js>> {
+        let node = match encoding {
+            Some(label) if !label.is_empty() => {
+                NodeEncoding::parse(label).ok_or_else(|| unknown_encoding(ctx, label))?
+            },
+            _ => NodeEncoding::Utf8,
         };
-        Buffer(bytes).into_js(ctx)
+        Buffer(node.encode_units(units)).into_js(ctx)
     }
 }
 
@@ -105,21 +103,32 @@ fn alloc<'js>(
     ctx: Ctx<'js>,
     length: usize,
     fill: Opt<Value<'js>>,
-    encoding: Opt<Undefined<String>>,
+    encoding: Opt<Value<'js>>,
 ) -> Result<Value<'js>> {
     if let Some(value) = fill.0 {
         if let Some(value) = value.as_string() {
-            let string = value.to_string()?;
-
-            if let Some(encoding) = encoding.0.and_then(|u| u.0) {
-                let encoder = Encoder::from_str(&encoding).or_throw(&ctx)?;
-                let bytes = encoder.decode_from_string(string).or_throw(&ctx)?;
-                return alloc_byte_ref(&ctx, &bytes, length);
+            let units = string_units(value)?;
+            if units.is_empty() {
+                return Buffer(vec![0; length]).into_js(&ctx);
             }
-
-            let byte_ref = string.as_bytes();
-
-            return alloc_byte_ref(&ctx, byte_ref, length);
+            let node = match encoding.0.as_ref() {
+                Some(e) if is_falsy(e) => NodeEncoding::Utf8,
+                Some(e) => resolve_encoding(&ctx, e)?,
+                None => NodeEncoding::Utf8,
+            };
+            let bytes = node.encode_units(&units);
+            if bytes.is_empty() {
+                return Err(throw_coded(
+                    &ctx,
+                    false,
+                    "ERR_INVALID_ARG_VALUE",
+                    format!(
+                        "The argument 'value' is invalid. Received '{}'",
+                        String::from_utf16_lossy(&units)
+                    ),
+                ));
+            }
+            return alloc_byte_ref(&ctx, &bytes, length);
         }
         if let Some(value) = value.as_int() {
             let bytes = vec![value as u8; length];
@@ -139,6 +148,9 @@ fn alloc<'js>(
 fn alloc_byte_ref<'js>(ctx: &Ctx<'js>, byte_ref: &[u8], length: usize) -> Result<Value<'js>> {
     let mut bytes = vec![0; length];
     let byte_ref_length = byte_ref.len();
+    if byte_ref_length == 0 {
+        return Buffer(bytes).into_js(ctx);
+    }
     for i in 0..length {
         bytes[i] = byte_ref[i % byte_ref_length];
     }
@@ -183,21 +195,19 @@ fn alloc_unsafe_slow(ctx: Ctx<'_>, size: usize) -> Result<Value<'_>> {
     Buffer(bytes).into_js(&ctx)
 }
 
-fn byte_length<'js>(
-    ctx: Ctx<'js>,
-    value: Value<'js>,
-    encoding: Opt<Undefined<String>>,
-) -> Result<usize> {
-    //slow path
-    if let Some(encoding) = encoding.0.and_then(|u| u.0) {
-        let encoder = Encoder::from_str(&encoding).or_throw(&ctx)?;
-        let a = ObjectBytes::from(&ctx, &value)?;
-        let bytes = a.as_bytes(&ctx)?;
-        return Ok(encoder.decode(bytes).or_throw(&ctx)?.len());
-    }
-    //fast path
-    if let Some(val) = value.as_string() {
-        return Ok(val.to_string()?.len());
+fn byte_length<'js>(ctx: Ctx<'js>, value: Value<'js>, encoding: Opt<Value<'js>>) -> Result<usize> {
+    if let Some(js) = value.as_string() {
+        let units = string_units(js)?;
+        let node = match encoding.0.as_ref().filter(|e| !is_falsy(e)) {
+            Some(e) => {
+                let label = e.as_string().map(|s| s.to_string()).unwrap_or_else(|| {
+                    Ok(e.get::<Coerced<String>>().map(|c| c.0).unwrap_or_default())
+                })?;
+                NodeEncoding::parse(&label).unwrap_or(NodeEncoding::Utf8)
+            },
+            None => NodeEncoding::Utf8,
+        };
+        return Ok(node.byte_length(&units));
     }
 
     if value.is_array() {
@@ -267,13 +277,12 @@ fn from<'js>(
         }
     }
 
-    // WARN: This is currently bugged for strings that can't be converted to utf8
-    // See https://github.com/quickjs-ng/quickjs/issues/992
-    if let Some(string) = get_string(&value)? {
-        return Buffer::from_string_encoding(&ctx, string, encoding)?.into_js(&ctx);
+    if let Some(js) = value.as_string() {
+        let units = string_units(js)?;
+        return Buffer::from_units(&ctx, &units, encoding.as_deref());
     }
     if let Some(bytes) = get_array_bytes(&value, offset, length.0)? {
-        return Buffer::from_encoding(&ctx, bytes, encoding)?.into_js(&ctx);
+        return Buffer::from_encoding(&ctx, bytes);
     }
 
     if let Some(obj) = value.as_object() {
@@ -289,7 +298,7 @@ fn from<'js>(
                 || encoding.is_some()
             {
                 let bytes = bytes.into();
-                return Buffer::from_encoding(&ctx, bytes, encoding)?.into_js(&ctx);
+                return Buffer::from_encoding(&ctx, bytes);
             } else {
                 let (array_buffer, _, source_offset) = ab_bytes.get_array_buffer()?.unwrap(); //we know it's an array buffer
                 return Buffer::from_array_buffer_offset_length(
@@ -303,7 +312,8 @@ fn from<'js>(
     }
 
     if let Some(string) = get_coerced_string(&value) {
-        return Buffer::from_string_encoding(&ctx, string, encoding)?.into_js(&ctx);
+        let units: Vec<u16> = string.encode_utf16().collect();
+        return Buffer::from_units(&ctx, &units, encoding.as_deref());
     }
 
     Err(Exception::throw_message(
@@ -324,7 +334,7 @@ fn is_buffer<'js>(ctx: Ctx<'js>, value: Value<'js>) -> Result<bool> {
 fn is_encoding(value: Value) -> Result<bool> {
     if let Some(js_string) = value.as_string() {
         let std_string = js_string.to_string()?;
-        return Ok(Encoder::from_str(std_string.as_str()).is_ok());
+        return Ok(NodeEncoding::parse(std_string.as_str()).is_some());
     }
 
     Ok(false)
@@ -602,114 +612,147 @@ fn subarray<'js>(
     Buffer::from_array_buffer_offset_length(&ctx, array_buffer, new_offset, length)
 }
 
-fn to_string(
-    this: This<Object<'_>>,
-    ctx: Ctx,
-    encoding: Opt<Undefined<String>>,
-    start: Opt<i32>,
-    end: Opt<i32>,
-) -> Result<String> {
-    let typed_array = TypedArray::<u8>::from_object(this.0)?;
-    let bytes: &[u8] = typed_array.as_ref();
-
-    let start = start
-        .0
-        .map(|s| s.max(0) as usize)
-        .unwrap_or(0)
-        .min(bytes.len());
-    let end = end
-        .0
-        .map(|e| e.max(0) as usize)
-        .unwrap_or(bytes.len())
-        .min(bytes.len());
-    let bytes = &bytes[start..end];
-
-    let encoding = encoding.0.and_then(|u| u.0);
-    let encoder = Encoder::from_optional_str(encoding.as_deref()).or_throw(&ctx)?;
-    encoder.encode_to_string(bytes, true).or_throw(&ctx)
-}
-
-fn write<'js>(
+fn to_string<'js>(
     this: This<Object<'js>>,
     ctx: Ctx<'js>,
-    string: String,
     args: Rest<Value<'js>>,
-) -> Result<usize> {
-    let (offset, length, encoding) = get_write_parameters(&args, this.0.len())?;
+) -> Result<Value<'js>> {
+    let len = TypedArray::<u8>::from_object(this.0.clone())?.len() as f64;
+
+    let number = |v: &Value<'js>| -> Result<f64> { Ok(v.get::<Coerced<f64>>()?.0) };
+    let undefined = Value::new_undefined(ctx.clone());
+    let encoding = args.0.first().unwrap_or(&undefined);
+    let start_arg = args.0.get(1).unwrap_or(&undefined);
+    let end_arg = args.0.get(2).unwrap_or(&undefined);
+
+    let (start, end) = if args.0.is_empty() {
+        (0.0, len)
+    } else {
+        let s = number(start_arg)?;
+        let start = if s <= 0.0 {
+            0.0
+        } else if s >= len {
+            return rquickjs::String::from_str(ctx.clone(), "").map(|s| s.into_value());
+        } else {
+            let t = s.trunc();
+            if t.is_nan() {
+                0.0
+            } else {
+                t
+            }
+        };
+        let end = if end_arg.is_undefined() {
+            len
+        } else {
+            let e = number(end_arg)?;
+            if e > len {
+                len
+            } else {
+                let t = e.trunc();
+                if t.is_nan() {
+                    0.0
+                } else {
+                    t
+                }
+            }
+        };
+        if end <= start {
+            return rquickjs::String::from_str(ctx.clone(), "").map(|s| s.into_value());
+        }
+        (start, end)
+    };
+
+    let node = if encoding.is_undefined() {
+        NodeEncoding::Utf8
+    } else {
+        resolve_encoding(&ctx, encoding)?
+    };
+
+    let typed_array = TypedArray::<u8>::from_object(this.0)?;
+    let bytes: &[u8] = typed_array.as_ref();
+    let end = (end as usize).min(bytes.len());
+    let start = (start as usize).min(end);
+    decoded_to_js(&ctx, node.decode_bytes(&bytes[start..end]))
+}
+
+fn write<'js>(this: This<Object<'js>>, ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<usize> {
+    let undefined = Value::new_undefined(ctx.clone());
+    let string = args.0.first().unwrap_or(&undefined);
+    let offset_arg = args.0.get(1).unwrap_or(&undefined);
+    let length_arg = args.0.get(2).unwrap_or(&undefined);
+    let encoding_arg = args.0.get(3).unwrap_or(&undefined);
 
     let target = ObjectBytes::from(&ctx, this.0.as_inner())?;
+    let Some((array_buffer, view_len, view_offset)) = target.get_array_buffer()? else {
+        return Ok(0);
+    };
+    let buf_len = view_len as f64;
 
-    let mut writable_length = 0;
+    let not_string = || {
+        throw_coded(
+            &ctx,
+            false,
+            "ERR_INVALID_ARG_TYPE",
+            "argument must be a string".to_string(),
+        )
+    };
 
-    if let Some((array_buffer, _, _)) = target.get_array_buffer()? {
-        let raw = array_buffer
-            .as_raw()
-            .ok_or(ERROR_MSG_ARRAY_BUFFER_DETACHED)
-            .or_throw(&ctx)?;
-
-        let target_bytes = unsafe { slice::from_raw_parts_mut(raw.ptr.as_ptr(), raw.len) };
-
-        let encoder = Encoder::from_str(&encoding).or_throw(&ctx)?;
-
-        if encoder.as_label() == "utf-8" {
-            let (source_slice, valid_length) = safe_byte_slice(&string, length.min(string.len()));
-            writable_length = valid_length;
-            target_bytes[offset..offset + writable_length].copy_from_slice(source_slice);
+    let offset;
+    let length;
+    let node;
+    if offset_arg.is_undefined() {
+        offset = 0.0;
+        length = buf_len;
+        node = NodeEncoding::Utf8;
+        if !string.is_string() {
+            return Err(not_string());
+        }
+    } else {
+        let mut encoding = encoding_arg.clone();
+        if length_arg.is_undefined() && offset_arg.is_string() {
+            encoding = offset_arg.clone();
+            length = buf_len;
+            offset = 0.0;
         } else {
-            let decode_bytes = encoder.decode_from_string(string).or_throw(&ctx)?;
-            writable_length = length.min(decode_bytes.len());
-            target_bytes[offset..offset + writable_length]
-                .copy_from_slice(&decode_bytes[..writable_length]);
+            offset = validate_offset(&ctx, offset_arg, "offset", 0.0, buf_len)?;
+            let remaining = buf_len - offset;
+            if length_arg.is_undefined() {
+                length = remaining;
+            } else if length_arg.is_string() {
+                encoding = length_arg.clone();
+                length = remaining;
+            } else {
+                let l = validate_offset(&ctx, length_arg, "length", 0.0, buf_len)?;
+                length = l.min(remaining);
+            }
+        }
+        node = if is_falsy(&encoding)
+            || encoding
+                .as_string()
+                .is_some_and(|s| s.to_string().is_ok_and(|s| s == "utf8"))
+        {
+            NodeEncoding::Utf8
+        } else {
+            resolve_encoding(&ctx, &encoding)?
         };
-    }
-
-    Ok(writable_length)
-}
-
-fn get_write_parameters(args: &Rest<Value<'_>>, len: usize) -> Result<(usize, usize, String)> {
-    let mut offset = 0;
-    let mut length = len;
-    let mut encoding = "utf8".to_owned();
-
-    if let Some(v1) = args.0.first() {
-        if let Some(s) = v1.as_string() {
-            return Ok((0, len, s.to_string()?));
-        }
-        offset = v1.as_int().unwrap_or(0) as usize;
-    }
-
-    if let Some(v2) = args.0.get(1) {
-        if let Some(s) = v2.as_string() {
-            return Ok((offset, len - offset, s.to_string()?));
-        }
-        length = v2
-            .as_int()
-            .map_or(len - offset, |l| (l as usize).min(len - offset));
-    }
-
-    if let Some(v3) = args.0.get(2) {
-        if let Some(s) = v3.as_string() {
-            encoding = s.to_string()?;
+        if !string.is_string() {
+            return Err(not_string());
         }
     }
 
-    Ok((offset, length, encoding))
-}
+    let units = string_units(string.as_string().unwrap())?;
+    let encoded = node.encode_units(&units);
+    let written = node.writable_len(&encoded, length as usize);
 
-fn safe_byte_slice(s: &str, end: usize) -> (&[u8], usize) {
-    let bytes = s.as_bytes();
+    let raw = array_buffer
+        .as_raw()
+        .ok_or(ERROR_MSG_ARRAY_BUFFER_DETACHED)
+        .or_throw(&ctx)?;
+    let target_bytes = unsafe { slice::from_raw_parts_mut(raw.ptr.as_ptr(), raw.len) };
+    let start = view_offset + offset as usize;
+    target_bytes[start..start + written].copy_from_slice(&encoded[..written]);
 
-    if bytes.len() <= end {
-        return (bytes, bytes.len());
-    }
-
-    let valid_end = s
-        .char_indices()
-        .map(|(i, _)| i)
-        .rfind(|&i| i <= end)
-        .unwrap_or(0);
-
-    (&bytes[0..valid_end], valid_end)
+    Ok(written)
 }
 
 #[derive(Clone, Copy)]

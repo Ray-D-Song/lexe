@@ -20,6 +20,7 @@ pub use self::file::*;
 mod array_buffer_view;
 mod blob;
 mod buffer;
+mod codec;
 mod file;
 
 pub struct BufferModule;

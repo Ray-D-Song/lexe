@@ -326,11 +326,9 @@ describe("Buffer.from", () => {
     expect(buffer4.toString("utf16le")).toEqual(input4);
   });
 
-  it("should fail to create a buffer from a portion of a string in utf16le encoding", () => {
+  it("should keep a lone surrogate when creating a buffer in utf16le encoding", () => {
     const input4 = "🌍🌎".slice(1);
-    expect(() => Buffer.from(input4, "utf16le")).toThrow(
-      "Conversion from string failed"
-    );
+    expect(Buffer.from(input4, "utf16le").toString("hex")).toEqual("0ddf3cd80edf");
   });
 
   it("should create a buffer from a portion of an array with offset and length", () => {

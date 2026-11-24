@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg_attr(rust_nightly, feature(iter_array_chunks))]
 mod incremental;
+mod node;
 
 pub use incremental::IncrementalDecoder;
+pub use node::{DecodedText, NodeEncoding};
 
 use std::borrow::Cow;
 
