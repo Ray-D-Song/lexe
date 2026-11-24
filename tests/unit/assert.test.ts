@@ -25,12 +25,25 @@ describe(`ok`, () => {
   });
 
   it("Should be returned exception", () => {
-    const errMsg =
-      "AssertionError: The expression was evaluated to a falsy value";
-    expect(() => ok(false)).toThrow(errMsg);
-    expect(() => ok(0)).toThrow(errMsg);
-    expect(() => ok("")).toThrow(errMsg);
-    expect(() => ok(null)).toThrow(errMsg);
+    // Node 24 behaviour: the thrown value is an AssertionError whose `name` is
+    // "AssertionError" and whose `code` is ERR_ASSERTION. The message body is
+    // "The expression evaluated to a falsy value: ..." with no "AssertionError: "
+    // prefix (Raster's old private format added one). Assert the semantics and a
+    // stable message fragment rather than the exact wording, so future phrasing
+    // tweaks do not fail this test.
+    for (const falsy of [false, 0, "", null] as any[]) {
+      let caught: any;
+      try {
+        ok(falsy);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(Error);
+      expect(caught.name).toBe("AssertionError");
+      expect(caught.code).toBe("ERR_ASSERTION");
+      expect(caught.message).toContain("evaluated to a falsy value");
+      expect(caught.message.startsWith("AssertionError: ")).toBe(false);
+    }
   });
 
   it("should be returned as original error message", () => {
