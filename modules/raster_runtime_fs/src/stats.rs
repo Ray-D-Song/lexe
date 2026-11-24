@@ -176,51 +176,66 @@ impl Stats {
     }
 
     #[qjs(get, enumerable)]
-    pub fn atime_ms(&self, ctx: Ctx<'_>) -> Result<u64> {
+    pub fn atime_ms(&self, ctx: Ctx<'_>) -> Result<f64> {
         #[cfg(unix)]
         {
             _ = ctx;
-            Ok(self.metadata.atime_nsec() as u64 / 1e6 as u64)
+            Ok(ms_from_parts(
+                self.metadata.atime(),
+                self.metadata.atime_nsec(),
+            ))
         }
         #[cfg(not(unix))]
         {
-            self.metadata.accessed().map(to_msec).or_throw(&ctx)
+            self.metadata.accessed().map(to_msec_f64).or_throw(&ctx)
         }
     }
 
     #[qjs(get, enumerable)]
-    pub fn mtime_ms(&self, ctx: Ctx<'_>) -> Result<u64> {
+    pub fn mtime_ms(&self, ctx: Ctx<'_>) -> Result<f64> {
         #[cfg(unix)]
         {
             _ = ctx;
-            Ok(self.metadata.mtime_nsec() as u64 / 1e6 as u64)
+            Ok(ms_from_parts(
+                self.metadata.mtime(),
+                self.metadata.mtime_nsec(),
+            ))
         }
         #[cfg(not(unix))]
         {
-            self.metadata.modified().map(to_msec).or_throw(&ctx)
+            self.metadata.modified().map(to_msec_f64).or_throw(&ctx)
         }
     }
 
     #[qjs(get, enumerable)]
-    pub fn ctime_ms(&self, ctx: Ctx<'_>) -> Result<u64> {
+    pub fn ctime_ms(&self, ctx: Ctx<'_>) -> Result<f64> {
         #[cfg(unix)]
         {
             _ = ctx;
-            Ok(self.metadata.ctime_nsec() as u64 / 1e6 as u64)
+            Ok(ms_from_parts(
+                self.metadata.ctime(),
+                self.metadata.ctime_nsec(),
+            ))
         }
         #[cfg(not(unix))]
         {
-            self.metadata.modified().map(to_msec).or_throw(&ctx)
+            self.metadata.modified().map(to_msec_f64).or_throw(&ctx)
         }
     }
 
+    /// Milliseconds since the epoch, with sub-millisecond precision, matching
+    /// Node. When the filesystem cannot report a creation time, Node returns
+    /// epoch zero rather than falling back to `ctime` — measured on `/proc` and
+    /// `/sys` files, where `birthtimeMs` is `0` and `birthtime.getTime()` is `0`.
     #[qjs(get, enumerable)]
-    pub fn birthtime_ms(&self, ctx: Ctx<'_>) -> Result<u64> {
-        self.metadata
-            .created()
-            .or_throw(&ctx)
-            .and_then(|c| c.elapsed().or_throw(&ctx))
-            .map(|d| d.as_millis() as u64)
+    pub fn birthtime_ms(&self, ctx: Ctx<'_>) -> Result<f64> {
+        match self.metadata.created() {
+            Ok(created) => Ok(to_msec_f64(created)),
+            Err(_) => {
+                let _ = &ctx;
+                Ok(0.0)
+            },
+        }
     }
 
     #[qjs(get, enumerable)]
@@ -238,7 +253,11 @@ impl Stats {
         #[cfg(unix)]
         {
             _ = ctx;
-            Ok(SystemTime::UNIX_EPOCH + Duration::from_nanos(self.metadata.ctime_nsec() as u64))
+            // `ctime_nsec` is the sub-second part only; the seconds come from
+            // `ctime()`. Using the nanoseconds alone gave a time in 1970.
+            Ok(SystemTime::UNIX_EPOCH
+                + Duration::from_secs(self.metadata.ctime() as u64)
+                + Duration::from_nanos(self.metadata.ctime_nsec() as u64))
         }
         #[cfg(not(unix))]
         {
@@ -246,9 +265,12 @@ impl Stats {
         }
     }
 
+    /// The creation time, or the epoch when the filesystem does not report one
+    /// — same fallback as [`Self::birthtime_ms`], and the same value Node gives.
     #[qjs(get, enumerable)]
     pub fn birthtime(&self, ctx: Ctx<'_>) -> Result<SystemTime> {
-        self.metadata.created().or_throw(&ctx)
+        let _ = &ctx;
+        Ok(self.metadata.created().unwrap_or(SystemTime::UNIX_EPOCH))
     }
 
     pub fn is_file(&self) -> bool {
@@ -462,10 +484,23 @@ pub fn lstat_callback<'js>(ctx: Ctx<'js>, path: String, args: Rest<Value<'js>>) 
     Ok(())
 }
 
-#[allow(dead_code)]
-#[inline(always)]
-fn to_msec(time: SystemTime) -> u64 {
-    time.duration_since(SystemTime::UNIX_EPOCH)
-        .map(|t| t.as_millis() as u64)
-        .unwrap_or_else(|err| err.duration().as_millis() as u64)
+/// Milliseconds since the epoch as a float, keeping sub-millisecond precision.
+///
+/// Node's `*Ms` fields are floats, not integers: setting a timestamp of
+/// `1234567890.123456` gives `1234567890123.456`, while the matching `Date`'s
+/// `getTime()` truncates to `1234567890123`. The two are deliberately not equal.
+fn to_msec_f64(time: SystemTime) -> f64 {
+    match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => d.as_secs_f64() * 1000.0,
+        Err(e) => -(e.duration().as_secs_f64() * 1000.0),
+    }
+}
+
+/// Build epoch milliseconds from a `time_t` seconds part and a nanoseconds part.
+///
+/// `MetadataExt::*_nsec` gives only the sub-second remainder, so the seconds must
+/// be added separately — dropping them put every timestamp in 1970.
+#[cfg(unix)]
+fn ms_from_parts(secs: i64, nsec: i64) -> f64 {
+    secs as f64 * 1000.0 + nsec as f64 / 1_000_000.0
 }
