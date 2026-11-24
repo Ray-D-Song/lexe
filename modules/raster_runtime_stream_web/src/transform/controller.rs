@@ -1,7 +1,7 @@
 use rquickjs::{
     class::{OwnedBorrowMut, Trace},
     prelude::{Opt, This},
-    Class, Ctx, Exception, Function, JsLifetime, Object, Promise, Result, Value,
+    Class, Ctx, Error, Exception, Function, JsLifetime, Object, Promise, Result, Value,
 };
 
 use crate::{
@@ -246,6 +246,18 @@ pub(super) fn transform_stream_default_controller_perform_transform<'js>(
         TransformAlgorithm::Function { f, transformer } => {
             let result: Result<Value> =
                 f.call((This(transformer), chunk, controller_class.clone()));
+            // Node wraps this call in try/catch and runs `transformStreamError`
+            // before rethrowing, so a throwing transform errors both sides.
+            // Returning the error as a rejected promise alone leaves the
+            // readable side in "readable" and `reader.read()` pending forever.
+            if let Err(Error::Exception) = result {
+                let error = ctx.catch();
+                transform_stream_error(ctx.clone(), stream_class, error.clone())?;
+                return Ok(crate::utils::promise::promise_rejected_with(
+                    &promise_primordials,
+                    error,
+                )?);
+            }
             promise_resolved_with(&ctx, &promise_primordials, result)?
         },
     };
