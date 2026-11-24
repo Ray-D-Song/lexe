@@ -3249,6 +3249,7 @@ dependencies = [
 name = "raster_runtime_url"
 version = "0.1.0"
 dependencies = [
+ "idna",
  "raster_runtime_test",
  "raster_runtime_utils",
  "rquickjs",

@@ -12,7 +12,7 @@ use rquickjs::{
     function::{Constructor, Func},
     module::{Declarations, Exports, ModuleDef},
     prelude::Opt,
-    Class, Coerced, Ctx, Exception, Result, Value,
+    Class, Coerced, Ctx, Exception, Function, Object, Result, Value,
 };
 use url::{quirks, Url};
 
@@ -21,6 +21,14 @@ use self::url_search_params::URLSearchParams;
 
 pub fn domain_to_unicode(domain: &str) -> String {
     quirks::domain_to_unicode(domain)
+}
+
+/// IDNA ToASCII without WHATWG host parsing, like Node's `internalBinding('encoding_binding').toASCII`:
+/// numeric labels stay as they are and failures yield an empty string.
+fn idna_to_ascii(domain: &str) -> String {
+    idna::domain_to_ascii_cow(domain.as_bytes(), idna::AsciiDenyList::EMPTY)
+        .map(|s| s.into_owned())
+        .unwrap_or_default()
 }
 
 pub fn domain_to_ascii(domain: &str) -> String {
@@ -191,6 +199,15 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
+const LEGACY_EXPORTS: [&str; 6] = [
+    "Url",
+    "parse",
+    "resolve",
+    "resolveObject",
+    "format",
+    "fileURLToPathBuffer",
+];
+
 pub struct UrlModule;
 
 impl ModuleDef for UrlModule {
@@ -202,7 +219,9 @@ impl ModuleDef for UrlModule {
         declare.declare("domainToASCII")?;
         declare.declare("fileURLToPath")?;
         declare.declare("pathToFileURL")?;
-        declare.declare("format")?;
+        for name in LEGACY_EXPORTS {
+            declare.declare(name)?;
+        }
         declare.declare("default")?;
         Ok(())
     }
@@ -227,12 +246,34 @@ impl ModuleDef for UrlModule {
             )?;
             default.set("fileURLToPath", Func::from(file_url_to_path))?;
             default.set("pathToFileURL", Func::from(path_to_file_url))?;
-            default.set("format", Func::from(url_format))?;
+            install_legacy(ctx, default)?;
             Ok(())
         })?;
 
         Ok(())
     }
+}
+
+fn install_legacy<'js>(ctx: &Ctx<'js>, target: &Object<'js>) -> Result<()> {
+    let natives = Object::new(ctx.clone())?;
+    natives.set(
+        "domainToASCII",
+        Func::from(|domain: String| domain_to_ascii(&domain)),
+    )?;
+    natives.set(
+        "domainToUnicode",
+        Func::from(|domain: String| domain_to_unicode(&domain)),
+    )?;
+    natives.set(
+        "toASCII",
+        Func::from(|domain: String| idna_to_ascii(&domain)),
+    )?;
+    let install: Function = ctx.eval(include_str!("legacy.js"))?;
+    let legacy: Object = install.call((natives,))?;
+    for name in LEGACY_EXPORTS {
+        target.set(name, legacy.get::<_, Value>(name)?)?;
+    }
+    Ok(())
 }
 
 impl From<UrlModule> for ModuleInfo<UrlModule> {

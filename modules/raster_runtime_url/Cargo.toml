@@ -12,6 +12,7 @@ name = "raster_runtime_url"
 path = "src/lib.rs"
 
 [dependencies]
+idna = { version = "1", features = ["std", "compiled_data"], default-features = false }
 raster_runtime_utils = { version = "0.1.0", path = "../../libs/raster_runtime_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
 url = { version = "2", features = ["std"], default-features = false }

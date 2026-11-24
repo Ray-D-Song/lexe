@@ -7,8 +7,23 @@
  * ```
  */
 declare module "url" {
+  type ParsedUrlQuery = { [key: string]: string | string[] | undefined };
   // Output of `url.parse`
-  interface Url {
+  interface UrlObject {
+    auth?: string | null | undefined;
+    hash?: string | null | undefined;
+    host?: string | null | undefined;
+    hostname?: string | null | undefined;
+    href?: string | null | undefined;
+    pathname?: string | null | undefined;
+    protocol?: string | null | undefined;
+    search?: string | null | undefined;
+    slashes?: boolean | null | undefined;
+    port?: string | number | null | undefined;
+    query?: string | null | ParsedUrlQuery | undefined;
+  }
+  /** The legacy URL object returned by `url.parse()`; `instanceof Url` holds. */
+  class Url {
     auth: string | null;
     hash: string | null;
     host: string | null;
@@ -20,7 +35,12 @@ declare module "url" {
     search: string | null;
     slashes: boolean | null;
     port: string | null;
-    query: string | null;
+    query: string | null | ParsedUrlQuery;
+    parse(urlString: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): this;
+    format(): string;
+    resolve(relative: string): string;
+    resolveObject(relative: string | Url): Url;
+    parseHost(): void;
   }
   interface URLFormatOptions {
     /**
@@ -63,11 +83,14 @@ declare module "url" {
    * @param [slashesDenoteHost=false] If `true`, the first token after the literal string `//` and preceding the next `/` will be interpreted as the `host`. For instance, given `//foo/bar`, the
    * result would be `{host: 'foo', pathname: '/bar'}` rather than `{pathname: '//foo/bar'}`.
    */
-  function parse(
-    urlString: string,
-    parseQueryString: boolean,
-    slashesDenoteHost?: boolean
-  ): Url;
+  function parse(urlString: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): Url;
+  /**
+   * Resolves `to` against `from` the way a browser resolves an anchor `href`, with Node's legacy deviations.
+   * @legacy Use the WHATWG URL API instead.
+   */
+  function resolve(from: string, to: string): string;
+  /** Like `url.resolve()` but returns a `Url`; returns `to` unchanged when `from` is empty. */
+  function resolveObject(from: string, to: string | Url): Url;
   /**
    * The `url.format()` method returns a formatted URL string derived from `urlObject`.
    *
@@ -131,6 +154,7 @@ declare module "url" {
    * @param urlObject A URL object (as returned by `url.parse()` or constructed otherwise). If a string, it is converted to an object by passing it to `url.parse()`.
    */
   function format(urlObject: URL, options?: URLFormatOptions): string;
+  function format(urlObject: UrlObject | string): string;
   /**
    * Returns the [Punycode](https://tools.ietf.org/html/rfc5891#section-4.4) ASCII serialization of the `domain`. If `domain` is an
    * invalid domain, the empty string is returned.
@@ -192,6 +216,12 @@ declare module "url" {
    * @return The fully-resolved platform-specific Node.js file path.
    */
   function fileURLToPath(url: string | URL): string;
+  /**
+   * Like `fileURLToPath()` but returns the percent-decoded bytes as a `Buffer`, without UTF-8
+   * decoding and without rejecting encoded `/`.
+   * @param options `windows: true` forces Windows path rules; the default follows the platform.
+   */
+  function fileURLToPathBuffer(url: string | URL, options?: { windows?: boolean | undefined }): Buffer;
   /**
    * This function ensures that `path` is resolved absolutely, and that the URL
    * control characters are correctly encoded when converting into a File URL.

@@ -832,6 +832,14 @@ Startup probe only — Raster does **not** implement the Node Inspector debuggin
 
 [urlToHttpOptions](https://nodejs.org/api/url.html#urlurltohttpoptionsurl)
 
+### Legacy API
+
+[Url](https://nodejs.org/api/url.html#legacy-urlobject), [parse](https://nodejs.org/api/url.html#urlparseurlstring-parsequerystring-slashesdenotehost), [resolve](https://nodejs.org/api/url.html#urlresolvefrom-to), `resolveObject` and `format` with a string or a legacy object are ported from `lib/url.js` and match Node 24 output. The first call to `parse` prints the `DEP0169` warning, as Node does, unless it is called from inside `node_modules`.
+
+[fileURLToPathBuffer](https://nodejs.org/api/url.html#urlfileurltopathbufferurl-options)
+
+`fileURLToPath` still ignores its `options`, does not throw for malformed percent-encoding and does not set `code` on its errors; `fileURLToPathBuffer` does not have those gaps. `URLPattern` is not implemented.
+
 ## util
 
 > [!IMPORTANT]
