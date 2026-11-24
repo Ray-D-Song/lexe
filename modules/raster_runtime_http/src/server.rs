@@ -740,6 +740,10 @@ pub struct Server<'js> {
     headers_timeout: u64,
     request_timeout: u64,
     keep_alive_timeout: u64,
+    /// Node's `server.timeout`: per-socket inactivity limit in ms, `0` disables.
+    /// Stored as the raw JS number so `setTimeout` keeps values like `-5` or
+    /// `"50"` untouched, matching Node, which does not coerce or clamp.
+    timeout: Value<'js>,
     loop_ref: Arc<EventLoopRef>,
 }
 unsafe impl<'js> JsLifetime<'js> for Server<'js> {
@@ -785,6 +789,7 @@ impl<'js> Server<'js> {
                 headers_timeout: 60_000,
                 request_timeout: 300_000,
                 keep_alive_timeout: 5_000,
+                timeout: 0i32.into_js(&ctx)?,
                 loop_ref,
             },
         )?;
@@ -838,6 +843,31 @@ impl<'js> Server<'js> {
     #[qjs(set, rename = "keepAliveTimeout")]
     pub fn set_keep_alive_timeout(&mut self, value: u64) {
         self.keep_alive_timeout = value;
+    }
+    #[qjs(get, enumerable)]
+    pub fn timeout(&self) -> Value<'js> {
+        self.timeout.clone()
+    }
+    #[qjs(set, rename = "timeout")]
+    pub fn set_timeout_value(&mut self, value: Value<'js>) {
+        self.timeout = value;
+    }
+    /// `server.setTimeout(msecs[, callback])` returns the server itself, like
+    /// Node. A callback is registered as a `'timeout'` listener rather than
+    /// stored separately, so `listenerCount("timeout")` reflects it.
+    pub fn set_timeout(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        msecs: Opt<Value<'js>>,
+        callback: Opt<Function<'js>>,
+    ) -> Result<Class<'js, Self>> {
+        if let Some(value) = msecs.0 {
+            this.borrow_mut().timeout = value;
+        }
+        if let Some(callback) = callback.0 {
+            Self::add_event_listener_str(this.0.clone(), &ctx, "timeout", callback, false, false)?;
+        }
+        Ok(this.0)
     }
     pub fn get_connections(&self, cb: Opt<Function<'js>>) -> Result<()> {
         if let Some(cb) = cb.0 {
@@ -1084,6 +1114,16 @@ where
     let headers_timeout = server_ref.headers_timeout;
     let request_timeout = server_ref.request_timeout;
     let keep_alive_timeout = server_ref.keep_alive_timeout;
+    // `server.timeout` is kept as the raw JS value; only a positive finite
+    // number arms the per-connection inactivity timer.
+    let server_timeout = server_ref.timeout.as_number().unwrap_or(0.0);
+    let server_timeout = if server_timeout > 0.0 {
+        Duration::from_millis(server_timeout as u64)
+    } else {
+        Duration::ZERO
+    };
+    let timeout_listener = server_ref.emitter.has_listener_str("timeout");
+    let timeout_server = server.clone();
     drop(server_ref);
     count.fetch_add(1, Ordering::Relaxed);
     let request_ctx = ctx.clone();
@@ -1146,40 +1186,61 @@ where
         tokio::pin!(connection);
         let idle_timeout = tokio::time::sleep(Duration::from_secs(86_400));
         tokio::pin!(idle_timeout);
+        // `server.timeout` inactivity timer: armed at connect and re-armed on
+        // every request, mirroring Node's per-socket `setTimeout`.
+        let server_timeout_armed = !server_timeout.is_zero();
+        let server_idle = tokio::time::sleep(server_timeout.max(Duration::from_millis(1)));
+        tokio::pin!(server_idle);
+        // The `'timeout'` event carries the socket, as Node does.
+        let request_socket_for_timeout = socket.clone();
         let mut keep_alive_armed = false;
+        // One select for both timers, so `server.timeout` applies whether or
+        // not keep-alive handling is enabled.
         let result = loop {
-            if keep_alive_timeout == 0 {
-                tokio::select! {
-                    _ = connection_close.recv() => break None,
-                    _ = idle_close.recv() => {
-                        if active_requests.load(Ordering::Relaxed) == 0 {
-                            break None;
-                        }
-                    },
-                    result = &mut connection => break Some(result),
-                }
-            } else {
-                tokio::select! {
-                    _ = connection_close.recv() => break None,
-                    _ = idle_close.recv() => {
-                        if active_requests.load(Ordering::Relaxed) == 0 {
-                            break None;
-                        }
-                    },
-                    _ = &mut idle_timeout, if keep_alive_armed => {
-                        if active_requests.load(Ordering::Relaxed) == 0 {
-                            break None;
-                        }
+            tokio::select! {
+                _ = connection_close.recv() => break None,
+                _ = idle_close.recv() => {
+                    if active_requests.load(Ordering::Relaxed) == 0 {
+                        break None;
+                    }
+                },
+                _ = &mut idle_timeout, if keep_alive_armed && keep_alive_timeout > 0 => {
+                    if active_requests.load(Ordering::Relaxed) == 0 {
+                        break None;
+                    }
+                    idle_timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(keep_alive_timeout));
+                },
+                _ = activity_rx.recv(), if keep_alive_timeout > 0 || server_timeout_armed => {
+                    keep_alive_armed = true;
+                    if keep_alive_timeout > 0 {
                         idle_timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(keep_alive_timeout));
-                    },
-                    _ = activity_rx.recv() => {
-                        keep_alive_armed = true;
-                        idle_timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(keep_alive_timeout));
-                    },
-                    result = &mut connection => break Some(result),
-                }
+                    }
+                    if server_timeout_armed {
+                        server_idle.as_mut().reset(tokio::time::Instant::now() + server_timeout);
+                    }
+                },
+                _ = &mut server_idle, if server_timeout_armed => {
+                    // Node re-emits the socket timeout on the server. With a
+                    // listener installed the user owns the socket; without one
+                    // Node destroys it.
+                    let _ = Server::emit_str(
+                        timeout_server.clone(),
+                        &ctx,
+                        "timeout",
+                        vec![request_socket_for_timeout.clone()],
+                        false,
+                    );
+                    if !timeout_listener {
+                        break None;
+                    }
+                    server_idle.as_mut().reset(tokio::time::Instant::now() + server_timeout);
+                },
+                result = &mut connection => break Some(result),
             }
         };
+        // `server_idle` only exists to bound idle time; it must not outlive the
+        // connection loop, or the task would stay alive with nothing to do.
+        drop(server_idle);
         if let Some(Err(error)) = result {
             let error_message = error.to_string();
             let error_value = Object::new(ctx.clone())?.into_value();

@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -246,6 +246,20 @@ pub struct ClientRequest<'js> {
     body: RefCell<Vec<u8>>,
     #[qjs(skip_trace)]
     ended: RefCell<bool>,
+    /// Node exposes these as plain booleans on the request. `aborted` is only
+    /// set by `abort()`; `destroy()` leaves it `false`.
+    #[qjs(skip_trace)]
+    aborted: Cell<bool>,
+    #[qjs(skip_trace)]
+    destroyed: Cell<bool>,
+    /// Set once the response finished normally, so a late `destroy()` is a
+    /// no-op like Node's.
+    #[qjs(skip_trace)]
+    completed: Cell<bool>,
+    /// Fires when `destroy()`/`abort()` runs, so an in-flight hyper request is
+    /// actually dropped instead of holding the loop reference until it settles.
+    #[qjs(skip_trace)]
+    cancel: Arc<tokio::sync::Notify>,
     #[qjs(skip_trace)]
     loop_ref: Arc<EventLoopRef>,
 }
@@ -278,6 +292,10 @@ impl<'js> ClientRequest<'js> {
                 headers: parsed.headers,
                 body: RefCell::new(Vec::new()),
                 ended: RefCell::new(false),
+                aborted: Cell::new(false),
+                destroyed: Cell::new(false),
+                completed: Cell::new(false),
+                cancel: Arc::new(tokio::sync::Notify::new()),
                 loop_ref,
             },
         )?;
@@ -307,17 +325,24 @@ impl<'js> ClientRequest<'js> {
             )
         };
 
+        let cancel = this.borrow().cancel.clone();
         event_loop::adjust_http_inflight(rt_key, 1);
-        let result = Self::dispatch_inner(
-            ctx.clone(),
-            this.clone(),
-            client,
-            uri,
-            method,
-            headers,
-            body,
-        )
-        .await;
+        // `destroy()`/`abort()` must actually drop the in-flight request:
+        // otherwise the response future keeps the runtime referenced and the
+        // process never drains.
+        let result = tokio::select! {
+            biased;
+            _ = cancel.notified() => Ok(()),
+            result = Self::dispatch_inner(
+                ctx.clone(),
+                this.clone(),
+                client,
+                uri,
+                method,
+                headers,
+                body,
+            ) => result,
+        };
         event_loop::adjust_http_inflight(rt_key, -1);
         result
     }
@@ -411,6 +436,12 @@ impl<'js> ClientRequest<'js> {
         }
         message.borrow_mut().mark_complete();
         IncomingMessage::emit_str(message, &ctx, "end", vec![], false)?;
+        // Node marks the request destroyed once the response is fully read.
+        {
+            let borrow = this.borrow();
+            borrow.completed.set(true);
+            borrow.destroyed.set(true);
+        }
         ClientRequest::emit_str(this.clone(), &ctx, "close", vec![], false)?;
         this.borrow().loop_ref.unreference();
         Ok(())
@@ -452,12 +483,81 @@ impl<'js> ClientRequest<'js> {
         Ok(())
     }
 
-    pub fn abort(this: This<Class<'js, Self>>) -> Class<'js, Self> {
-        *this.borrow().ended.borrow_mut() = true;
-        this.0
+    /// Node's `destroy()`: stop the request, emit `error` (ECONNRESET unless a
+    /// cause was given) then `close`, and mark the request destroyed. It does
+    /// not set `aborted` - only `abort()` does.
+    pub fn destroy(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        error: Opt<Value<'js>>,
+    ) -> Result<Class<'js, Self>> {
+        teardown(this.0.clone(), &ctx, error.0)?;
+        Ok(this.0)
+    }
+
+    /// Node deprecated `abort()` but kept it: it is `destroy()` plus an `abort`
+    /// event emitted before `error`, and it sets `aborted`.
+    pub fn abort(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Class<'js, Self>> {
+        this.borrow().aborted.set(true);
+        Self::emit_str(this.clone(), &ctx, "abort", vec![], false)?;
+        teardown(this.0.clone(), &ctx, None)?;
+        Ok(this.0)
+    }
+
+    #[qjs(get, enumerable)]
+    pub fn aborted(&self) -> bool {
+        self.aborted.get()
+    }
+
+    #[qjs(get, enumerable)]
+    pub fn destroyed(&self) -> bool {
+        self.destroyed.get()
     }
 }
 
+/// Shared tail of `destroy()` / `abort()`: idempotent, no-op once the response
+/// has completed (Node leaves a finished request alone).
+fn teardown<'js>(
+    this: Class<'js, ClientRequest<'js>>,
+    ctx: &Ctx<'js>,
+    error: Option<Value<'js>>,
+) -> Result<()> {
+    let (already_destroyed, completed) = {
+        let borrow = this.borrow();
+        (borrow.destroyed.get(), borrow.completed.get())
+    };
+    if already_destroyed {
+        return Ok(());
+    }
+    {
+        let borrow = this.borrow();
+        borrow.destroyed.set(true);
+        *borrow.ended.borrow_mut() = true;
+    }
+
+    if completed {
+        // The response already finished; Node has emitted `close` by now.
+        return Ok(());
+    }
+
+    let error_value = match error {
+        Some(value) => value,
+        None => {
+            let err = Exception::from_message(ctx.clone(), "socket hang up")?;
+            let value = err.into_value();
+            if let Some(object) = value.as_object() {
+                let code = rquickjs::String::from_str(ctx.clone(), "ECONNRESET")?;
+                object.set("code", code)?;
+            }
+            value
+        },
+    };
+    ClientRequest::emit_str(this.clone(), ctx, "error", vec![error_value], false)?;
+    ClientRequest::emit_str(this.clone(), ctx, "close", vec![], false)?;
+    this.borrow().cancel.notify_waiters();
+    this.borrow().loop_ref.unreference();
+    Ok(())
+}
 pub(crate) fn chunk_to_bytes<'js>(ctx: &Ctx<'js>, chunk: Value<'js>) -> Result<Vec<u8>> {
     if let Some(s) = chunk.as_string() {
         return Ok(s.to_string()?.into_bytes());
