@@ -965,8 +965,6 @@ pub fn poll_timers(
         true
     });
 
-    let has_items = !state.timers.is_empty();
-
     if had_items {
         if lowest - now < MIN_SLEEP {
             lowest = now + MIN_SLEEP;
@@ -1048,17 +1046,20 @@ pub fn poll_timers(
     }
     call_vec.clear();
 
+    // Whether the loop may exit must be decided from the state that exists
+    // *after* every callback above has run. A callback - or the microtasks its
+    // promise continuation drains - can register a new timer, so any snapshot
+    // taken before this point describes a list that no longer exists. Deciding
+    // from such a snapshot drops a freshly registered timer and stops the loop
+    // with work still queued, which strands the process when the drain is
+    // parked and cannot restart the loop.
     let rt_key = event_loop::rt_key_from_ptr(rt as *mut std::ffi::c_void);
     let mut rt_timers = RT_TIMER_STATE.lock().unwrap();
     let state = get_timer_state(&mut rt_timers, rt);
 
-    if !should_keep_timer_loop(state, rt_key) {
-        state.running = false;
-        drop(rt_timers);
-        return Ok(false);
-    }
+    let has_items = !state.timers.is_empty();
 
-    if !has_items {
+    if !should_keep_timer_loop(state, rt_key) || !has_items {
         state.running = false;
         drop(rt_timers);
         return Ok(false);
