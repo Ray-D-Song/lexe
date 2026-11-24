@@ -11,7 +11,7 @@
 | node:child_process | ✔︎ | ✔︎⚠️ | Missing `spawnSync`; limited `stdio` (`pipe`/`ignore`/`inherit`) and `spawn` options; `unref()` detaches wait handle ([details](#nodechild_process)) |
 | node:cluster | ✔︎ | ✘ | Not implemented |
 | node:console | ✔︎ | ✔︎⚠️ | Missing `dirxml`, `profile`/`profileEnd`, `timeStamp`; `Console` options and most `dir` inspect options are ignored ([details](#nodeconsole)) |
-| node:constants | ✔︎ | ✔︎⚠️ | Exports `F_OK`/`R_OK`/`W_OK`/`X_OK` only; missing `errno`, `SIG*`, `O_*`, `S_*`, and crypto constants ([details](#nodeconstants)) |
+| node:constants | ✔︎ | ✔︎ | — |
 | node:crypto | ✔︎ | ✔︎⚠️ | Missing classic Cipher/Decipher, top-level Sign/Verify, `KeyObject`, X509, DH/ECDH, and KDF sync/async exports; depends on WebCrypto `subtle` ([details](#nodecrypto)) |
 | node:dgram | ✔︎ | ✔︎⚠️ | Unconnected UDP only; missing `connect`/`disconnect`, multicast/TTL/broadcast/buffer controls, and `Symbol.asyncDispose` ([details](#nodedgram)) |
 | node:diagnostics_channel | ✔︎ | ✔︎⚠️ | Missing `TracingChannel` and `AsyncLocalStorage` store binding (`bindStore`/`runStores`); no built-in runtime channels ([details](#nodediagnostics_channel)) |
@@ -134,11 +134,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Missing `console.dirxml()`, `console.profile()`, `console.profileEnd()`, and `console.timeStamp()`.
 - `new Console(options)` does not honor `colorMode`, `inspectOptions`, or `groupIndentation`.
 - `console.dir(obj, options)` only honors `options.colors`; other `util.inspect` options (`depth`, `showHidden`, `maxArrayLength`, etc.) are ignored.
-
-#### `node:constants`
-
-- Exports only `F_OK`, `R_OK`, `W_OK`, and `X_OK`.
-- Missing OS `errno` constants, `SIG*` signal constants, file open/mode constants (`O_*`, `S_*`), and crypto/OpenSSL constants.
 
 #### `node:crypto`
 

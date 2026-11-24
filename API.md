@@ -716,15 +716,14 @@ Process is an EventEmitter. Explicit `process.exit(code)` emits `"exit"` synchro
 
 ## constants
 
-Legacy Node.js `constants` module. Flat object with fs access-mode bits only:
+Legacy Node.js `constants` module. Exports a frozen flat object (and matching ESM
+named exports) combining:
 
-- `F_OK` (0)
-- `R_OK` (4)
-- `W_OK` (2)
-- `X_OK` (1)
-
-Values match `fs.constants`. The export object is frozen. Open flags (`O_*`),
-errno, crypto, and signal constants are not exposed.
+- `fs.constants`: file access modes (`F_OK`, `R_OK`, `W_OK`, `X_OK`), open flags (`O_*`),
+  file type and permission masks (`S_*`), `COPYFILE_*`, `UV_FS_*`, and `UV_DIRENT_*`
+- Flattened `os.constants`: `errno`, `signals`, `dlopen`, and `priority`
+- OpenSSL / crypto constants: `OPENSSL_VERSION_NUMBER`, `SSL_OP_*`, `ENGINE_METHOD_*`,
+  `DH_*`, `RSA_*`, `TLS1*_VERSION`, `POINT_CONVERSION_*`, and `defaultCoreCipherList`
 
 ## v8
 

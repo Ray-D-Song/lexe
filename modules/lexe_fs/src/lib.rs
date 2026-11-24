@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 mod access;
 mod chmod;
+mod constants;
 mod errors;
 pub mod fd_async;
 pub mod fd_sync;
@@ -995,17 +996,7 @@ async fn copy_dir_recursive<'js>(
     Ok(())
 }
 
-/// Create the shared fs access-mode constants object (`F_OK`/`R_OK`/`W_OK`/`X_OK`).
-///
-/// Single source of truth for both `fs.constants` and the legacy `constants` module.
-pub fn create_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    let constants = Object::new(ctx.clone())?;
-    constants.set("F_OK", CONSTANT_F_OK)?;
-    constants.set("R_OK", CONSTANT_R_OK)?;
-    constants.set("W_OK", CONSTANT_W_OK)?;
-    constants.set("X_OK", CONSTANT_X_OK)?;
-    Ok(constants)
-}
+pub use self::constants::{create_constants, visit_fs_constants};
 
 fn export_constants<'js>(ctx: &Ctx<'js>, exports: &Object<'js>) -> Result<()> {
     exports.set("constants", create_constants(ctx)?)?;

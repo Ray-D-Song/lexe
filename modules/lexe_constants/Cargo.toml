@@ -12,6 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 lexe_fs = { version = "0.1.1", path = "../lexe_fs" }
+lexe_os = { version = "0.1.1", path = "../lexe_os" }
 lexe_utils = { version = "0.1.1", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
 

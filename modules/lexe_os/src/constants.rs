@@ -5,6 +5,23 @@ fn new_null_proto_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
     create.call(())
 }
 
+fn build_null_proto_object<'js>(
+    ctx: &Ctx<'js>,
+    visit: impl FnOnce(&mut dyn FnMut(&'static str, i32) -> Result<()>) -> Result<()>,
+) -> Result<Object<'js>> {
+    let obj = new_null_proto_object(ctx)?;
+    visit(&mut |name, val| obj.set(name, val))?;
+    Ok(obj)
+}
+
+/// Visit every flat OS constant (dlopen, errno, signals, priority) in Node's `constants` module.
+pub fn visit_flat_os_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
+    visit_dlopen_constants(&mut f)?;
+    visit_errno_constants(&mut f)?;
+    visit_signal_constants(&mut f)?;
+    visit_priority_constants(&mut f)
+}
+
 /// Build `os.constants` matching Node.js (`signals`, `errno`, `dlopen`, `priority`,
 /// and `UV_UDP_REUSEADDR`).
 pub fn create_os_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
@@ -17,37 +34,50 @@ pub fn create_os_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
     Ok(constants)
 }
 
+pub fn visit_priority_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
+    for (name, val) in [
+        ("PRIORITY_LOW", 19i32),
+        ("PRIORITY_BELOW_NORMAL", 10),
+        ("PRIORITY_NORMAL", 0),
+        ("PRIORITY_ABOVE_NORMAL", -7),
+        ("PRIORITY_HIGH", -14),
+        ("PRIORITY_HIGHEST", -20),
+    ] {
+        f(name, val)?;
+    }
+    Ok(())
+}
+
 pub fn create_priority_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    let obj = new_null_proto_object(ctx)?;
-    obj.set("PRIORITY_LOW", 19i32)?;
-    obj.set("PRIORITY_BELOW_NORMAL", 10i32)?;
-    obj.set("PRIORITY_NORMAL", 0i32)?;
-    obj.set("PRIORITY_ABOVE_NORMAL", -7i32)?;
-    obj.set("PRIORITY_HIGH", -14i32)?;
-    obj.set("PRIORITY_HIGHEST", -20i32)?;
-    Ok(obj)
+    build_null_proto_object(ctx, |f| visit_priority_constants(f))
 }
 
 #[cfg(unix)]
-pub fn create_dlopen_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    let obj = new_null_proto_object(ctx)?;
-    obj.set("RTLD_LAZY", libc::RTLD_LAZY)?;
-    obj.set("RTLD_NOW", libc::RTLD_NOW)?;
-    obj.set("RTLD_GLOBAL", libc::RTLD_GLOBAL)?;
-    obj.set("RTLD_LOCAL", libc::RTLD_LOCAL)?;
+pub fn visit_dlopen_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
+    for (name, val) in [
+        ("RTLD_LAZY", libc::RTLD_LAZY),
+        ("RTLD_NOW", libc::RTLD_NOW),
+        ("RTLD_GLOBAL", libc::RTLD_GLOBAL),
+        ("RTLD_LOCAL", libc::RTLD_LOCAL),
+    ] {
+        f(name, val)?;
+    }
     #[cfg(target_os = "linux")]
-    obj.set("RTLD_DEEPBIND", libc::RTLD_DEEPBIND)?;
-    Ok(obj)
+    f("RTLD_DEEPBIND", libc::RTLD_DEEPBIND)?;
+    Ok(())
 }
 
 #[cfg(not(unix))]
+pub fn visit_dlopen_constants(_f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
+    Ok(())
+}
+
 pub fn create_dlopen_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    new_null_proto_object(ctx)
+    build_null_proto_object(ctx, |f| visit_dlopen_constants(f))
 }
 
 #[cfg(unix)]
-pub fn create_signal_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    let obj = new_null_proto_object(ctx)?;
+pub fn visit_signal_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
     for (name, val) in [
         ("SIGHUP", libc::SIGHUP),
         ("SIGINT", libc::SIGINT),
@@ -80,7 +110,7 @@ pub fn create_signal_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         ("SIGIO", libc::SIGIO),
         ("SIGSYS", libc::SIGSYS),
     ] {
-        obj.set(name, val)?;
+        f(name, val)?;
     }
 
     #[cfg(any(
@@ -90,7 +120,7 @@ pub fn create_signal_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         target_os = "openbsd",
         target_os = "dragonfly"
     ))]
-    obj.set("SIGINFO", libc::SIGINFO)?;
+    f("SIGINFO", libc::SIGINFO)?;
 
     #[cfg(target_os = "linux")]
     for (name, val) in [
@@ -98,15 +128,14 @@ pub fn create_signal_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         ("SIGPWR", libc::SIGPWR),
         ("SIGPOLL", libc::SIGPOLL),
     ] {
-        obj.set(name, val)?;
+        f(name, val)?;
     }
 
-    Ok(obj)
+    Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn create_signal_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    let obj = new_null_proto_object(ctx)?;
+pub fn visit_signal_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
     for (name, val) in [
         ("SIGINT", 2i32),
         ("SIGILL", 4),
@@ -118,14 +147,17 @@ pub fn create_signal_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         ("SIGBREAK", 21),
         ("SIGABRT", 22),
     ] {
-        obj.set(name, val)?;
+        f(name, val)?;
     }
-    Ok(obj)
+    Ok(())
+}
+
+pub fn create_signal_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
+    build_null_proto_object(ctx, |f| visit_signal_constants(f))
 }
 
 #[cfg(unix)]
-pub fn create_errno_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    let obj = new_null_proto_object(ctx)?;
+pub fn visit_errno_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
     for (name, val) in [
         ("E2BIG", libc::E2BIG),
         ("EACCES", libc::EACCES),
@@ -207,14 +239,13 @@ pub fn create_errno_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         ("EWOULDBLOCK", libc::EWOULDBLOCK),
         ("EXDEV", libc::EXDEV),
     ] {
-        obj.set(name, val)?;
+        f(name, val)?;
     }
-    Ok(obj)
+    Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn create_errno_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
-    let obj = new_null_proto_object(ctx)?;
+pub fn visit_errno_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>) -> Result<()> {
     for (name, val) in [
         ("E2BIG", 7i32),
         ("EACCES", 13),
@@ -326,7 +357,11 @@ pub fn create_errno_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         ("WSAEHOSTUNREACH", 10065),
         ("WSAENOTEMPTY", 10066),
     ] {
-        obj.set(name, val)?;
+        f(name, val)?;
     }
-    Ok(obj)
+    Ok(())
+}
+
+pub fn create_errno_constants<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
+    build_null_proto_object(ctx, |f| visit_errno_constants(f))
 }
