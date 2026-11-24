@@ -387,6 +387,12 @@ pub struct ServerResponse<'js> {
     body_tx: Option<mpsc::UnboundedSender<ResponseFrame>>,
     trailers: Option<HeaderMap>,
     continue_requested: bool,
+    /// True when the request was a HEAD: Node never sends a body for it, and
+    /// must not advertise a `Content-Length` for one either.
+    is_head: bool,
+    /// True once `write()` has queued body bytes. After that the framing is
+    /// already committed (chunked), so `end()` must not add `Content-Length`.
+    body_started: bool,
 }
 unsafe impl<'js> JsLifetime<'js> for ServerResponse<'js> {
     type Changed<'to> = ServerResponse<'to>;
@@ -550,6 +556,7 @@ impl<'js> ServerResponse<'js> {
     pub fn write(this: This<Class<'js, Self>>, ctx: Ctx<'js>, value: Value<'js>) -> Result<bool> {
         let bytes = Bytes::from(ObjectBytes::from(&ctx, &value)?.into_bytes(&ctx)?);
         let mut res = this.borrow_mut();
+        res.body_started = true;
         res.start();
         Ok(res
             .body_tx
@@ -562,9 +569,34 @@ impl<'js> ServerResponse<'js> {
             if res.writable_finished || res.destroyed {
                 return Ok(());
             }
+            let bytes = match value.0 {
+                Some(value) => Some(Bytes::from(
+                    ObjectBytes::from(&ctx, &value)?.into_bytes(&ctx)?,
+                )),
+                None => None,
+            };
+            // Node decides the framing here: if headers are still unsent, nothing
+            // has been written yet, and the body length is known, it emits an
+            // exact `Content-Length` instead of degrading to chunked. A response
+            // that already started streaming (`write()` called) or one that must
+            // not carry a body (HEAD, 204, 304) keeps the existing behaviour.
+            let bodyless_status =
+                matches!(res.status_code, 204 | 304) || (100..200).contains(&res.status_code);
+            if !res.headers_sent
+                && !res.body_started
+                && !res.is_head
+                && !bodyless_status
+                && !res
+                    .headers
+                    .keys()
+                    .any(|k| k.eq_ignore_ascii_case("content-length"))
+            {
+                let len = bytes.as_ref().map(|b| b.len()).unwrap_or(0);
+                res.headers
+                    .insert("content-length".to_string(), vec![len.to_string()]);
+            }
             res.start();
-            if let Some(value) = value.0 {
-                let bytes = Bytes::from(ObjectBytes::from(&ctx, &value)?.into_bytes(&ctx)?);
+            if let Some(bytes) = bytes {
                 if let Some(tx) = &res.body_tx {
                     let _ = tx.send(ResponseFrame::Data(bytes));
                 }
@@ -1384,6 +1416,8 @@ async fn dispatch<'js>(
             body_tx: None,
             trailers: None,
             continue_requested: false,
+            is_head: parts.method == hyper::Method::HEAD,
+            body_started: false,
         },
     ) {
         Ok(v) => v,
