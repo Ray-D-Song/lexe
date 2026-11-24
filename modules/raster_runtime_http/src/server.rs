@@ -880,11 +880,41 @@ impl<'js> Server<'js> {
         ctx: Ctx<'js>,
         callback: Opt<Function<'js>>,
     ) -> Result<Class<'js, Self>> {
-        if let Some(callback) = callback.0 {
-            Self::add_event_listener_str(this.0.clone(), &ctx, "close", callback, true, true)?;
+        // Node reports `close()` on a server that never started by invoking the
+        // callback with ERR_SERVER_NOT_RUNNING, not by throwing.
+        if !this.borrow().listening.load(Ordering::Relaxed)
+            && !this.borrow().closing.load(Ordering::Relaxed)
+        {
+            // The constructor takes the loop reference, so a server that was
+            // created but never listened still has to release it or the
+            // process never drains.
+            this.borrow().loop_ref.unreference();
+            let error = not_running_error(&ctx)?;
+            if let Some(callback) = callback.0 {
+                callback.call::<_, ()>((error,))?;
+            }
+            return Ok(this.0);
         }
-        let server = this.borrow();
-        server.closing.store(true, Ordering::Relaxed);
+
+        let callback = callback.0;
+        if let Some(callback) = callback.as_ref() {
+            Self::add_event_listener_str(
+                this.0.clone(),
+                &ctx,
+                "close",
+                callback.clone(),
+                true,
+                true,
+            )?;
+        }
+
+        let mut server = this.borrow_mut();
+        // Node flips `listening` synchronously inside `close()`, so code that
+        // polls it right after the call sees false even though the accept loop
+        // has not unwound yet.
+        server.listening.store(false, Ordering::Relaxed);
+        server.address = Value::new_null(ctx.clone());
+        let already_closing = server.closing.swap(true, Ordering::Relaxed);
         // The listening socket keeps the runtime referenced for as long as the
         // server is open (see `listen`). `close()` has to drop that reference,
         // or the event loop stays alive after the socket is gone and the
@@ -892,7 +922,24 @@ impl<'js> Server<'js> {
         // so it looks like close succeeded.
         server.loop_ref.unreference();
         let _ = server.close_tx.send(());
+        // Idle keep-alive connections would otherwise sit in their select until
+        // the keep-alive timer expires, holding `connections` above zero and
+        // keeping the close callback from ever running. Connections with a
+        // request in flight are left alone: Node waits for those and only lets
+        // the connection go once the client ends it.
+        let _ = server.idle_close_tx.send(());
         drop(server);
+
+        if already_closing {
+            // A second `close()` while one is pending reports NOT_RUNNING to its
+            // own callback but must not emit a second `close` event.
+            if let Some(callback) = callback.as_ref() {
+                let error = not_running_error(&ctx)?;
+                callback.call::<_, ()>((error,))?;
+            }
+            return Ok(this.0);
+        }
+
         emit_close_if_ready(&ctx, this.0.clone())?;
         Ok(this.0)
     }
@@ -992,6 +1039,16 @@ impl<'js> Server<'js> {
         });
         Ok(return_server)
     }
+}
+
+fn not_running_error<'js>(ctx: &Ctx<'js>) -> Result<Value<'js>> {
+    let error = Exception::from_message(ctx.clone(), "Server is not running.")?;
+    let value = error.into_value();
+    if let Some(object) = value.as_object() {
+        let code = rquickjs::String::from_str(ctx.clone(), "ERR_SERVER_NOT_RUNNING")?;
+        object.set("code", code)?;
+    }
+    Ok(value)
 }
 
 fn emit_close_if_ready<'js>(ctx: &Ctx<'js>, server: Class<'js, Server<'js>>) -> Result<()> {
@@ -1189,7 +1246,13 @@ where
         // `server.timeout` inactivity timer: armed at connect and re-armed on
         // every request, mirroring Node's per-socket `setTimeout`.
         let server_timeout_armed = !server_timeout.is_zero();
-        let server_idle = tokio::time::sleep(server_timeout.max(Duration::from_millis(1)));
+        // Start far in the future: with no `server.timeout` configured this
+        // future must never be ready, or it would wake the select every tick.
+        let server_idle = tokio::time::sleep(if server_timeout_armed {
+            server_timeout
+        } else {
+            Duration::from_secs(86_400)
+        });
         tokio::pin!(server_idle);
         // The `'timeout'` event carries the socket, as Node does.
         let request_socket_for_timeout = socket.clone();
@@ -1210,7 +1273,10 @@ where
                     }
                     idle_timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(keep_alive_timeout));
                 },
-                _ = activity_rx.recv(), if keep_alive_timeout > 0 || server_timeout_armed => {
+                _ = activity_rx.recv() => {
+                    // A request finished. Node keeps the connection open while
+                    // the server closes and waits for the client to end it, so
+                    // keep-alive still applies here.
                     keep_alive_armed = true;
                     if keep_alive_timeout > 0 {
                         idle_timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(keep_alive_timeout));
