@@ -367,17 +367,55 @@ Lightweight and fast hash classes for lexe.
 
 ### Class: dgram.Socket
 
+[addMembership](https://nodejs.org/api/dgram.html#socketaddmembershipmulticastaddress-multicastinterface)
+
+[addSourceSpecificMembership](https://nodejs.org/api/dgram.html#socketaddsourcespecificmembershipsourceaddress-groupaddress-multicastinterface)
+
 [address](https://nodejs.org/api/dgram.html#socketaddress)
 
 [bind](https://nodejs.org/api/dgram.html#socketbindport-address-callback)
 
 [close](https://nodejs.org/api/dgram.html#socketclosecallback)
 
+[connect](https://nodejs.org/api/dgram.html#socketconnectport-address-callback)
+
+[disconnect](https://nodejs.org/api/dgram.html#socketdisconnect)
+
+[dropMembership](https://nodejs.org/api/dgram.html#socketdropmembershipmulticastaddress-multicastinterface)
+
+[dropSourceSpecificMembership](https://nodejs.org/api/dgram.html#socketdropsourcespecificmembershipsourceaddress-groupaddress-multicastinterface)
+
+[getRecvBufferSize](https://nodejs.org/api/dgram.html#socketgetrecvbuffersize)
+
+[getSendBufferSize](https://nodejs.org/api/dgram.html#socketgetsendbuffersize)
+
+[getSendQueueCount](https://nodejs.org/api/dgram.html#socketgetsendqueuecount)
+
+[getSendQueueSize](https://nodejs.org/api/dgram.html#socketgetsendqueuesize)
+
 [ref](https://nodejs.org/api/dgram.html#socketref)
+
+[remoteAddress](https://nodejs.org/api/dgram.html#socketremoteaddress)
 
 [send](https://nodejs.org/api/dgram.html#socketsendmsg-offset-length-port-address-callback)
 
+[setBroadcast](https://nodejs.org/api/dgram.html#socketsetbroadcastflag)
+
+[setMulticastInterface](https://nodejs.org/api/dgram.html#socketsetmulticastinterfacemulticastinterface)
+
+[setMulticastLoopback](https://nodejs.org/api/dgram.html#socketsetmulticastloopbackflag)
+
+[setMulticastTTL](https://nodejs.org/api/dgram.html#socketsetmulticastttlttl)
+
+[setRecvBufferSize](https://nodejs.org/api/dgram.html#socketsetrecvbuffersizesize)
+
+[setSendBufferSize](https://nodejs.org/api/dgram.html#socketsetsendbuffersizesize)
+
+[setTTL](https://nodejs.org/api/dgram.html#socketsetttlttl)
+
 [unref](https://nodejs.org/api/dgram.html#socketunref)
+
+[\[Symbol.asyncDispose\]](https://nodejs.org/api/dgram.html#socketsymbolasyncdispose)
 
 ## dns
 

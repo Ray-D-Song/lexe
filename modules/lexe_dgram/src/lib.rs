@@ -4,11 +4,12 @@ use lexe_events::Emitter;
 use lexe_utils::module::{export_default, ModuleInfo};
 use rquickjs::{
     module::{Declarations, Exports, ModuleDef},
-    prelude::Func,
-    Class, Ctx, Result, Value,
+    prelude::{Func, Opt},
+    Class, Ctx, Function, Result, Value,
 };
 
 mod socket;
+mod sockopts;
 
 use self::socket::Socket;
 
@@ -27,11 +28,30 @@ impl ModuleDef for DgramModule {
             Class::<Socket>::define(default)?;
             Socket::add_event_emitter_prototype(ctx)?;
 
+            if let Some(proto) = Class::<Socket>::prototype(ctx)? {
+                let install_dispose: Function = ctx.eval(
+                    r#"(function (proto) {
+  proto[Symbol.asyncDispose] = function () {
+    return new Promise((resolve) => {
+      try {
+        this.close(resolve);
+      } catch (_) {
+        resolve();
+      }
+    });
+  };
+})"#,
+                )?;
+                install_dispose.call::<_, ()>((proto,))?;
+            }
+
             default.set(
                 "createSocket",
-                Func::from(|ctx: Ctx<'js>, type_or_options: Value<'js>| {
-                    Socket::ctor(ctx, type_or_options)
-                }),
+                Func::from(
+                    |ctx: Ctx<'js>, type_or_options: Value<'js>, callback: Opt<Function<'js>>| {
+                        Socket::ctor(ctx, type_or_options, callback)
+                    },
+                ),
             )?;
 
             Ok(())

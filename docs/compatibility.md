@@ -13,7 +13,7 @@
 | node:console | ✔︎ | ✔︎⚠️ | Missing `dirxml`, `profile`/`profileEnd`, `timeStamp`; `Console` options and most `dir` inspect options are ignored ([details](#nodeconsole)) |
 | node:constants | ✔︎ | ✔︎ | — |
 | node:crypto | ✔︎ | ✔︎⚠️ | Missing classic Cipher/Decipher, top-level Sign/Verify, `KeyObject`, X509, DH/ECDH, and KDF sync/async exports; depends on WebCrypto `subtle` ([details](#nodecrypto)) |
-| node:dgram | ✔︎ | ✔︎⚠️ | Unconnected UDP only; missing `connect`/`disconnect`, multicast/TTL/broadcast/buffer controls, and `Symbol.asyncDispose` ([details](#nodedgram)) |
+| node:dgram | ✔︎ | ✔︎ | — |
 | node:diagnostics_channel | ✔︎ | ✔︎⚠️ | Missing `TracingChannel` and `AsyncLocalStorage` store binding (`bindStore`/`runStores`); no built-in runtime channels ([details](#nodediagnostics_channel)) |
 | node:dns | ✔︎ | ✔︎⚠️ | Exports `lookup` and `promises.lookup` only; missing `Resolver`, `resolve*`, `reverse`, `lookupService`, and server/order settings ([details](#nodedns-and-nodednspromises)) |
 | node:dns/promises | ✔︎ | ✔︎⚠️ | Exports `lookup` only; missing `Resolver` and `resolve*`/`reverse`/`lookupService` ([details](#nodedns-and-nodednspromises)) |
@@ -139,11 +139,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Missing classic Node.js crypto APIs: `createCipheriv`/`createDecipheriv`, `createSign`/`createVerify`, top-level `sign`/`verify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `hkdf`/`hkdfSync`, `timingSafeEqual`, `KeyObject`, `createPrivateKey`/`createPublicKey`/`createSecretKey`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `X509Certificate`, `DiffieHellman`/`createDiffieHellman`, `ECDH`/`createECDH`, `getCiphers`, `getHashes`, and `crypto.hash()`. (Symmetric/asymmetric cipher, signature, and KDF operations are primarily provided through WebCrypto `subtle`.)
 - `publicEncrypt` / RSA-OAEP rejects `MD5`, and algorithm availability depends on the compiled TLS/crypto backend (for example, `graviola` lacks most operations).
-
-#### `node:dgram`
-
-- Only supports unconnected UDP sockets (`createSocket`, `bind`, `send`, `close`, `address`, `ref`/`unref`).
-- Missing connected UDP (`connect()`, `disconnect()`, `remoteAddress()`), broadcast/multicast/TTL controls (`setBroadcast`, `setTTL`, `setMulticastTTL`, `setMulticastLoopback`, `setMulticastInterface`, `addMembership`, `dropMembership`, `addSourceSpecificMembership`, `dropSourceSpecificMembership`), socket buffer controls (`getRecvBufferSize`/`setRecvBufferSize`, `getSendBufferSize`/`setSendBufferSize`), and `Symbol.asyncDispose`.
 
 #### `node:diagnostics_channel`
 

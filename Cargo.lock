@@ -1943,6 +1943,7 @@ name = "lexe_constants"
 version = "0.1.1"
 dependencies = [
  "lexe_fs",
+ "lexe_os",
  "lexe_test",
  "lexe_utils",
  "rquickjs",
@@ -2056,9 +2057,12 @@ dependencies = [
  "lexe_events",
  "lexe_test",
  "lexe_utils",
+ "libc",
  "rquickjs",
+ "socket2",
  "tokio",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

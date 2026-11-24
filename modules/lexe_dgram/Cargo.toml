@@ -18,11 +18,21 @@ lexe_context = { version = "0.1.1", path = "../../libs/lexe_context" }
 lexe_events = { version = "0.1.1", path = "../lexe_events" }
 lexe_utils = { version = "0.1.1", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
+socket2 = { version = "0.6", default-features = false }
 tokio = { version = "1", features = [
     "net",
     "macros",
 ], default-features = false }
 tracing = { version = "0.1", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+] }
 
 [dev-dependencies]
 lexe_test = { path = "../../libs/lexe_test" }
