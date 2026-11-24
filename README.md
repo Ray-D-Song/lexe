@@ -9,6 +9,11 @@ It's built in Rust, utilizing QuickJS as the JavaScript engine, ensuring efficie
 ## Install
 
 ```shell
+# npm (CLI + TypeScript types)
+npm install -g lexe
+npx lexe --version
+npm install -D lexe-types
+
 # Linux
 curl -fsSL https://raw.githubusercontent.com/Ray-D-Song/lexe/main/install-linux.sh | sh
 

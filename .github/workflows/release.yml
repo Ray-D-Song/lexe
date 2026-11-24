@@ -151,3 +151,80 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${prerelease[@]}"
           fi
           gh release upload "$RELEASE_TAG" lexe-* SHA256SUMS --clobber
+
+  publish-npm:
+    needs: [publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.3.0
+          registry-url: "https://registry.npmjs.org"
+      - name: Stage and validate npm packages
+        shell: bash
+        run: |
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          (cd npm && npm pkg set version="$RELEASE_VERSION")
+          (cd types && npm pkg set version="$RELEASE_VERSION")
+          cp LICENSE npm/LICENSE
+          cp LICENSE types/LICENSE
+          node npm/scripts/pack-check.mjs
+          node --test npm/test/npm-cli.test.mjs
+          node types/scripts/pack-check.mjs
+      - name: Smoke test npm CLI against GitHub Release
+        shell: bash
+        run: |
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          expected="lexe v${RELEASE_VERSION} (linux, x64)"
+          smoke_cache=$(mktemp -d)
+          trap 'rm -rf "$smoke_cache"' EXIT
+          actual=""
+          for attempt in 1 2 3; do
+            if actual=$(LEXE_CACHE_DIR="$smoke_cache" node npm/bin/lexe.mjs --version); then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "Live npm CLI smoke test failed after 3 attempts" >&2
+              exit 1
+            fi
+            sleep 3
+          done
+          test "$actual" = "$expected" || {
+            echo "Expected '$expected', got '$actual'" >&2
+            exit 1
+          }
+          rm -rf npm/vendor
+      - name: Publish lexe and lexe-types to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is required to publish to npm" >&2
+            exit 1
+          fi
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          tag_args=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            pre="${RELEASE_VERSION#*-}"
+            dist_tag="${pre%%.*}"
+            if [[ -z "$dist_tag" || ! "$dist_tag" =~ ^[a-zA-Z0-9-]+$ ]]; then
+              dist_tag="next"
+            fi
+            tag_args=(--tag "$dist_tag")
+          fi
+          for dir in npm types; do
+            pkg=$(node -p "require('./$dir/package.json').name")
+            published=$(npm view "${pkg}@${RELEASE_VERSION}" version 2>/dev/null || true)
+            if [ "$published" = "$RELEASE_VERSION" ]; then
+              echo "Skipping ${pkg}@${RELEASE_VERSION} (already published)"
+              continue
+            fi
+            (cd "$dir" && npm publish --provenance --access public "${tag_args[@]}")
+          done

@@ -12,9 +12,13 @@ Set to `1` to enable user-facing `createHook()` lifecycle callbacks (init/before
 
 Directory containing prebuilt target-platform `lexe` runtime binaries used by `lexe compile --executable -p ...` before consulting the local download cache.
 
+### `LEXE_BINARY_PATH=path`
+
+Path to a local `lexe` runtime binary used by the `lexe` npm CLI wrapper instead of downloading a release binary.
+
 ### `LEXE_CACHE_DIR=dir`
 
-Override the cache directory where `lexe compile --executable` stores auto-downloaded release binaries (defaults to `$XDG_CACHE_HOME/lexe`, `~/.cache/lexe`, or `%LOCALAPPDATA%\lexe\cache`).
+Override the cache directory where `lexe compile --executable` and the `lexe` npm CLI wrapper store auto-downloaded release binaries (defaults to `$XDG_CACHE_HOME/lexe`, `~/.cache/lexe`, or `%LOCALAPPDATA%\lexe\cache`).
 
 ### `LEXE_EXTRA_CA_CERTS=file`
 
@@ -74,7 +78,11 @@ We provide a concrete example in `example/register-hooks`. Hook files can also b
 
 ### `LEXE_RELEASE_BASE_URL=url`
 
-Override the base URL used by `lexe compile --executable` to fetch `SHA256SUMS` and prebuilt runtime assets (defaults to `https://github.com/Ray-D-Song/lexe/releases/download/v<VERSION>`).
+Override the base URL used by `lexe compile --executable` and the `lexe` npm CLI wrapper to fetch `SHA256SUMS` and prebuilt runtime assets (defaults to `https://github.com/Ray-D-Song/lexe/releases/download/v<VERSION>`).
+
+### `LEXE_SKIP_DOWNLOAD=value`
+
+Set to `1` or `true` to skip pre-downloading the native `lexe` binary during `npm install` (the npm wrapper will download it on first run if needed).
 
 ### `LEXE_TLS_VERSION=value`
 

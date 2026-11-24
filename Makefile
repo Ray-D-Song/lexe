@@ -221,6 +221,12 @@ types-pack-check:
 types-smoke:
 	cd types && yarn smoke
 
+npm-pack-check:
+	cd npm && node ./scripts/pack-check.mjs
+
+npm-test:
+	cd npm && node --test ./test/npm-cli.test.mjs
+
 init-wpt:
 	cd wpt && \
 	git sparse-checkout init --no-cone && \
@@ -323,4 +329,4 @@ wasm: js
 	WASI_SDK=$(WASI_SDK) \
 	$(CARGO) build -p lexe --target $(WASM_TARGET) --no-default-features --features wasi
 
-.PHONY: libs check check-all check-crates libs-arm64 libs-x64 toolchain clean-js release-linux release-darwin release-windows stdlib stdlib-x64 stdlib-arm64 test test-ci run js update-dict run-release build release clean flame deploy compat compat-next compat-vite-plus compat-better-sqlite3 compat-mysql compat-node-postgres compat-napi compat-v8 compat-v8-hello compat-napi-hello compat-node-sqlite compat-node-sqlite-asan check-v8-abi types-pack-check types-smoke wasm
+.PHONY: libs check check-all check-crates libs-arm64 libs-x64 toolchain clean-js release-linux release-darwin release-windows stdlib stdlib-x64 stdlib-arm64 test test-ci run js update-dict run-release build release clean flame deploy compat compat-next compat-vite-plus compat-better-sqlite3 compat-mysql compat-node-postgres compat-napi compat-v8 compat-v8-hello compat-napi-hello compat-node-sqlite compat-node-sqlite-asan check-v8-abi types-pack-check types-smoke npm-pack-check npm-test wasm

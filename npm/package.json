@@ -1,0 +1,42 @@
+{
+  "name": "lexe",
+  "version": "0.1.0",
+  "description": "Lightweight JavaScript runtime built on QuickJS with Node.js compatibility and single-executable compilation.",
+  "license": "Apache-2.0",
+  "author": "Ray-D-Song",
+  "homepage": "https://github.com/Ray-D-Song/lexe",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ray-D-Song/lexe.git",
+    "directory": "npm"
+  },
+  "bugs": {
+    "url": "https://github.com/Ray-D-Song/lexe/issues"
+  },
+  "keywords": [
+    "lexe",
+    "quickjs",
+    "runtime",
+    "javascript",
+    "typescript",
+    "single-executable",
+    "cli"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "lexe": "./bin/lexe.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "scripts/postinstall.mjs"
+  ],
+  "scripts": {
+    "postinstall": "node ./scripts/postinstall.mjs",
+    "pack:check": "node ./scripts/pack-check.mjs",
+    "test": "node --test ./test/npm-cli.test.mjs"
+  }
+}

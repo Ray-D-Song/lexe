@@ -786,3 +786,18 @@ jobs:
             compat/v8-hello/compat.log
             compat/better-sqlite3/compat.log
           if-no-files-found: ignore
+
+  npm-package:
+    name: npm-package
+    if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.case_filter == '' || contains('npm-package', inputs.case_filter)))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.3.0
+      - name: Verify npm CLI wrapper and lexe-types packaging
+        run: |
+          make npm-pack-check
+          make npm-test
+          make types-pack-check
