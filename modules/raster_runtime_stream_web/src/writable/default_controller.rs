@@ -284,11 +284,13 @@ impl<'js> WritableStreamDefaultController<'js> {
         }
     }
 
-    fn writable_stream_default_controller_error_if_needed(
+    pub(crate) fn writable_stream_default_controller_error_if_needed<
+        W: WritableStreamWriter<'js>,
+    >(
         ctx: Ctx<'js>,
-        objects: WritableStreamObjects<'js, WritableStreamDefaultWriterOwned<'js>>,
+        objects: WritableStreamObjects<'js, W>,
         error: Value<'js>,
-    ) -> Result<WritableStreamObjects<'js, WritableStreamDefaultWriterOwned<'js>>> {
+    ) -> Result<WritableStreamObjects<'js, W>> {
         // If controller.[[stream]].[[state]] is "writable", perform ! WritableStreamDefaultControllerError(controller, error).
         if let WritableStreamState::Writable = objects.stream.state {
             Self::writable_stream_default_controller_error(ctx, objects, error)

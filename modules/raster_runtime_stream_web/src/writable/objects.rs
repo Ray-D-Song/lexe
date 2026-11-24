@@ -96,7 +96,7 @@ impl<'js, W: WritableStreamWriter<'js>> WritableStreamObjects<'js, W> {
 }
 
 impl<'js, W: WritableStreamWriter<'js>> WritableStreamObjects<'js, W> {
-    pub(super) fn refresh_writer(
+    pub(crate) fn refresh_writer(
         mut self,
     ) -> WritableStreamObjects<'js, Option<WritableStreamDefaultWriterOwned<'js>>> {
         drop(self.writer);
@@ -110,7 +110,7 @@ impl<'js, W: WritableStreamWriter<'js>> WritableStreamObjects<'js, W> {
 }
 
 impl<'js> WritableStreamObjects<'js, UndefinedWriter> {
-    pub(super) fn from_stream(stream: WritableStreamOwned<'js>) -> Self {
+    pub(crate) fn from_stream(stream: WritableStreamOwned<'js>) -> Self {
         let controller = OwnedBorrowMut::from_class(
             stream
                 .controller

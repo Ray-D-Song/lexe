@@ -11,6 +11,7 @@ use crate::{
         readable_stream_default_controller_error_stream, ReadableStreamDefaultControllerClass,
     },
     utils::promise::{promise_resolved_with, ResolveablePromise},
+    writable::{WritableStreamDefaultController, WritableStreamObjects},
 };
 
 use raster_runtime_utils::primordials::Primordial;
@@ -172,7 +173,7 @@ pub(super) fn transform_stream_default_controller_terminate<'js>(
     readable_stream_default_controller_close_stream(ctx.clone(), controller_class)?;
 
     let error = ctx.eval::<Value, _>("new TypeError('TransformStream terminated')")?;
-    transform_stream_error_writable_and_unblock_write(stream_class, error)?;
+    transform_stream_error_writable_and_unblock_write(ctx, stream_class, error)?;
     Ok(())
 }
 
@@ -185,18 +186,38 @@ pub(super) fn transform_stream_error<'js>(
         .ok_or_else(|| Exception::throw_type(&ctx, "readable controller not available"))?;
 
     readable_stream_default_controller_error_stream(controller_class, e.clone())?;
-    transform_stream_error_writable_and_unblock_write(stream_class, e)?;
+    transform_stream_error_writable_and_unblock_write(ctx, stream_class, e)?;
     Ok(())
 }
 
 pub(super) fn transform_stream_error_writable_and_unblock_write<'js>(
+    ctx: Ctx<'js>,
     stream_class: &TransformStreamClass<'js>,
-    _e: Value<'js>,
+    e: Value<'js>,
 ) -> Result<()> {
-    let mut stream = stream_class.borrow_mut();
-    if let Some(ref controller_class) = stream.controller {
-        controller_class.borrow_mut().clear_algorithms();
+    let writable_class = stream_class.borrow().writable.clone();
+
+    {
+        let mut stream = stream_class.borrow_mut();
+        if let Some(ref controller_class) = stream.controller {
+            controller_class.borrow_mut().clear_algorithms();
+        }
     }
+
+    // WritableStreamDefaultControllerErrorIfNeeded(writable.[[controller]], e):
+    // the writable side must observe the same error, which also rejects any
+    // in-flight write request. Skipping this leaves a pending write promise
+    // that never settles, so a piped consumer waits on it forever.
+    if let Some(writable_class) = writable_class {
+        let objects =
+            WritableStreamObjects::from_stream(OwnedBorrowMut::from_class(writable_class))
+                .refresh_writer();
+        WritableStreamDefaultController::writable_stream_default_controller_error_if_needed(
+            ctx, objects, e,
+        )?;
+    }
+
+    let mut stream = stream_class.borrow_mut();
     // Always resolve and clear backpressure promise to break reference cycles
     if let Some(ref bp) = stream.backpressure_change_promise {
         bp.resolve_undefined()?;

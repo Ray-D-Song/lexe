@@ -21,7 +21,7 @@ pub(crate) trait WritableStreamWriter<'js>: Sized + 'js {
 }
 
 #[derive(Clone, Trace)]
-pub(super) struct UndefinedWriter;
+pub(crate) struct UndefinedWriter;
 
 impl<'js> WritableStreamWriter<'js> for UndefinedWriter {
     type Class = UndefinedWriter;

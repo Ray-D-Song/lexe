@@ -340,7 +340,11 @@ pub(crate) fn source_cancel_algorithm<'js>(
         cancel_promise,
         move |ctx, result| {
             cc.borrow_mut().clear_algorithms();
-            controller::transform_stream_error_writable_and_unblock_write(&sc, reason)?;
+            controller::transform_stream_error_writable_and_unblock_write(
+                ctx.clone(),
+                &sc,
+                reason,
+            )?;
             match result {
                 Ok(_) => Ok(Value::new_undefined(ctx)),
                 Err(r) => Err(ctx.throw(r)),
