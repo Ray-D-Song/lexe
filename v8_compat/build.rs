@@ -1,5 +1,45 @@
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
+
+fn node_version(include_dir: &std::path::Path) -> Option<(u32, u32)> {
+    let header = std::fs::read_to_string(include_dir.join("node_version.h")).ok()?;
+    let field = |name: &str| {
+        header
+            .lines()
+            .find_map(|line| line.strip_prefix(&format!("#define {name} ")))
+            .and_then(|value| value.trim().parse::<u32>().ok())
+    };
+    Some((field("NODE_MAJOR_VERSION")?, field("NODE_MINOR_VERSION")?))
+}
+
+/// Headers of the `node` found on PATH (`<prefix>/include/node`), used only when none of the
+/// pinned locations exist. Any Node 24.x shares ABI 137; other majors are rejected.
+fn include_dir_of_node_on_path() -> Option<PathBuf> {
+    let output = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let exec_path = PathBuf::from(String::from_utf8(output.stdout).ok()?.trim());
+    let include = exec_path.parent()?.parent()?.join("include/node");
+    if !include.join("node.h").exists() || !include.join("v8.h").exists() {
+        return None;
+    }
+    match node_version(&include) {
+        Some((24, minor)) => {
+            if minor != 3 {
+                println!(
+                    "cargo:warning=building v8_compat against Node 24.{minor} headers from {}; \
+                     the pinned version is 24.3.0 (CI uses refs/node)",
+                    include.display()
+                );
+            }
+            Some(include)
+        },
+        _ => None,
+    }
+}
 
 fn node24_include_dir() -> PathBuf {
     if let Ok(path) = env::var("RASTER_NODE24_INCLUDE") {
@@ -11,10 +51,16 @@ fn node24_include_dir() -> PathBuf {
             return nvm;
         }
     }
-    PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+    let refs = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
         .parent()
         .unwrap()
-        .join("refs/node/src")
+        .join("refs/node/src");
+    if !refs.join("node.h").exists() {
+        if let Some(include) = include_dir_of_node_on_path() {
+            return include;
+        }
+    }
+    refs
 }
 
 fn apply_sanitizer_flags(build: &mut cc::Build) {
