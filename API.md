@@ -433,18 +433,40 @@ Lightweight and fast hash classes for lexe.
 
 [unsubscribe](https://nodejs.org/api/diagnostics_channel.html#diagnostics_channelunsubscribename-onmessage)
 
+[tracingChannel](https://nodejs.org/api/diagnostics_channel.html#diagnostics_channeltracingchannelnameorchannels)
+
 ### Class: Channel
 
 [subscribe](https://nodejs.org/api/diagnostics_channel.html#channelsubscribeonmessage)
 
 [unsubscribe](https://nodejs.org/api/diagnostics_channel.html#channelunsubscribeonmessage)
 
+[bindStore](https://nodejs.org/api/diagnostics_channel.html#channelbindstorestore-transform)
+
+[unbindStore](https://nodejs.org/api/diagnostics_channel.html#channelunbindstorestore)
+
+[runStores](https://nodejs.org/api/diagnostics_channel.html#channelrunstorescontext-fn-thisarg-args)
+
 [publish](https://nodejs.org/api/diagnostics_channel.html#channelpublishmessage)
 
 [hasSubscribers](https://nodejs.org/api/diagnostics_channel.html#channelhassubscribers)
 
+### Class: TracingChannel
+
+[hasSubscribers](https://nodejs.org/api/diagnostics_channel.html#tracingchannelhassubscribers)
+
+[subscribe](https://nodejs.org/api/diagnostics_channel.html#tracingchannelsubscribesubscribers)
+
+[unsubscribe](https://nodejs.org/api/diagnostics_channel.html#tracingchannelunsubscribesubscribers)
+
+[traceSync](https://nodejs.org/api/diagnostics_channel.html#tracingchanneltracesyncfn-context-thisarg-args)
+
+[tracePromise](https://nodejs.org/api/diagnostics_channel.html#tracingchanneltracepromisefn-context-thisarg-args)
+
+[traceCallback](https://nodejs.org/api/diagnostics_channel.html#tracingchanneltracecallbackfn-position-context-thisarg-args)
+
 > [!NOTE]
-> `TracingChannel` is not implemented. Subscriber errors during `publish` are reported asynchronously via `queueMicrotask`. `publish` snapshots the subscriber list so callbacks that unsubscribe themselves do not skip later subscribers.
+> Built-in diagnostics channels are emitted for `udp.socket`, `net.client.socket`, `net.server.socket`, `http.client.request.created`, `http.client.request.start`, `http.client.request.error`, `http.client.response.finish`, `http.server.response.created`, `http.server.request.start`, and `http.server.response.finish`. Subscriber errors during `publish` and `bindStore` transform errors are reported asynchronously via `process.nextTick`.
 
 ## events
 

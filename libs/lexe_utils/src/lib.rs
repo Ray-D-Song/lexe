@@ -8,6 +8,7 @@ pub mod class;
 pub mod clone;
 pub mod clone_wire;
 pub mod ctx;
+pub mod diagnostics;
 pub mod driver_poll;
 pub mod error;
 pub mod error_messages;

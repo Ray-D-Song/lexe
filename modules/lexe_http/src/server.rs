@@ -393,6 +393,9 @@ pub struct ServerResponse<'js> {
     /// True once `write()` has queued body bytes. After that the framing is
     /// already committed (chunked), so `end()` must not add `Content-Length`.
     body_started: bool,
+    diag_request: Option<Value<'js>>,
+    diag_socket: Option<Value<'js>>,
+    diag_server: Option<Value<'js>>,
 }
 unsafe impl<'js> JsLifetime<'js> for ServerResponse<'js> {
     type Changed<'to> = ServerResponse<'to>;
@@ -400,6 +403,15 @@ unsafe impl<'js> JsLifetime<'js> for ServerResponse<'js> {
 impl<'js> Trace<'js> for ServerResponse<'js> {
     fn trace<'a>(&self, t: Tracer<'a, 'js>) {
         self.emitter.trace(t);
+        if let Some(req) = &self.diag_request {
+            req.trace(t);
+        }
+        if let Some(socket) = &self.diag_socket {
+            socket.trace(t);
+        }
+        if let Some(server) = &self.diag_server {
+            server.trace(t);
+        }
     }
 }
 impl<'js> Emitter<'js> for ServerResponse<'js> {
@@ -564,7 +576,7 @@ impl<'js> ServerResponse<'js> {
             .is_some_and(|tx| tx.send(ResponseFrame::Data(bytes)).is_ok()))
     }
     pub fn end(this: This<Class<'js, Self>>, ctx: Ctx<'js>, value: Opt<Value<'js>>) -> Result<()> {
-        {
+        let (diag_request, diag_socket, diag_server) = {
             let mut res = this.borrow_mut();
             if res.writable_finished || res.destroyed {
                 return Ok(());
@@ -602,10 +614,29 @@ impl<'js> ServerResponse<'js> {
                 }
             }
             res.finish();
-        }
+            (
+                res.diag_request.take(),
+                res.diag_socket.take(),
+                res.diag_server.take(),
+            )
+        };
         // Node emits `finish` after the response has been fully handed off.
         // Next's pipe-readable waits on this event before completing pipeTo.
         let _ = ServerResponse::emit_str(this.0.clone(), &ctx, "finish", vec![], false);
+        let _ = lexe_utils::diagnostics::publish(&ctx, "http.server.response.finish", |ctx| {
+            let msg = Object::new(ctx.clone())?;
+            if let Some(req) = diag_request {
+                msg.set("request", req)?;
+            }
+            msg.set("response", this.0.clone().into_value())?;
+            if let Some(sock) = diag_socket {
+                msg.set("socket", sock)?;
+            }
+            if let Some(srv) = diag_server {
+                msg.set("server", srv)?;
+            }
+            Ok(msg)
+        });
         let _ = ServerResponse::emit_str(this.0, &ctx, "close", vec![], false);
         Ok(())
     }
@@ -636,6 +667,9 @@ impl<'js> ServerResponse<'js> {
                 res.writable_finished = true;
                 res.body_tx.take();
                 res.tx.take();
+                res.diag_request.take();
+                res.diag_socket.take();
+                res.diag_server.take();
                 false
             }
         };
@@ -1533,6 +1567,9 @@ async fn dispatch<'js>(
             .unwrap_or_else(|_| empty()));
     }
     let (tx, mut rx) = oneshot::channel();
+    let req_value = req.clone().into_value();
+    let track_finish =
+        lexe_utils::diagnostics::has_subscribers(&ctx, "http.server.response.finish");
     let res = match Class::instance(
         ctx.clone(),
         ServerResponse {
@@ -1550,6 +1587,9 @@ async fn dispatch<'js>(
             continue_requested: false,
             is_head: parts.method == hyper::Method::HEAD,
             body_started: false,
+            diag_request: track_finish.then(|| req_value.clone()),
+            diag_socket: track_finish.then(|| connection_socket.clone()),
+            diag_server: track_finish.then(|| server.clone().into_value()),
         },
     ) {
         Ok(v) => v,
@@ -1560,8 +1600,21 @@ async fn dispatch<'js>(
         .get(hyper::header::EXPECT)
         .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"100-continue"));
     let check_continue = expects_continue && server.borrow().has_listener_str("checkContinue");
-    let req_value = req.clone().into_value();
     let res_value = res.clone().into_value();
+    let _ = lexe_utils::diagnostics::publish(&ctx, "http.server.response.created", |ctx| {
+        let msg = Object::new(ctx.clone())?;
+        msg.set("request", req_value.clone())?;
+        msg.set("response", res_value.clone())?;
+        Ok(msg)
+    });
+    let _ = lexe_utils::diagnostics::publish(&ctx, "http.server.request.start", |ctx| {
+        let msg = Object::new(ctx.clone())?;
+        msg.set("request", req_value.clone())?;
+        msg.set("response", res_value.clone())?;
+        msg.set("socket", connection_socket.clone())?;
+        msg.set("server", server.clone().into_value())?;
+        Ok(msg)
+    });
     let _ = Server::emit_str(
         server,
         &ctx,

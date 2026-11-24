@@ -303,6 +303,12 @@ impl<'js> ClientRequest<'js> {
             Self::add_event_listener_str(instance.clone(), ctx, "response", cb, false, false)?;
         }
 
+        let _ = lexe_utils::diagnostics::publish(ctx, "http.client.request.created", |ctx| {
+            let msg = Object::new(ctx.clone())?;
+            msg.set("request", instance.clone().into_value())?;
+            Ok(msg)
+        });
+
         if auto_end {
             ClientRequest::end(This(instance.clone()), ctx.clone(), Opt(None))?;
         }
@@ -384,17 +390,24 @@ impl<'js> ClientRequest<'js> {
         // Throwing here instead would escape as an uncaught exception before
         // any `error` listener could see it, and would bypass the usual
         // `req.on("error")` handling.
+        let _ = lexe_utils::diagnostics::publish(&ctx, "http.client.request.start", |ctx| {
+            let msg = Object::new(ctx.clone())?;
+            msg.set("request", this.clone().into_value())?;
+            Ok(msg)
+        });
         let response = match client.request(request).await {
             Ok(response) => response,
             Err(err) => {
                 let error = Exception::from_message(ctx.clone(), &err.to_string())?;
-                ClientRequest::emit_str(
-                    this.clone(),
-                    &ctx,
-                    "error",
-                    vec![error.into_value()],
-                    false,
-                )?;
+                let error_value = error.into_value();
+                let _ =
+                    lexe_utils::diagnostics::publish(&ctx, "http.client.request.error", |ctx| {
+                        let msg = Object::new(ctx.clone())?;
+                        msg.set("request", this.clone().into_value())?;
+                        msg.set("error", error_value.clone())?;
+                        Ok(msg)
+                    });
+                ClientRequest::emit_str(this.clone(), &ctx, "error", vec![error_value], false)?;
                 return Ok(());
             },
         };
@@ -434,7 +447,13 @@ impl<'js> ClientRequest<'js> {
             IncomingMessage::emit_str(message.clone(), &ctx, "data", vec![chunk], false)?;
         }
         message.borrow_mut().mark_complete();
-        IncomingMessage::emit_str(message, &ctx, "end", vec![], false)?;
+        IncomingMessage::emit_str(message.clone(), &ctx, "end", vec![], false)?;
+        let _ = lexe_utils::diagnostics::publish(&ctx, "http.client.response.finish", |ctx| {
+            let msg = Object::new(ctx.clone())?;
+            msg.set("request", this.clone().into_value())?;
+            msg.set("response", message.clone().into_value())?;
+            Ok(msg)
+        });
         // Node marks the request destroyed once the response is fully read.
         {
             let borrow = this.borrow();
@@ -551,6 +570,12 @@ fn teardown<'js>(
             value
         },
     };
+    let _ = lexe_utils::diagnostics::publish(ctx, "http.client.request.error", |ctx| {
+        let msg = Object::new(ctx.clone())?;
+        msg.set("request", this.clone().into_value())?;
+        msg.set("error", error_value.clone())?;
+        Ok(msg)
+    });
     ClientRequest::emit_str(this.clone(), ctx, "error", vec![error_value], false)?;
     ClientRequest::emit_str(this.clone(), ctx, "close", vec![], false)?;
     this.borrow().cancel.notify_waiters();

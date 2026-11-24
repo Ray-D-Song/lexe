@@ -468,6 +468,10 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
         let cb;
         if (typeof args[args.length - 1] === "function") cb = args.pop();
         if (cb) this.once("connect", cb);
+        const dc = globalThis.__diagnosticsChannelState;
+        if (dc && dc.hasSubscribers("net.client.socket")) {
+          dc.publish("net.client.socket", { socket: this });
+        }
         const handle = this._handle;
         if (handle && typeof handle.connect === "function") handle.connect(...args);
         return this;

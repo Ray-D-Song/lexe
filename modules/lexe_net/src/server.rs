@@ -386,6 +386,12 @@ impl<'js> Server<'js> {
                 socket_index = sever_borrow.sockets.append(socket_instance.clone());
             }
 
+            let _ = lexe_utils::diagnostics::publish(&ctx, "net.server.socket", |ctx| {
+                let msg = Object::new(ctx.clone())?;
+                msg.set("socket", js_socket.clone())?;
+                Ok(msg)
+            });
+
             Self::emit_str(this.clone(), &ctx, "connection", vec![js_socket], false)?;
 
             let had_error = net_stream

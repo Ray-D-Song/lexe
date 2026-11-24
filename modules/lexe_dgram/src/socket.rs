@@ -354,6 +354,11 @@ impl<'js> Socket<'js> {
         if let Some(sig) = signal_val {
             wire_abort_signal(&ctx, sig, &cls)?;
         }
+        let _ = lexe_utils::diagnostics::publish(&ctx, "udp.socket", |ctx| {
+            let msg = Object::new(ctx.clone())?;
+            msg.set("socket", cls.clone().into_value())?;
+            Ok(msg)
+        });
         Ok(cls)
     }
 
