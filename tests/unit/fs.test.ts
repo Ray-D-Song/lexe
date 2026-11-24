@@ -26,6 +26,8 @@ const {
   lstatSync,
   symlinkSync,
   writeFileSync,
+  appendFile: appendFileCb,
+  appendFileSync,
   realpathSync,
   realpath,
   existsSync,
@@ -47,6 +49,7 @@ const {
   lstat,
   symlink,
   writeFile,
+  appendFile: appendFilePromise,
   realpath: realpathPromise,
 } = promises;
 
@@ -1289,5 +1292,187 @@ describe("fs class exports", () => {
     const entry = fs.readdirSync(tmpdir(), { withFileTypes: true })[0];
     expect(typeof fs.Dirent).toBe("function");
     expect(entry).toBeInstanceOf(fs.Dirent);
+  });
+});
+
+describe("appendFile / appendFileSync", () => {
+  const tmpFile = (name = "append.txt") => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "test-append-"));
+    return { dir, file: path.join(dir, name) };
+  };
+
+  it("creates the file when missing and appends when present", () => {
+    const { dir, file } = tmpFile();
+    appendFileSync(file, "a");
+    expect(readFileSync(file, "utf8")).toBe("a");
+    appendFileSync(file, "b");
+    expect(readFileSync(file, "utf8")).toBe("ab");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("does not truncate an existing file", () => {
+    const { dir, file } = tmpFile();
+    writeFileSync(file, "keep");
+    appendFileSync(file, "-more");
+    expect(readFileSync(file, "utf8")).toBe("keep-more");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("keeps chunks in order across many appends", () => {
+    const { dir, file } = tmpFile();
+    for (let i = 0; i < 50; i++) appendFileSync(file, String(i % 10));
+    expect(readFileSync(file, "utf8")).toBe(
+      Array.from({ length: 50 }, (_, i) => String(i % 10)).join("")
+    );
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("mixes strings and buffers without tearing multibyte text", () => {
+    const { dir, file } = tmpFile();
+    appendFileSync(file, "héllo");
+    appendFileSync(file, Buffer.from("→"));
+    appendFileSync(file, "世界");
+    expect(readFileSync(file, "utf8")).toBe("héllo→世界");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("accepts string, Buffer, TypedArray and DataView", () => {
+    const { dir, file } = tmpFile();
+    appendFileSync(file, "s");
+    appendFileSync(file, Buffer.from("B"));
+    appendFileSync(file, new Uint8Array([0x55]));
+    appendFileSync(file, new DataView(new Uint8Array([0x44]).buffer));
+    expect(readFileSync(file, "utf8")).toBe("sBUD");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects other data types with ERR_INVALID_ARG_TYPE", () => {
+    const { dir, file } = tmpFile();
+    for (const bad of [42, {}, null, undefined]) {
+      let err: any;
+      try {
+        appendFileSync(file, bad as any);
+      } catch (e) {
+        err = e;
+      }
+      expect(`${typeof bad}:${err && err.code}`).toBe(
+        `${typeof bad}:ERR_INVALID_ARG_TYPE`
+      );
+      expect(err).toBeInstanceOf(TypeError);
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("honours the encoding option", () => {
+    const { dir, file } = tmpFile();
+    appendFileSync(file, "é", { encoding: "latin1" });
+    expect(Array.from(readFileSync(file))).toEqual([0xe9]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("honours the mode option on creation", () => {
+    if (IS_WINDOWS) return;
+    const { dir, file } = tmpFile();
+    appendFileSync(file, "m", { mode: 0o600 });
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("throws EEXIST for flag 'ax' on an existing file", () => {
+    const { dir, file } = tmpFile();
+    writeFileSync(file, "x");
+    let err: any;
+    try {
+      appendFileSync(file, "y", { flag: "ax" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err && err.code).toBe("EEXIST");
+    // and works when the file does not exist
+    const fresh = path.join(dir, "fresh.txt");
+    appendFileSync(fresh, "y", { flag: "ax" });
+    expect(readFileSync(fresh, "utf8")).toBe("y");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("accepts flag 'a+' and still appends", () => {
+    const { dir, file } = tmpFile();
+    appendFileSync(file, "z", { flag: "a+" });
+    appendFileSync(file, "w", { flag: "a+" });
+    expect(readFileSync(file, "utf8")).toBe("zw");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("reports ERR_INVALID_ARG_VALUE for an unknown flag", () => {
+    const { dir, file } = tmpFile();
+    let err: any;
+    try {
+      appendFileSync(file, "q", { flag: "notaflag" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err && err.code).toBe("ERR_INVALID_ARG_VALUE");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("maps path failures to the same codes as Node", () => {
+    let missing: any;
+    try {
+      appendFileSync("/definitely-not-here-xyz/f.txt", "a");
+    } catch (e) {
+      missing = e;
+    }
+    expect(missing && missing.code).toBe("ENOENT");
+
+    const dir = mkdtempSync(path.join(os.tmpdir(), "test-append-"));
+    let isDir: any;
+    try {
+      appendFileSync(dir, "a");
+    } catch (e) {
+      isDir = e;
+    }
+    expect(isDir && isDir.code).toBe("EISDIR");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("appends through the callback form with an error-first callback", async () => {
+    const { dir, file } = tmpFile();
+    await new Promise<void>((resolve, reject) => {
+      appendFileCb(file, "cb1", (err: any) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(readFileSync(file, "utf8")).toBe("cb1");
+
+    await new Promise<void>((resolve) => {
+      appendFileCb("/definitely-not-here-xyz/f.txt", "x", (err: any) => {
+        expect(err && err.code).toBe("ENOENT");
+        resolve();
+      });
+    });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("appends through the promise form", async () => {
+    const { dir, file } = tmpFile();
+    await appendFilePromise(file, "p1");
+    await appendFilePromise(file, "p2");
+    expect(readFileSync(file, "utf8")).toBe("p1p2");
+    await expect(
+      appendFilePromise("/definitely-not-here-xyz/f.txt", "x")
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("agrees between the sync, callback and promise forms", async () => {
+    const { dir, file } = tmpFile();
+    appendFileSync(file, "s");
+    await appendFilePromise(file, "p");
+    await new Promise<void>((resolve, reject) => {
+      appendFileCb(file, "c", (err: any) => (err ? reject(err) : resolve()));
+    });
+    expect(readFileSync(file, "utf8")).toBe("spc");
+    rmSync(dir, { recursive: true, force: true });
   });
 });

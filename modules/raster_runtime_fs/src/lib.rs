@@ -45,7 +45,7 @@ use self::stats::{
 };
 use self::symlink::{symlink, symlink_sync};
 use self::watch::{watch, FSWatcher};
-use self::write_file::{write_file, write_file_sync};
+use self::write_file::{append_file, append_file_sync, write_file, write_file_sync};
 use self::write_stream::create_create_write_stream;
 
 pub const CONSTANT_F_OK: u32 = 0;
@@ -61,6 +61,7 @@ impl ModuleDef for FsPromisesModule {
         declare.declare("open")?;
         declare.declare("readFile")?;
         declare.declare("writeFile")?;
+        declare.declare("appendFile")?;
         declare.declare("rename")?;
         declare.declare("readdir")?;
         declare.declare("mkdir")?;
@@ -288,6 +289,8 @@ impl ModuleDef for FsModule {
         declare.declare("readFile")?;
         declare.declare("readFileSync")?;
         declare.declare("writeFile")?;
+        declare.declare("appendFile")?;
+        declare.declare("appendFileSync")?;
         declare.declare("rmdirSync")?;
         declare.declare("rmSync")?;
         declare.declare("unlinkSync")?;
@@ -483,6 +486,7 @@ impl ModuleDef for FsModule {
     close,
     readFile: wrap((path, opts) => fsp.readFile(path, opts)),
     writeFile: wrap((path, data, opts) => fsp.writeFile(path, data, opts)),
+    appendFile: wrap((path, data, opts) => fsp.appendFile(path, data, opts)),
   };
 })()"#,
             )?;
@@ -490,6 +494,7 @@ impl ModuleDef for FsModule {
             default.set("close", cb_helpers.get::<_, Value>("close")?)?;
             default.set("readFile", cb_helpers.get::<_, Value>("readFile")?)?;
             default.set("writeFile", cb_helpers.get::<_, Value>("writeFile")?)?;
+            default.set("appendFile", cb_helpers.get::<_, Value>("appendFile")?)?;
             default.set("readFileSync", Func::from(read_file_sync))?;
             default.set("rmdirSync", Func::from(rmdir_sync))?;
             default.set("rmSync", Func::from(rmfile_sync))?;
@@ -502,6 +507,7 @@ impl ModuleDef for FsModule {
             default.set("lstat", lstat_fn_export)?;
             default.set("lstatSync", Func::from(lstat_fn_sync))?;
             default.set("writeFileSync", Func::from(write_file_sync))?;
+            default.set("appendFileSync", Func::from(append_file_sync))?;
             default.set("watch", Func::from(watch))?;
             default.set("FSWatcher", fs_watcher_ctor)?;
             default.set("chmodSync", Func::from(chmod_sync))?;
@@ -589,6 +595,7 @@ fn export_promises<'js>(ctx: &Ctx<'js>, exports: &Object<'js>) -> Result<()> {
     exports.set("open", Func::from(Async(open)))?;
     exports.set("readFile", Func::from(Async(read_file)))?;
     exports.set("writeFile", Func::from(Async(write_file)))?;
+    exports.set("appendFile", Func::from(Async(append_file)))?;
     exports.set("rename", Func::from(Async(rename)))?;
     exports.set("readdir", Func::from(Async(read_dir)))?;
     exports.set("mkdir", Func::from(Async(mkdir)))?;
