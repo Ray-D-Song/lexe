@@ -572,6 +572,8 @@ CommonJS loader facade (also on the default `Module` export):
 
 [availableParallelism](https://nodejs.org/api/os.html#osavailableparallelism)
 
+[constants](https://nodejs.org/api/os.html#osconstants)
+
 [cpus](https://nodejs.org/api/os.html#oscpus)
 
 [devNull](https://nodejs.org/api/os.html#osdevnull)

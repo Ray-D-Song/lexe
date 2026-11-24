@@ -27,7 +27,7 @@
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
 | node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
 | node:net | ✔︎ | ✔︎⚠️ | `Socket.setTimeout` does not fire idle timeouts; `autoSelectFamily` flag is not wired to Happy-Eyeballs; several `Server` options and `maxConnections` ignored ([details](#nodenet)) |
-| node:os | ✔︎ | ✔︎⚠️ | Missing `os.constants`; `setPriority` unsupported on Windows; `networkInterfaces()` reports IPv6 `scopeid: 0` ([details](#nodeos)) |
+| node:os | ✔︎ | ✔︎ | — |
 | node:path | ✔︎ | ✔︎ | — |
 | node:perf_hooks | ✔︎ | ✔︎⚠️ | Static `nodeTiming` stub; no automatic GC/resource entries; timer-based ms `monitorEventLoopDelay`; fallback `eventLoopUtilization` ([details](#nodeperf_hooks)) |
 | node:process | ✔︎ | ✔︎⚠️ | Missing `execPath`, `execArgv`, `ppid`, `uptime`, `memoryUsage`, `cpuUsage`, `resourceUsage`, `umask`, `loadEnvFile`, `report`, and `permission` ([details](#nodeprocess)) |
@@ -207,12 +207,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `setDefaultAutoSelectFamily()` and `setDefaultAutoSelectFamilyAttemptTimeout()` persist the process-wide configuration flags, but Happy-Eyeballs multi-family dialing (`autoSelectFamily`) is not implemented.
 - `net.Server` constructor honors `allowHalfOpen` only (ignoring `pauseOnConnect`, `noDelay`, `keepAlive`, `keepAliveInitialDelay`, `highWaterMark`); `server.listen()` ignores `backlog`, and `Server.maxConnections` is not implemented.
 - Unix domain sockets are not supported on Windows.
-
-#### `node:os`
-
-- `os.constants` (`signals`, `errno`, `dlopen`, `priority`, `libuv`) is not exported.
-- `os.setPriority()` is not implemented on Windows.
-- `os.networkInterfaces()` always reports `scopeid: 0` for IPv6 addresses.
 
 #### `node:perf_hooks`
 

@@ -36,6 +36,7 @@ use self::network::get_network_interfaces;
 #[cfg(feature = "statistics")]
 use self::statistics::{get_cpus, get_free_mem, get_total_mem};
 
+pub mod constants;
 #[cfg(feature = "network")]
 mod network;
 #[cfg(feature = "statistics")]
@@ -94,6 +95,7 @@ impl ModuleDef for OsModule {
     fn declare(declare: &Declarations) -> Result<()> {
         declare.declare("arch")?;
         declare.declare("availableParallelism")?;
+        declare.declare("constants")?;
         declare.declare("devNull")?;
         declare.declare("endianness")?;
         declare.declare("EOL")?;
@@ -136,6 +138,7 @@ impl ModuleDef for OsModule {
                 "availableParallelism",
                 Func::from(get_available_parallelism),
             )?;
+            default.set("constants", constants::create_os_constants(ctx)?)?;
             default.set("devNull", DEV_NULL)?;
             default.set("endianness", Func::from(get_endianness))?;
             default.set("EOL", EOL)?;

@@ -16,6 +16,7 @@ static NETWORKS: Lazy<Arc<Mutex<Networks>>> =
 
 pub fn get_network_interfaces(ctx: Ctx<'_>) -> Result<HashMap<String, Vec<Object<'_>>>> {
     let mut map: HashMap<String, Vec<Object>> = HashMap::new();
+    let scope_ids = collect_ipv6_scope_ids();
     let networks = NETWORKS.lock().unwrap();
 
     for (interface_name, network_data) in networks.iter() {
@@ -25,9 +26,9 @@ pub fn get_network_interfaces(ctx: Ctx<'_>) -> Result<HashMap<String, Vec<Object
             let addr = &ip_network.addr.to_string();
             let is_ipv4 = addr.contains(".");
             let (is_internal, scope_id) = if is_ipv4 {
-                get_attribute_ipv4(&ctx, addr)?
+                (get_attribute_ipv4(&ctx, addr)?, 0u32)
             } else {
-                get_attribute_ipv6(&ctx, addr)?
+                get_attribute_ipv6(&ctx, interface_name, addr, &scope_ids)?
             };
 
             let obj = Object::new(ctx.clone())?;
@@ -107,7 +108,51 @@ fn prefix_to_netmask_ipv6(prefix: u8) -> Box<str> {
     )
 }
 
-fn get_attribute_ipv4(ctx: &Ctx<'_>, addr: &str) -> Result<(bool, u8)> {
+#[cfg(unix)]
+fn collect_ipv6_scope_ids() -> HashMap<(String, Ipv6Addr), u32> {
+    use std::ffi::CStr;
+
+    struct IfAddrsGuard(*mut libc::ifaddrs);
+    impl Drop for IfAddrsGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe { libc::freeifaddrs(self.0) };
+            }
+        }
+    }
+
+    let mut map = HashMap::new();
+    let mut ptr: *mut libc::ifaddrs = std::ptr::null_mut();
+    if unsafe { libc::getifaddrs(&mut ptr) } != 0 || ptr.is_null() {
+        return map;
+    }
+    let _guard = IfAddrsGuard(ptr);
+
+    let mut cur = ptr;
+    while !cur.is_null() {
+        let ifa = unsafe { &*cur };
+        if !ifa.ifa_name.is_null() && !ifa.ifa_addr.is_null() {
+            let sa_family = unsafe { (*ifa.ifa_addr).sa_family as i32 };
+            if sa_family == libc::AF_INET6 {
+                let sin6 = unsafe { &*(ifa.ifa_addr as *const libc::sockaddr_in6) };
+                let name = unsafe { CStr::from_ptr(ifa.ifa_name) }
+                    .to_string_lossy()
+                    .into_owned();
+                let ip = Ipv6Addr::from(sin6.sin6_addr.s6_addr);
+                map.insert((name, ip), sin6.sin6_scope_id);
+            }
+        }
+        cur = ifa.ifa_next;
+    }
+    map
+}
+
+#[cfg(not(unix))]
+fn collect_ipv6_scope_ids() -> HashMap<(String, Ipv6Addr), u32> {
+    HashMap::new()
+}
+
+fn get_attribute_ipv4(ctx: &Ctx<'_>, addr: &str) -> Result<bool> {
     let addr = addr.parse::<Ipv4Addr>().or_throw(ctx)?;
     let is_internal = addr.is_broadcast()
         || addr.is_documentation()
@@ -115,15 +160,21 @@ fn get_attribute_ipv4(ctx: &Ctx<'_>, addr: &str) -> Result<(bool, u8)> {
         || addr.is_loopback()
         || addr.is_multicast()
         || addr.is_unspecified();
-    let scope_id = 0; // For IPv4, ScopeID is a dummy value.
-
-    Ok((is_internal, scope_id))
+    Ok(is_internal)
 }
 
-fn get_attribute_ipv6(ctx: &Ctx<'_>, addr: &str) -> Result<(bool, u8)> {
+fn get_attribute_ipv6(
+    ctx: &Ctx<'_>,
+    iface_name: &str,
+    addr: &str,
+    scope_ids: &HashMap<(String, Ipv6Addr), u32>,
+) -> Result<(bool, u32)> {
     let addr = addr.parse::<Ipv6Addr>().or_throw(ctx)?;
     let is_internal = addr.is_loopback() || addr.is_multicast() || addr.is_unspecified();
-    let scope_id = 0; // ScopeID is not supported at this time.
+    let scope_id = scope_ids
+        .get(&(iface_name.to_string(), addr))
+        .copied()
+        .unwrap_or(0);
 
     Ok((is_internal, scope_id))
 }
