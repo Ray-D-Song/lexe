@@ -11,6 +11,12 @@ pub fn io_error_code(err: &io::Error) -> &'static str {
     if err.raw_os_error() == Some(9) {
         return "EBADF";
     }
+    // ENOSPC has no dedicated `ErrorKind`; the raw code is the only reliable
+    // signal, and it is what a full disk reports.
+    #[cfg(unix)]
+    if err.raw_os_error() == Some(28) {
+        return "ENOSPC";
+    }
     #[cfg(windows)]
     if err.raw_os_error() == Some(6) || err.raw_os_error() == Some(9) {
         return "EBADF";

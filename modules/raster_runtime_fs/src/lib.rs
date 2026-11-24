@@ -3,6 +3,7 @@
 mod access;
 mod chmod;
 mod errors;
+pub mod fd_async;
 pub mod fd_sync;
 mod file_handle;
 mod fs_extra;
@@ -32,6 +33,10 @@ use rquickjs::{Class, Ctx, IntoJs, Object, Result, Value};
 
 use self::access::{access, access_callback, access_sync};
 use self::chmod::{chmod, chmod_sync};
+use self::fd_async::{
+    fchmod_callback, fdatasync_callback, fstat_callback, fsync_callback, ftruncate_callback,
+    futimes_callback, readv_callback, writev_callback,
+};
 use self::fd_sync::{close_sync, fstat_sync, open_sync, read_sync, write_sync};
 use self::file_handle::FileHandle;
 use self::mkdir::{mkdir, mkdir_sync, mkdtemp, mkdtemp_sync};
@@ -289,6 +294,14 @@ impl ModuleDef for FsModule {
         declare.declare("writeSync")?;
         declare.declare("readSync")?;
         declare.declare("fstatSync")?;
+        declare.declare("fstat")?;
+        declare.declare("ftruncate")?;
+        declare.declare("fchmod")?;
+        declare.declare("fsync")?;
+        declare.declare("fdatasync")?;
+        declare.declare("futimes")?;
+        declare.declare("readv")?;
+        declare.declare("writev")?;
         declare.declare("mkdirSync")?;
         declare.declare("mkdtempSync")?;
         declare.declare("readdir")?;
@@ -504,6 +517,14 @@ impl ModuleDef for FsModule {
             default.set("writeSync", Func::from(write_sync))?;
             default.set("readSync", Func::from(read_sync))?;
             default.set("fstatSync", Func::from(fstat_sync))?;
+            default.set("fstat", Func::from(fstat_callback))?;
+            default.set("ftruncate", Func::from(ftruncate_callback))?;
+            default.set("fchmod", Func::from(fchmod_callback))?;
+            default.set("fsync", Func::from(fsync_callback))?;
+            default.set("fdatasync", Func::from(fdatasync_callback))?;
+            default.set("futimes", Func::from(futimes_callback))?;
+            default.set("readv", Func::from(readv_callback))?;
+            default.set("writev", Func::from(writev_callback))?;
             default.set("readFile", cb_helpers.get::<_, Value>("readFile")?)?;
             default.set("writeFile", cb_helpers.get::<_, Value>("writeFile")?)?;
             default.set("appendFile", cb_helpers.get::<_, Value>("appendFile")?)?;

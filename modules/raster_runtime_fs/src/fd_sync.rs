@@ -38,10 +38,10 @@ use rquickjs::{function::Opt, Ctx, Exception, Result, Value};
 use crate::errors::throw_fs_error;
 
 /// One open descriptor, as the sync API sees it.
-struct FdEntry {
+pub(crate) struct FdEntry {
     /// A clone of the caller's file, sharing the offset with the async side.
-    file: std::fs::File,
-    path: PathBuf,
+    pub(crate) file: std::fs::File,
+    pub(crate) path: PathBuf,
 }
 
 /// Descriptor number → entry, keyed by the real OS fd like Node.
@@ -85,7 +85,7 @@ fn throw_with_code<'js>(ctx: &Ctx<'js>, code: &str, name: &str, message: &str) -
 }
 
 /// `EBADF` carrying the failing syscall, matching Node's shape.
-fn throw_ebadf<'js>(ctx: &Ctx<'js>, fd: i32, syscall: &str) -> rquickjs::Error {
+pub(crate) fn throw_ebadf<'js>(ctx: &Ctx<'js>, fd: i32, syscall: &str) -> rquickjs::Error {
     let message = format!("EBADF: bad file descriptor, {syscall}");
     match Exception::from_message(ctx.clone(), &message) {
         Ok(exception) => {
@@ -100,11 +100,27 @@ fn throw_ebadf<'js>(ctx: &Ctx<'js>, fd: i32, syscall: &str) -> rquickjs::Error {
     }
 }
 
-fn throw_out_of_range<'js>(ctx: &Ctx<'js>, message: &str) -> rquickjs::Error {
+/// `EINVAL` with the failing syscall, matching Node's wording
+/// (`EINVAL: invalid argument, read`).
+pub(crate) fn throw_einval<'js>(ctx: &Ctx<'js>, syscall: &str) -> rquickjs::Error {
+    let message = format!("EINVAL: invalid argument, {syscall}");
+    match Exception::from_message(ctx.clone(), &message) {
+        Ok(exception) => {
+            let obj = exception.as_object();
+            let _ = obj.set("code", "EINVAL");
+            let _ = obj.set("errno", -22_i32);
+            let _ = obj.set("syscall", syscall);
+            exception.throw()
+        },
+        Err(err) => err,
+    }
+}
+
+pub(crate) fn throw_out_of_range<'js>(ctx: &Ctx<'js>, message: &str) -> rquickjs::Error {
     throw_with_code(ctx, "ERR_OUT_OF_RANGE", "RangeError", message)
 }
 
-fn throw_invalid_arg_type<'js>(ctx: &Ctx<'js>, message: &str) -> rquickjs::Error {
+pub(crate) fn throw_invalid_arg_type<'js>(ctx: &Ctx<'js>, message: &str) -> rquickjs::Error {
     throw_with_code(ctx, "ERR_INVALID_ARG_TYPE", "TypeError", message)
 }
 
@@ -150,7 +166,10 @@ fn parse_position<'js>(ctx: &Ctx<'js>, value: &Option<Value<'js>>) -> Result<Opt
 /// behave like "use the current offset" (`writeSync` walks the file forward for
 /// each). Only `readSync` rejects those with `ERR_INVALID_ARG_TYPE`, so the two
 /// get different parsers rather than one shared stricter one.
-fn parse_position_lenient<'js>(_ctx: &Ctx<'js>, value: &Option<Value<'js>>) -> Option<i64> {
+pub(crate) fn parse_position_lenient<'js>(
+    _ctx: &Ctx<'js>,
+    value: &Option<Value<'js>>,
+) -> Option<i64> {
     let value = value.as_ref()?;
     if value.is_null() || value.is_undefined() {
         return None;
@@ -177,7 +196,7 @@ fn describe_position_type<'js>(value: &Value<'js>) -> String {
 }
 
 /// Run `f` against `fd`, or throw `EBADF`.
-fn with_fd<T>(
+pub(crate) fn with_fd<T>(
     ctx: &Ctx<'_>,
     fd: i32,
     syscall: &str,
