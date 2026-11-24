@@ -2,9 +2,9 @@ name: Compatibility
 
 on:
   pull_request:
-  # Keeps refs/heads/main's rust-cache + yarn caches fresh: PR jobs can only
-  # restore caches from their base branch, and a stale main cache means PRs
-  # rebuild from scratch. Also doubles as post-merge verification.
+    types: [opened, synchronize, reopened, labeled]
+  # Keeps refs/heads/main's rust-cache fresh and runs the full cross-platform
+  # matrix (including macOS and ARM64) on merge.
   push:
     branches: [main]
   workflow_dispatch:
@@ -30,7 +30,17 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
+      full: ${{ steps.scope.outputs.full }}
       core: ${{ steps.scope.outputs.core }}
+      rust: ${{ steps.scope.outputs.rust }}
+      v8: ${{ steps.scope.outputs.v8 }}
+      sqlite: ${{ steps.scope.outputs.sqlite }}
+      napi: ${{ steps.scope.outputs.napi }}
+      windows_crates: ${{ steps.scope.outputs.windows_crates }}
+      db_compat: ${{ steps.scope.outputs.db_compat }}
+      next_compat: ${{ steps.scope.outputs.next_compat }}
+      linux_matrix: ${{ steps.scope.outputs.linux_matrix }}
+      has_linux_compat: ${{ steps.scope.outputs.has_linux_compat }}
     steps:
       - uses: actions/checkout@v4
       # paths-filter needs a git checkout for non-PR events (it diffs against a
@@ -67,9 +77,150 @@ jobs:
               - 'package.json'
               - 'tsconfig.json'
               - '.github/workflows/**'
-      # Non-PR events (push to main, manual dispatch) must always run everything.
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - '.cargo/**'
+              - 'rust-toolchain.toml'
+              - 'vendor/**'
+              - 'linker/**'
+              - '.github/workflows/compat.yml'
+            v8:
+              - 'v8_compat/**'
+              - 'refs/node'
+              - 'modules/raster_runtime_napi/**'
+              - 'raster_runtime/Cargo.toml'
+              - 'raster_runtime/src/**'
+              - 'raster_runtime/build.rs'
+              - 'compat/v8-hello/**'
+              - 'compat/better-sqlite3/**'
+              - 'Cargo.lock'
+              - '.github/workflows/compat.yml'
+            sqlite:
+              - 'modules/raster_runtime_sqlite/**'
+              - 'compat/node-sqlite/**'
+              - 'tests/unit/sqlite*'
+              - 'libs/**'
+              - 'raster_runtime_core/**'
+              - 'Cargo.lock'
+              - '.github/workflows/compat.yml'
+            napi:
+              - 'modules/raster_runtime_napi/**'
+              - 'compat/napi-hello/**'
+              - 'compat/vite-plus/**'
+              - 'libs/**'
+              - 'raster_runtime_core/**'
+              - 'raster_runtime/src/**'
+              - '.github/workflows/compat.yml'
+            windows_crates:
+              - 'modules/raster_runtime_tty/**'
+              - 'modules/raster_runtime_napi/**'
+              - 'modules/raster_runtime_fs/**'
+              - 'libs/**'
+              - 'raster_runtime/**'
+              - 'raster_runtime_core/**'
+              - '.github/workflows/compat.yml'
+            db_compat:
+              - 'modules/raster_runtime_net/**'
+              - 'modules/raster_runtime_tls/**'
+              - 'modules/raster_runtime_crypto/**'
+              - 'modules/raster_runtime_stream*/**'
+              - 'modules/raster_runtime_buffer/**'
+              - 'modules/raster_runtime_events/**'
+              - 'modules/raster_runtime_timers/**'
+              - 'libs/**'
+              - 'raster_runtime_core/**'
+              - 'raster_runtime_modules/**'
+              - 'raster_runtime/**'
+              - 'compat/mysql2/**'
+              - 'compat/node-postgres/**'
+              - '.github/workflows/compat.yml'
+            next_compat:
+              - 'modules/raster_runtime_http*/**'
+              - 'modules/raster_runtime_net/**'
+              - 'modules/raster_runtime_fs/**'
+              - 'modules/raster_runtime_url/**'
+              - 'modules/raster_runtime_stream*/**'
+              - 'modules/raster_runtime_zlib/**'
+              - 'modules/raster_runtime_buffer/**'
+              - 'modules/raster_runtime_process/**'
+              - 'modules/raster_runtime_path/**'
+              - 'libs/**'
+              - 'raster_runtime_core/**'
+              - 'raster_runtime_modules/**'
+              - 'raster_runtime/**'
+              - 'compat/next/**'
+              - '.github/workflows/compat.yml'
+      # Non-PR events (push to main, manual dispatch) or PRs labeled `ci:full`
+      # run the full cross-platform and sanitizer matrix.
       - id: scope
-        run: echo "core=${{ github.event_name != 'pull_request' || steps.filter.outputs.core }}" >> "$GITHUB_OUTPUT"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HAS_FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          CASE_FILTER: ${{ inputs.case_filter }}
+          F_CORE: ${{ steps.filter.outputs.core }}
+          F_RUST: ${{ steps.filter.outputs.rust }}
+          F_V8: ${{ steps.filter.outputs.v8 }}
+          F_SQLITE: ${{ steps.filter.outputs.sqlite }}
+          F_NAPI: ${{ steps.filter.outputs.napi }}
+          F_WIN: ${{ steps.filter.outputs.windows_crates }}
+          F_DB: ${{ steps.filter.outputs.db_compat }}
+          F_NEXT: ${{ steps.filter.outputs.next_compat }}
+        run: |
+          python3 - << 'PY'
+          import json, os
+
+          event_name = os.environ["EVENT_NAME"]
+          has_full_label = os.environ["HAS_FULL_LABEL"] == "true"
+          full = (event_name != "pull_request") or has_full_label
+          case_filter = os.environ.get("CASE_FILTER", "")
+
+          def flag(env_key):
+              return full or (os.environ.get(env_key) == "true")
+
+          flags = {
+              "full": full,
+              "core": flag("F_CORE"),
+              "rust": flag("F_RUST"),
+              "v8": flag("F_V8"),
+              "sqlite": flag("F_SQLITE"),
+              "napi": flag("F_NAPI"),
+              "windows_crates": flag("F_WIN"),
+              "db_compat": flag("F_DB"),
+              "next_compat": flag("F_NEXT"),
+          }
+
+          linux_cases = []
+          if flags["db_compat"]:
+              linux_cases.append({"case": "mysql2", "node": "22.18.0"})
+              linux_cases.append({"case": "node-postgres", "node": "22.18.0"})
+          if flags["next_compat"]:
+              linux_cases.append({"case": "next", "node": "22.18.0"})
+          if flags["napi"]:
+              linux_cases.append({"case": "vite-plus", "node": "22.18.0"})
+          if flags["sqlite"]:
+              linux_cases.append({"case": "node-sqlite", "node": "24.3.0"})
+          if flags["v8"]:
+              linux_cases.append({"case": "better-sqlite3", "node": "24.3.0"})
+              linux_cases.append({"case": "v8-hello", "node": "24.3.0"})
+
+          if event_name == "workflow_dispatch" and case_filter:
+              alias_map = {
+                  "mysql2": "mysql-compat",
+                  "node-postgres": "node-postgres-compat",
+              }
+              linux_cases = [
+                  c for c in linux_cases
+                  if (case_filter in c["case"]) or (case_filter in alias_map.get(c["case"], ""))
+              ]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              for k, v in flags.items():
+                  out.write(f"{k}={'true' if v else 'false'}\n")
+              out.write(f"linux_matrix={json.dumps(linux_cases, separators=(',', ':'))}\n")
+              out.write(f"has_linux_compat={'true' if linux_cases else 'false'}\n")
+          PY
 
   docs-only:
     # Stand-in check so a docs-only PR still reports a green status instead of
@@ -85,7 +236,7 @@ jobs:
 
   rust-fmt:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('rust-fmt', inputs.case_filter))
+    if: needs.changes.outputs.rust == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('rust-fmt', inputs.case_filter))
     name: rust-fmt
     runs-on: ubuntu-latest
     steps:
@@ -96,10 +247,37 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  rust-unit:
+  napi-clippy:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('rust-unit-tests', inputs.case_filter))
-    name: rust-unit-tests
+    if: needs.changes.outputs.rust == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('napi-clippy', inputs.case_filter))
+    name: napi-clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: cargo-registry
+          cache-targets: "false"
+      - run: >
+          cargo clippy
+          -p raster_runtime_napi
+          -p raster_runtime_events
+          -p raster_runtime_tty
+          -p raster_runtime_modules
+          -p raster_runtime_fs
+          -p raster_runtime_util
+          -p raster_runtime_sqlite
+          --all-targets --no-deps -- -D warnings
+
+  v8-abi:
+    needs: changes
+    if: needs.changes.outputs.v8 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('v8-abi-drift', inputs.case_filter))
+    name: v8-abi-drift
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -113,37 +291,124 @@ jobs:
           grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.18.0
-          # No yarn cache: installs 15 devDependencies (264 MB unpacked) and the
-          # restore (13-19 s) costs more than the install it saves (2-13 s), for
-          # ~888 MB of a 10 GB cache budget. Measured on rust-unit-tests.
-      - run: yarn install --frozen-lockfile
+          node-version: 24.3.0
+      - run: bash v8_compat/tools/check_abi.sh
+
+  v8-clippy:
+    needs: changes
+    if: needs.changes.outputs.v8 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('v8-clippy', inputs.case_filter))
+    name: v8-clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Node 24.3 source
+        run: |
+          git submodule sync -- refs/node
+          git submodule update --init --depth 1 refs/node
+          test "$(git -C refs/node rev-parse HEAD)" = \
+            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
+          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
+          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: cargo-registry
+          cache-targets: "false"
+      - run: cargo clippy -p v8_compat --all-targets -- -D warnings
+
+  rust-crate-tests:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('rust-crate-tests rust-unit-tests', inputs.case_filter))
+    name: rust-crate-tests
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mold
+      - name: Fetch Node 24.3 source
+        if: needs.changes.outputs.v8 == 'true'
+        run: |
+          git submodule sync -- refs/node
+          git submodule update --init --depth 1 refs/node
+          test "$(git -C refs/node rev-parse HEAD)" = \
+            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
+          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
+          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          shared-key: rust-unit
-          # The workspace crates dominate this job (raster_runtime_modules alone is
-          # ~5 min), and rust-cache drops non-dependency artifacts by default.
+          shared-key: rust-crate-tests
           cache-workspace-crates: "true"
-          # A red run still leaves reusable artifacts; keep them for the next try.
           cache-on-failure: "true"
-      - run: cargo test -p v8_compat --lib
+      - if: needs.changes.outputs.v8 == 'true'
+        run: cargo test -p v8_compat --lib
+      - run: >
+          cargo test
+          -p raster_runtime_events
+          -p raster_runtime_tty
+          -p raster_runtime_modules
+          -p raster_runtime_util
+          -p raster_runtime_fs
+          --lib
       - run: cargo test -p raster_runtime_napi --lib -- --test-threads=1
-      - run: cargo test -p raster_runtime_events --lib
-      - run: cargo test -p raster_runtime_tty --lib
-      - run: cargo test -p raster_runtime_modules --lib
-      - run: cargo test -p raster_runtime_util --lib
-      - run: cargo test -p raster_runtime_fs --lib
       - run: cargo test -p raster_runtime_sqlite --all-targets
+
+  build-linux:
+    needs: changes
+    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || needs.changes.outputs.has_linux_compat == 'true' || contains('build-linux js-unit-gates rust-unit-tests', inputs.case_filter))
+    name: build-linux & js-unit-gates
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mold
+      - name: Fetch Node 24.3 source
+        if: needs.changes.outputs.v8 == 'true'
+        run: |
+          git submodule sync -- refs/node
+          git submodule update --init --depth 1 refs/node
+          test "$(git -C refs/node rev-parse HEAD)" = \
+            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
+          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
+          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+      - run: yarn install --frozen-lockfile
       - run: make js JS_MINIFY=0
-      - name: Build raster_runtime (napi) for JS unit gates
-        run: cargo build -p raster_runtime --features napi
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: build-linux-${{ needs.changes.outputs.v8 == 'true' && 'v8' || 'napi' }}
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
+      - name: Build raster_runtime (once for Linux gates and compat)
+        run: |
+          if [ "${{ needs.changes.outputs.v8 }}" = "true" ]; then
+            cargo build -p raster_runtime --features v8-compat
+            nm -D --defined-only target/debug/raster_runtime |
+              c++filt |
+              grep -F "v8::Isolate::GetCurrent()"
+            nm -D --defined-only target/debug/raster_runtime |
+              c++filt |
+              grep -F "v8::Context::GetIsolate()"
+          else
+            cargo build -p raster_runtime --features napi
+          fi
       - name: JS unit gates
         env:
           RASTER_RUNTIME_ASYNC_HOOKS: "1"
@@ -151,10 +416,67 @@ jobs:
           for filter in events readline util module fs sqlite worker_threads child_process; do
             ./target/debug/raster_runtime test -d bundle/js/__tests__/unit --filter "$filter"
           done
+      - uses: actions/upload-artifact@v4
+        if: needs.changes.outputs.has_linux_compat == 'true'
+        with:
+          name: raster-linux-x64
+          path: target/debug/raster_runtime
+          retention-days: 1
+          compression-level: 1
+
+  linux-compat:
+    needs: [changes, build-linux]
+    if: needs.changes.outputs.has_linux_compat == 'true'
+    name: ${{ matrix.case }} (ubuntu-latest)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.linux_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: raster-linux-x64
+          path: target/debug
+      - name: Run compatibility fixture
+        env:
+          COMPAT_VP_VERSION_LOOPS: ${{ matrix.case == 'vite-plus' && '100' || '0' }}
+          COMPAT_VP_BUILD_LOOPS: ${{ matrix.case == 'vite-plus' && '20' || '0' }}
+          COMPAT_SQLITE_LIFECYCLE_LOOPS: ${{ matrix.case == 'node-sqlite' && '100' || '0' }}
+          COMPAT_SQLITE_BACKUP_LOOPS: ${{ matrix.case == 'node-sqlite' && '20' || '0' }}
+          COMPAT_BETTER_SQLITE3_LOOPS: ${{ matrix.case == 'better-sqlite3' && '20' || '0' }}
+        run: |
+          chmod +x target/debug/raster_runtime
+          ./target/debug/raster_runtime --version
+          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
+          case "${{ matrix.case }}" in
+            mysql2|node-postgres|next|vite-plus|better-sqlite3)
+              (cd "compat/${{ matrix.case }}" && yarn install --frozen-lockfile)
+              ;;
+            v8-hello)
+              (cd compat/v8-hello && npm run build)
+              ;;
+            node-sqlite)
+              ;;
+          esac
+          node compat/run.mjs "${{ matrix.case }}" target/debug/raster_runtime
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-${{ matrix.case }}-ubuntu-latest-logs
+          path: |
+            compat/${{ matrix.case }}/compat.log
+            compat/${{ matrix.case }}/.next
+            compat/${{ matrix.case }}/dist
+          if-no-files-found: ignore
 
   windows-sqlite:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('windows-sqlite', inputs.case_filter))
+    if: needs.changes.outputs.sqlite == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('windows-sqlite', inputs.case_filter))
     name: windows-sqlite
     runs-on: windows-latest
     steps:
@@ -168,9 +490,6 @@ jobs:
           cache: yarn
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: windows-sqlite
       - run: yarn install --frozen-lockfile
@@ -195,7 +514,7 @@ jobs:
 
   windows-tty-napi:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('windows-tty-napi', inputs.case_filter))
+    if: needs.changes.outputs.windows_crates == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('windows-tty-napi', inputs.case_filter))
     name: windows-tty-napi
     runs-on: windows-latest
     steps:
@@ -206,9 +525,6 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: windows-tty-napi
       - name: Build and test TTY + N-API + FS (Windows)
@@ -221,7 +537,7 @@ jobs:
 
   sanitizer:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('sanitizer-address sanitizer-undefined', inputs.case_filter))
+    if: needs.changes.outputs.v8 == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('sanitizer-address sanitizer-undefined', inputs.case_filter))
     name: sanitizer-${{ matrix.sanitizer }}
     runs-on: ubuntu-latest
     strategy:
@@ -249,104 +565,15 @@ jobs:
           targets: x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: sanitizer-${{ matrix.sanitizer }}
-          # Both sanitizer gates rebuild almost everything (the sanitizer rustflags
-          # change every crate's fingerprint), so a restored target dir saves little
-          # and costs ~400 MB per sanitizer against the repo's 10 GB cache budget.
-          # Keep the registry only.
           cache-targets: "false"
       - name: Run sanitizer gate
         run: bash v8_compat/tools/run_sanitizer_ci.sh ${{ matrix.sanitizer }}
 
-  v8-abi:
-    needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('v8-abi-drift', inputs.case_filter))
-    name: v8-abi-drift
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Fetch Node 24.3 source
-        run: |
-          git submodule sync -- refs/node
-          git submodule update --init --depth 1 refs/node
-          test "$(git -C refs/node rev-parse HEAD)" = \
-            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
-          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
-          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.3.0
-      - run: bash v8_compat/tools/check_abi.sh
-
-  v8-clippy:
-    needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('v8-clippy', inputs.case_filter))
-    name: v8-clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Fetch Node 24.3 source
-        run: |
-          git submodule sync -- refs/node
-          git submodule update --init --depth 1 refs/node
-          test "$(git -C refs/node rev-parse HEAD)" = \
-            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
-          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
-          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          # Registry only: this gate is short, and the repo's 10 GB cache budget is
-          # better spent on the target dirs of the long jobs.
-          shared-key: cargo-registry
-          cache-targets: "false"
-      - run: cargo clippy -p v8_compat --all-targets -- -D warnings
-
-  napi-clippy:
-    needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('napi-clippy', inputs.case_filter))
-    name: napi-clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          # Registry only: short gate, see v8-clippy.
-          shared-key: cargo-registry
-          cache-targets: "false"
-      - run: >
-          cargo clippy
-          -p raster_runtime_napi
-          -p raster_runtime_events
-          -p raster_runtime_tty
-          -p raster_runtime_modules
-          -p raster_runtime_fs
-          -p raster_runtime_util
-          -p raster_runtime_sqlite
-          --all-targets --no-deps -- -D warnings
-
   sqlite-asan:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('sqlite-asan', inputs.case_filter))
+    if: needs.changes.outputs.sqlite == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('sqlite-asan', inputs.case_filter))
     name: sqlite-asan
     runs-on: ubuntu-latest
     steps:
@@ -358,22 +585,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: sqlite-asan
-          # Nightly changes daily, which rotates the cache key, so the target dir
-          # rarely gets reused; only the registry is worth storing.
           cache-targets: "false"
       - run: yarn install --frozen-lockfile
       - run: bash compat/node-sqlite/run-asan.sh
 
-  mysql-compat:
+  macos-compat-node22:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('mysql-compat', inputs.case_filter))
-    name: mysql-compat
-    runs-on: ubuntu-latest
+    if: needs.changes.outputs.full == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('macos-compat-node22 napi-hello vite-plus', inputs.case_filter))
+    name: macos-compat-node22 (macos-latest)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -387,99 +609,39 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          # Registry only: with `cargo build -p raster_runtime` the time goes to the
-          # workspace crates, which rust-cache does not store by default, so a 365 MB
-          # target cache bought ~2 s here. Share the small registry cache instead.
-          shared-key: cargo-registry
-          cache-targets: "false"
-      - name: Build raster_runtime
-        run: cargo build -p raster_runtime
-      - run: make compat-mysql
-      - if: always()
+          shared-key: compatibility
+          key: macos-latest-napi
+      - run: cargo build -p raster_runtime --features napi
+      - name: Run napi-hello and vite-plus
+        env:
+          COMPAT_VP_VERSION_LOOPS: "100"
+          COMPAT_VP_BUILD_LOOPS: "20"
+        run: |
+          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
+          "$RASTER_RUNTIME" --version
+          (cd compat/napi-hello && yarn install)
+          node compat/run.mjs napi-hello target/debug/raster_runtime
+          (cd compat/vite-plus && yarn install --frozen-lockfile)
+          node compat/run.mjs vite-plus target/debug/raster_runtime
+      - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: compat-mysql-logs
-          path: compat/mysql2/compat.log
+          name: compat-macos-node22-logs
+          path: |
+            compat/napi-hello/compat.log
+            compat/vite-plus/compat.log
+            compat/vite-plus/dist
           if-no-files-found: ignore
 
-  postgres-compat:
+  macos-compat-node24:
     needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('node-postgres-compat', inputs.case_filter))
-    name: node-postgres-compat
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.18.0
-          cache: yarn
-      - run: yarn install --frozen-lockfile
-      - run: make js JS_MINIFY=0
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          # Registry only; see mysql-compat.
-          shared-key: cargo-registry
-          cache-targets: "false"
-      - name: Build raster_runtime
-        run: cargo build -p raster_runtime
-      - run: make compat-node-postgres
-      - if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: compat-node-postgres-logs
-          path: compat/node-postgres/compat.log
-          if-no-files-found: ignore
-
-  compatibility:
-    needs: changes
-    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('napi-hello next vite-plus better-sqlite3 v8-hello node-sqlite', inputs.case_filter))
-    name: ${{ matrix.case }} (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - case: napi-hello
-            os: macos-latest
-          - case: next
-            os: ubuntu-latest
-          - case: vite-plus
-            os: ubuntu-latest
-          - case: vite-plus
-            os: macos-latest
-          - case: better-sqlite3
-            os: ubuntu-latest
-          - case: better-sqlite3
-            os: macos-latest
-          - case: v8-hello
-            os: ubuntu-latest
-          - case: v8-hello
-            os: macos-latest
-          - case: v8-hello
-            os: macos-15-intel
-          - case: better-sqlite3
-            os: ubuntu-24.04-arm
-          - case: v8-hello
-            os: ubuntu-24.04-arm
-          - case: node-sqlite
-            os: ubuntu-latest
-          - case: node-sqlite
-            os: macos-latest
+    if: needs.changes.outputs.full == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('macos-compat-node24 node-sqlite v8-hello better-sqlite3', inputs.case_filter))
+    name: macos-compat-node24 (macos-latest)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Fetch Node 24.3 source
-        if: matrix.case == 'v8-hello' || matrix.case == 'better-sqlite3'
         run: |
           git submodule sync -- refs/node
           git submodule update --init --depth 1 refs/node
@@ -489,12 +651,8 @@ jobs:
           grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
       - uses: actions/setup-node@v4
         with:
-          # Vite+ / Next install with Node 22.18 (not system 24.3). V8 fixtures pin 24.3 ABI.
-          node-version: ${{ (matrix.case == 'better-sqlite3' || matrix.case == 'v8-hello' || matrix.case == 'node-sqlite') && '24.3.0' || '22.18.0' }}
-          # The arm64 entry (888 MB) serves only two matrix cases and its restore
-          # (14 s median) exceeds what it saves (2 s); other OS/arch keep the cache
-          # because they amortise it over 5-11 jobs (macOS-x64 saves 33 s alone).
-          cache: ${{ matrix.os != 'ubuntu-24.04-arm' && 'yarn' || '' }}
+          node-version: 24.3.0
+          cache: yarn
       - run: yarn install --frozen-lockfile
       - run: make js JS_MINIFY=0
       - uses: dtolnay/rust-toolchain@master
@@ -502,51 +660,128 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only main writes caches. PR refs restoring-and-resaving their own copy
-          # is what pushed the repo past the 10 GB limit and evicted main's
-          # rust-unit entry, which is the single most valuable cache here.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           shared-key: compatibility
-          # Keyed by feature set, not matrix case: entries differ only in enabled
-          # features, and per-case keys would multiply caches past the repo's
-          # 10 GB cache budget.
-          key: ${{ matrix.os }}-${{ (matrix.case == 'napi-hello' || matrix.case == 'vite-plus') && 'napi' || (matrix.case == 'better-sqlite3' || matrix.case == 'v8-hello') && 'v8-compat' || 'default' }}
-      - name: Build raster_runtime
-        run: |
-          FEATURES=""
-          if [ "${{ matrix.case }}" = "napi-hello" ] || [ "${{ matrix.case }}" = "vite-plus" ]; then FEATURES="--features napi"; fi
-          if [ "${{ matrix.case }}" = "better-sqlite3" ] || [ "${{ matrix.case }}" = "v8-hello" ]; then FEATURES="--features v8-compat"; fi
-          if [ "${{ matrix.case }}" = "node-sqlite" ]; then FEATURES=""; fi
-          cargo build -p raster_runtime $FEATURES
-          if [ "$RUNNER_OS" = "Linux" ] &&
-             { [ "${{ matrix.case }}" = "v8-hello" ] ||
-               [ "${{ matrix.case }}" = "better-sqlite3" ]; }; then
-            nm -D --defined-only target/debug/raster_runtime |
-              c++filt |
-              grep -F "v8::Isolate::GetCurrent()"
-
-            nm -D --defined-only target/debug/raster_runtime |
-              c++filt |
-              grep -F "v8::Context::GetIsolate()"
-          fi
-      - name: Run compatibility fixture
+          key: macos-latest-v8-compat
+      - run: cargo build -p raster_runtime --features v8-compat
+      - name: Run node-sqlite, v8-hello, and better-sqlite3
         env:
-          COMPAT_VP_VERSION_LOOPS: ${{ matrix.case == 'vite-plus' && '100' || '0' }}
-          COMPAT_VP_BUILD_LOOPS: ${{ matrix.case == 'vite-plus' && '20' || '0' }}
-          COMPAT_SQLITE_LIFECYCLE_LOOPS: ${{ matrix.case == 'node-sqlite' && '100' || '0' }}
-          COMPAT_SQLITE_BACKUP_LOOPS: ${{ matrix.case == 'node-sqlite' && '20' || '0' }}
-          COMPAT_BETTER_SQLITE3_LOOPS: ${{ matrix.case == 'better-sqlite3' && '20' || '0' }}
-        run: make compat-${{ matrix.case }}
-      - if: always()
+          COMPAT_SQLITE_LIFECYCLE_LOOPS: "100"
+          COMPAT_SQLITE_BACKUP_LOOPS: "20"
+          COMPAT_BETTER_SQLITE3_LOOPS: "20"
         run: |
-          ./target/debug/raster_runtime --version || true
-          find compat/${{ matrix.case }} -maxdepth 4 -type f | sort
+          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
+          "$RASTER_RUNTIME" --version
+          node compat/run.mjs node-sqlite target/debug/raster_runtime
+          (cd compat/v8-hello && npm run build)
+          node compat/run.mjs v8-hello target/debug/raster_runtime
+          (cd compat/better-sqlite3 && yarn install --frozen-lockfile)
+          node compat/run.mjs better-sqlite3 target/debug/raster_runtime
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: compat-${{ matrix.case }}-${{ matrix.os }}-logs
+          name: compat-macos-node24-logs
           path: |
-            compat/${{ matrix.case }}/compat.log
-            compat/${{ matrix.case }}/.next
-            compat/${{ matrix.case }}/dist
+            compat/node-sqlite/compat.log
+            compat/v8-hello/compat.log
+            compat/better-sqlite3/compat.log
+          if-no-files-found: ignore
+
+  macos-intel-v8:
+    needs: changes
+    if: needs.changes.outputs.full == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('macos-intel-v8 v8-hello', inputs.case_filter))
+    name: v8-hello (macos-15-intel)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Node 24.3 source
+        run: |
+          git submodule sync -- refs/node
+          git submodule update --init --depth 1 refs/node
+          test "$(git -C refs/node rev-parse HEAD)" = \
+            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
+          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
+          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.3.0
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - run: make js JS_MINIFY=0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: compatibility
+          key: macos-15-intel-v8-compat
+      - run: cargo build -p raster_runtime --features v8-compat
+      - name: Run v8-hello
+        run: |
+          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
+          "$RASTER_RUNTIME" --version
+          (cd compat/v8-hello && npm run build)
+          node compat/run.mjs v8-hello target/debug/raster_runtime
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-v8-hello-macos-15-intel-logs
+          path: compat/v8-hello/compat.log
+          if-no-files-found: ignore
+
+  arm64-compat:
+    needs: changes
+    if: needs.changes.outputs.full == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('arm64-compat v8-hello better-sqlite3', inputs.case_filter))
+    name: arm64-compat (ubuntu-24.04-arm)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch Node 24.3 source
+        run: |
+          git submodule sync -- refs/node
+          git submodule update --init --depth 1 refs/node
+          test "$(git -C refs/node rev-parse HEAD)" = \
+            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
+          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
+          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.3.0
+      - run: yarn install --frozen-lockfile
+      - run: make js JS_MINIFY=0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: compatibility
+          key: ubuntu-24.04-arm-v8-compat
+      - name: Build raster_runtime (v8-compat)
+        run: |
+          cargo build -p raster_runtime --features v8-compat
+          nm -D --defined-only target/debug/raster_runtime |
+            c++filt |
+            grep -F "v8::Isolate::GetCurrent()"
+          nm -D --defined-only target/debug/raster_runtime |
+            c++filt |
+            grep -F "v8::Context::GetIsolate()"
+      - name: Run v8-hello and better-sqlite3
+        env:
+          COMPAT_BETTER_SQLITE3_LOOPS: "20"
+        run: |
+          export RASTER_RUNTIME="$PWD/target/debug/raster_runtime"
+          "$RASTER_RUNTIME" --version
+          (cd compat/v8-hello && npm run build)
+          node compat/run.mjs v8-hello target/debug/raster_runtime
+          (cd compat/better-sqlite3 && yarn install --frozen-lockfile)
+          node compat/run.mjs better-sqlite3 target/debug/raster_runtime
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compat-arm64-logs
+          path: |
+            compat/v8-hello/compat.log
+            compat/better-sqlite3/compat.log
           if-no-files-found: ignore
