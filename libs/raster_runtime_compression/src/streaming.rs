@@ -6,16 +6,87 @@ use std::io::{self, Write};
 #[cfg(all(not(feature = "brotli-c"), feature = "brotli-rust"))]
 use brotli as brotlic;
 
+/// A streaming inflate driven directly by `flate2::Decompress`.
+///
+/// The `write::*Decoder` helpers read to EOF and then report success, so a
+/// truncated stream looks exactly like a finished one. Driving the decompressor
+/// ourselves lets us see the `StreamEnd` status, which is the only reliable
+/// signal that the compressed stream actually ended rather than ran out.
+#[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
+pub struct RawInflate {
+    decoder: flate2::Decompress,
+    /// Set once the decompressor reports `StreamEnd`.
+    reached_end: bool,
+}
+
+#[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
+impl RawInflate {
+    /// `zlib_header` selects `deflate` (true) or `deflate-raw` (false).
+    pub fn new(zlib_header: bool) -> Self {
+        Self {
+            decoder: flate2::Decompress::new(zlib_header),
+            reached_end: false,
+        }
+    }
+
+    pub fn decompress_chunk(&mut self, input: &[u8]) -> io::Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(input.len().saturating_mul(4).max(4096));
+        let mut consumed = 0usize;
+        loop {
+            let before_in = self.decoder.total_in();
+            let before_out = self.decoder.total_out();
+            let mut scratch = [0u8; 16 * 1024];
+            let status = self
+                .decoder
+                .decompress(
+                    &input[consumed..],
+                    &mut scratch,
+                    flate2::FlushDecompress::None,
+                )
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err.to_string()))?;
+            let produced = (self.decoder.total_out() - before_out) as usize;
+            out.extend_from_slice(&scratch[..produced]);
+            consumed += (self.decoder.total_in() - before_in) as usize;
+            match status {
+                flate2::Status::StreamEnd => {
+                    self.reached_end = true;
+                    break;
+                },
+                flate2::Status::Ok | flate2::Status::BufError => {
+                    if consumed >= input.len() && produced == 0 {
+                        // No progress and no input left: wait for the next chunk.
+                        break;
+                    }
+                    if consumed >= input.len() && produced > 0 {
+                        break;
+                    }
+                },
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn finish(self) -> io::Result<Vec<u8>> {
+        if !self.reached_end {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unexpected end of file",
+            ));
+        }
+        Ok(Vec::new())
+    }
+}
+
 /// Streaming decompressor that maintains state across chunks
 pub enum StreamingDecoder {
     #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
     Gzip(flate2::write::GzDecoder<Vec<u8>>),
     #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
-    Deflate(flate2::write::ZlibDecoder<Vec<u8>>),
+    Deflate(RawInflate),
     /// Raw DEFLATE with no zlib wrapper (RFC 1951). `ws` permessage-deflate
     /// and Node's `inflateRaw` both need it.
     #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
-    DeflateRaw(flate2::write::DeflateDecoder<Vec<u8>>),
+    DeflateRaw(RawInflate),
     #[cfg(any(feature = "zstd-c", feature = "zstd-rust"))]
     Zstd(zstd::stream::write::Decoder<'static, Vec<u8>>),
     #[cfg(any(feature = "brotli-c", feature = "brotli-rust"))]
@@ -29,11 +100,9 @@ impl StreamingDecoder {
             #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
             "gzip" => Ok(Self::Gzip(flate2::write::GzDecoder::new(Vec::new()))),
             #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
-            "deflate" => Ok(Self::Deflate(flate2::write::ZlibDecoder::new(Vec::new()))),
+            "deflate" => Ok(Self::Deflate(RawInflate::new(true))),
             #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
-            "deflate-raw" => Ok(Self::DeflateRaw(flate2::write::DeflateDecoder::new(
-                Vec::new(),
-            ))),
+            "deflate-raw" => Ok(Self::DeflateRaw(RawInflate::new(false))),
             #[cfg(any(feature = "zstd-c", feature = "zstd-rust"))]
             "zstd" => Ok(Self::Zstd(zstd::stream::write::Decoder::new(Vec::new())?)),
             #[cfg(feature = "brotli-c")]
@@ -62,17 +131,9 @@ impl StreamingDecoder {
                 Ok(std::mem::take(decoder.get_mut()))
             },
             #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
-            Self::Deflate(decoder) => {
-                decoder.write_all(input)?;
-                decoder.flush()?;
-                Ok(std::mem::take(decoder.get_mut()))
-            },
+            Self::Deflate(decoder) => decoder.decompress_chunk(input),
             #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
-            Self::DeflateRaw(decoder) => {
-                decoder.write_all(input)?;
-                decoder.flush()?;
-                Ok(std::mem::take(decoder.get_mut()))
-            },
+            Self::DeflateRaw(decoder) => decoder.decompress_chunk(input),
             #[cfg(any(feature = "zstd-c", feature = "zstd-rust"))]
             Self::Zstd(decoder) => {
                 decoder.write_all(input)?;

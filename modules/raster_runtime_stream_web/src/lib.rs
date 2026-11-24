@@ -20,6 +20,7 @@ use crate::{
     writable::WritableStreamDefaultControllerPrimordials,
 };
 
+mod compression;
 mod encoding;
 mod queuing_strategy;
 pub mod readable;
@@ -89,6 +90,8 @@ impl ModuleDef for StreamWebModule {
 
         declare.declare("TextEncoderStream")?;
         declare.declare("TextDecoderStream")?;
+        declare.declare("CompressionStream")?;
+        declare.declare("DecompressionStream")?;
 
         declare.declare("default")?;
         Ok(())
@@ -115,6 +118,7 @@ impl ModuleDef for StreamWebModule {
             Class::<TransformStreamDefaultController>::define(default)?;
 
             encoding::export_encoding_streams(default)?;
+            compression::export_compression_streams(default)?;
 
             Ok(())
         })?;
@@ -162,6 +166,7 @@ pub fn init(ctx: &Ctx) -> Result<()> {
     Class::<TransformStreamDefaultController>::define(globals)?;
 
     encoding::install_encoding_streams(ctx)?;
+    compression::install_compression_streams(ctx)?;
 
     Ok(())
 }

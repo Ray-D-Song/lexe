@@ -22,6 +22,9 @@ use rquickjs::{
 #[rquickjs::class]
 pub struct EncoderHandle {
     inner: RefCell<Option<EncoderHandleInner>>,
+    /// Set when a `push` failed and the codec was released, so `finish` can tell
+    /// "already finished normally" from "failed and cannot continue".
+    failed: std::cell::Cell<bool>,
 }
 
 enum EncoderHandleInner {
@@ -43,6 +46,7 @@ impl EncoderHandle {
             inner: RefCell::new(Some(EncoderHandleInner::Encode(StreamingEncoder::new(
                 encoding, level,
             )?))),
+            failed: std::cell::Cell::new(false),
         })
     }
 
@@ -52,6 +56,7 @@ impl EncoderHandle {
             inner: RefCell::new(Some(EncoderHandleInner::Decode(
                 raster_runtime_compression::streaming::StreamingDecoder::new(encoding)?,
             ))),
+            failed: std::cell::Cell::new(false),
         })
     }
 }
@@ -86,21 +91,46 @@ impl EncoderHandle {
         let Some(handle) = slot.as_mut() else {
             return Err(Exception::throw_message(
                 &ctx,
-                "zlib handle already finished",
+                if self.failed.get() {
+                    "zlib handle failed and has been released"
+                } else {
+                    "zlib handle already finished"
+                },
             ));
         };
         let out = match handle {
             EncoderHandleInner::Encode(encoder) => encoder.compress_chunk(&bytes),
             EncoderHandleInner::Decode(decoder) => decoder.decompress_chunk(&bytes),
+        };
+        match out {
+            Ok(out) => Buffer(out).into_js(&ctx),
+            Err(err) => {
+                // Release the codec before reporting the failure. Leaving it in
+                // place would keep the decoder alive for the lifetime of the JS
+                // handle, and the handle is reachable from the stream that
+                // failed — a cross-language cycle the collector cannot break.
+                drop(slot.take());
+                self.failed.set(true);
+                Err(Exception::throw_message(&ctx, &err.to_string()))
+            },
         }
-        .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))?;
-        Buffer(out).into_js(&ctx)
     }
 
     /// Flush the codec and return the trailing stream bytes.
+    ///
+    /// Returns an empty buffer when the handle already finished normally. After
+    /// a `push` failure the codec has been released, so `finish` reports that
+    /// rather than pretending a stream ended cleanly — a caller that ignores
+    /// the earlier error must not read this as success.
     pub fn finish<'js>(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
         let taken = self.inner.borrow_mut().take();
         let Some(handle) = taken else {
+            if self.failed.get() {
+                return Err(Exception::throw_message(
+                    &ctx,
+                    "zlib handle failed and has been released",
+                ));
+            }
             return Buffer(Vec::new()).into_js(&ctx);
         };
         let out = match handle {
