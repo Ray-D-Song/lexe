@@ -1,6 +1,6 @@
 # Crypto and TLS Backend Options
 
-raster_runtime supports multiple cryptographic backends for both the crypto module and TLS connections. These can be configured via Cargo features.
+Lexe supports multiple cryptographic backends for both the crypto module and TLS connections. These can be configured via Cargo features.
 
 ### Crypto Provider Features
 

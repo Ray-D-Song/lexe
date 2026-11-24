@@ -7,7 +7,7 @@ standards such as the [WHATWG URL standard](https://url.spec.whatwg.org/) for
 
 ### Running WPTs
 
-raster_runtime includes built-in support for running web-platform-tests using a simplified workflow. To get started:
+lexe includes built-in support for running web-platform-tests using a simplified workflow. To get started:
 
 1. **Change sparse-checkout mode** (only once)
 

@@ -1,18 +1,18 @@
-# Vendored rquickjs-sys (Raster patch)
+# Vendored rquickjs-sys (Lexe patch)
 
 This is rquickjs-sys 0.12.1 with QuickJS patches so `AsyncLocalStorage` can
 propagate across `await` / `.then()` and so `ArrayBuffer.transfer` / detach
 does not double-free.
 
 Vendored QuickJS baseline: `04e27345bd12e1d9b1eb68d76805126313998`
-(document as tracked by this Raster tree).
+(document as tracked by this Lexe tree).
 
 ## Patch summary
 
 ### 1. Promise reaction BEFORE/AFTER identity
 
 Upstream QuickJS only fired `JS_PROMISE_HOOK_BEFORE` / `AFTER` for thenable
-resolution jobs. Raster also wraps normal promise reaction jobs (including
+resolution jobs. Lexe also wraps normal promise reaction jobs (including
 `await` and `.then()`).
 
 **Critical:** BEFORE/AFTER use the **reaction async resource**, not the source
@@ -37,7 +37,7 @@ release the same backing store again after `transfer` / detach.
 
 ### 3. Historical note
 
-An earlier Raster approach forced a wrapper Promise on every `await`. That was
+An earlier Lexe approach forced a wrapper Promise on every `await`. That was
 removed in favor of reaction-resource hooks, which also cover plain `.then()`
 used by React/Next.
 

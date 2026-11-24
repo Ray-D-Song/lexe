@@ -3,7 +3,7 @@
 > [!NOTE]
 > Below is a high level overview of partially supported APIs and modules. For more details consult the [API](../API.md) documentation
 
-| [Node.js API](https://nodejs.org/api/index.html) | Node.js | raster_runtime |
+| [Node.js API](https://nodejs.org/api/index.html) | Node.js | lexe |
 | ------------------------------------------------ | ------- | -------------- |
 | node:assert                                      | ✔︎       | ✔︎️⚠️            |
 | node:async_hooks                                 | ✔︎       | ✔︎️⚠️            |
@@ -54,14 +54,14 @@
 | node:worker_threads                              | ✔︎       | ✔︎⚠️            |
 | node:zlib                                        | ✔︎       | ✔︎⚠️            |
 
-| [raster_runtime API](https://github.com/Ray-D-Song/raster/blob/main/API.md) | Node.js | raster_runtime |
+| [lexe API](https://github.com/Ray-D-Song/lexe/blob/main/API.md) | Node.js | lexe |
 | ----------------------------------------------------------------------------------- | ------- | -------------- |
-| raster_runtime:hex                                                                  | ✘       | ✔︎              |
-| raster_runtime:qjs                                                                  | ✘       | ✔︎              |
-| raster_runtime:util                                                                 | ✘       | ✔︎              |
-| raster_runtime:xml                                                                  | ✘       | ✔︎              |
+| lexe:hex                                                                  | ✘       | ✔︎              |
+| lexe:qjs                                                                  | ✘       | ✔︎              |
+| lexe:util                                                                 | ✘       | ✔︎              |
+| lexe:xml                                                                  | ✘       | ✔︎              |
 
-| [Web Platform API](https://min-common-api.proposal.wintertc.org/) | raster_runtime |
+| [Web Platform API](https://min-common-api.proposal.wintertc.org/) | lexe |
 | ----------------------------------------------------------------- | -------------- |
 | COMPRESSION                                                       | ✔︎⚠️            |
 | CONSOLE                                                           | ✔︎⚠️            |
@@ -81,7 +81,7 @@
 | WEBIDL                                                            | ✔︎⚠️            |
 | XHR                                                               | ✔︎⚠️            |
 
-| Other features | raster_runtime |
+| Other features | lexe |
 | -------------- | -------------- |
 | async/await    | ✔︎              |
 | esm            | ✔︎              |
@@ -93,14 +93,14 @@
 
 | Package              | Tested versions              | Local acceptance                                                                                                                      | CI policy                                                                              |
 | -------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `mysql2`             | mysql2 3.23.2 / MySQL 8.4    | Node and Raster pass the Promise, callback, transaction, error, and pool fixture                                                      | Blocking                                                                               |
-| `pg` (node-postgres) | pg 8.22.0 / PostgreSQL 16.14 | Node and Raster pass all 25 SCRAM, query, pool, transaction, TLS, cancellation, recovery, notification, shutdown, and `.pgpass` cases | Node baseline and infrastructure are blocking; Raster failures currently emit warnings |
+| `mysql2`             | mysql2 3.23.2 / MySQL 8.4    | Node and Lexe pass the Promise, callback, transaction, error, and pool fixture                                                      | Blocking                                                                               |
+| `pg` (node-postgres) | pg 8.22.0 / PostgreSQL 16.14 | Node and Lexe pass all 25 SCRAM, query, pool, transaction, TLS, cancellation, recovery, notification, shutdown, and `.pgpass` cases | Node baseline and infrastructure are blocking; Lexe failures currently emit warnings |
 
 See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands, exclusions, and diagnostics.
 
 **Legend**
 
-- ⚠️ = partially supported in RASTER_RUNTIME
+- ⚠️ = partially supported in Lexe
 - ⏱ = planned partial support
 - \* = Not native
 
@@ -138,5 +138,5 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 ### Native addons
 
-- **N-API** native addon (`.node`) loading is supported when Raster is built with `--features napi` on a dynamically linked target.
+- **N-API** native addon (`.node`) loading is supported when Lexe is built with `--features napi` on a dynamically linked target.
 - **V8 C++ ABI** addons targeting Node 24 (e.g. `better-sqlite3`) are supported with `--features v8-compat` through a limited QuickJS-backed V8 shim.

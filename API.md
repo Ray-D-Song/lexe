@@ -1,7 +1,7 @@
 # API documentation
 
 > [!NOTE]
-> The long term goal for raster_runtime is to become [WinterTC compliant](https://min-common-api.proposal.wintertc.org/). Not every API from Node.js will be supported.
+> The long term goal for lexe is to become [WinterTC compliant](https://min-common-api.proposal.wintertc.org/). Not every API from Node.js will be supported.
 
 # Node.js API
 
@@ -75,7 +75,7 @@
 
 [AsyncLocalStorage.snapshot](https://nodejs.org/api/async_context.html#static-method-asynclocalstoragesnapshot)
 
-> AsyncLocalStorage propagates across Promises, `await`, microtasks, and timers by default (no `RASTER_RUNTIME_ASYNC_HOOKS` required). Public `createHook()` user callbacks still require `RASTER_RUNTIME_ASYNC_HOOKS=1`.
+> AsyncLocalStorage propagates across Promises, `await`, microtasks, and timers by default (no `LEXE_ASYNC_HOOKS` required). Public `createHook()` user callbacks still require `LEXE_ASYNC_HOOKS=1`.
 
 ## buffer
 
@@ -83,7 +83,7 @@
 > `toString`, `from`, `write`, `alloc`, `byteLength` and `isEncoding` support the Node encodings utf8, utf16le (ucs2), latin1 (binary), ascii, base64, base64url and hex, matched case-insensitively without trimming.
 
 > [!NOTE]
-> Instance methods (`fill`, `indexOf`/`lastIndexOf`/`includes`, `compare`/`equals`, `copy`, `slice`/`subarray`, `swap16/32/64`, `toJSON`, the `read*`/`write*` families and the `*Slice`/`*Write` helpers) follow Node's argument coercion and error codes. `Buffer.prototype.inspect` is not provided yet. `Buffer.poolSize` is only a number; Raster does not pool allocations.
+> Instance methods (`fill`, `indexOf`/`lastIndexOf`/`includes`, `compare`/`equals`, `copy`, `slice`/`subarray`, `swap16/32/64`, `toJSON`, the `read*`/`write*` families and the `*Slice`/`*Write` helpers) follow Node's argument coercion and error codes. `Buffer.prototype.inspect` is not provided yet. `Buffer.poolSize` is only a number; Lexe does not pool allocations.
 
 ### Static methods
 
@@ -321,9 +321,9 @@ Global `console` is a `Console` instance with methods bound to itself (matching 
 
 [webcrypto](https://nodejs.org/api/crypto.html#cryptowebcrypto)
 
-### raster_runtime specific hash classes
+### lexe specific hash classes
 
-Lightweight and fast hash classes for raster_runtime.
+Lightweight and fast hash classes for lexe.
 
 - `Md5`
 - `Sha1`
@@ -512,7 +512,7 @@ Lightweight and fast hash classes for raster_runtime.
 
 ## http2
 
-Node-compatible HTTP/2 surface via native module `raster_runtime_http2`:
+Node-compatible HTTP/2 surface via native module `lexe_http2`:
 
 - `createServer()` / `createSecureServer()` — h2c or TLS+ALPN `h2`, `(req, res)` callback with `res.end()` buffering.
 - `connect()` — h2c or `https` client session with `request()` and `connect` event.
@@ -638,7 +638,7 @@ _process is available globally_
 
 Process is an EventEmitter. Explicit `process.exit(code)` emits `"exit"` synchronously before terminating. When the event loop drains naturally, `"beforeExit"` then `"exit"` are emitted with the current `process.exitCode`. OS signals (`SIGINT`, `SIGTERM`, `SIGHUP` on Unix; Ctrl+C on Windows) are bridged to `process.emit("signal", name)`; default termination matches Node when no `"signal"` listener is registered.
 
-`process.version` / `process.versions.node` advertise Node `24.3.0` for ecosystem gates; `process.versions.raster_runtime` and CLI `--version` remain the real Raster version.
+`process.version` / `process.versions.node` advertise Node `24.3.0` for ecosystem gates; `process.versions.lexe` and CLI `--version` remain the real Lexe version.
 
 [arch](https://nodejs.org/api/process.html#processarch)
 
@@ -668,7 +668,7 @@ Process is an EventEmitter. Explicit `process.exit(code)` emits `"exit"` synchro
 
 [pid](https://nodejs.org/api/process.html#processpid)
 
-[id](https://nodejs.org/api/process.html#processpid) (deprecated Raster-legacy PID property; initialized to the same value as `process.pid`, remains writable for backward compatibility and is not a live alias of `pid`)
+[id](https://nodejs.org/api/process.html#processpid) (deprecated Lexe-legacy PID property; initialized to the same value as `process.pid`, remains writable for backward compatibility and is not a live alias of `pid`)
 
 [kill](https://nodejs.org/api/process.html#processkillpid-signal)
 
@@ -867,11 +867,11 @@ Partial `node:tls` support:
 - STARTTLS upgrade through `connect({ socket, ... })`
 - TLS 1.2 and TLS 1.3 with the configured `tls-ring`, `tls-aws-lc`, `tls-graviola`, or `tls-openssl` backend
 
-PFX, custom cipher/signature configuration, DH parameters, CRLs, PSK, OCSP, session/ticket resumption, async `SNICallback`, `ALPNCallback`, soft mTLS, and related advanced APIs are not supported. `TLSSocket.write()` currently returns `true` without backpressure or `drain` signaling. See [`modules/raster_runtime_tls/README.md`](modules/raster_runtime_tls/README.md).
+PFX, custom cipher/signature configuration, DH parameters, CRLs, PSK, OCSP, session/ticket resumption, async `SNICallback`, `ALPNCallback`, soft mTLS, and related advanced APIs are not supported. `TLSSocket.write()` currently returns `true` without backpressure or `drain` signaling. See [`modules/lexe_tls/README.md`](modules/lexe_tls/README.md).
 
 ## inspector
 
-Startup probe only — Raster does **not** implement the Node Inspector debugging protocol.
+Startup probe only — Lexe does **not** implement the Node Inspector debugging protocol.
 
 [url](https://nodejs.org/api/inspector.html#inspectorurl) — always returns `undefined`
 
@@ -969,7 +969,7 @@ Startup probe only — Raster does **not** implement the Node Inspector debuggin
 ## vm
 
 > [!IMPORTANT]
-> Raster provides a minimal `vm.runInNewContext` implementation backed by an isolated QuickJS context in the same runtime. This is **not** a security boundary.
+> Lexe provides a minimal `vm.runInNewContext` implementation backed by an isolated QuickJS context in the same runtime. This is **not** a security boundary.
 
 [runInNewContext](https://nodejs.org/api/vm.html#vmruninnewcontextcode-contextobject-options)
 
@@ -1044,9 +1044,9 @@ Each factory returns a `stream.Transform` that emits a **single** framed stream 
 
 > `flush(kind, cb)` currently completes immediately without honouring the flush kind, and `params()` / `close()` are not implemented.
 
-# raster_runtime API
+# lexe API
 
-## raster_runtime:hex
+## lexe:hex
 
 ```typescript
 export function encode(
@@ -1057,11 +1057,11 @@ export function decode(value: string): Uint8Array;
 
 ## Timezone-aware Intl
 
-Raster provides timezone support through the global `Intl.DateTimeFormat` and `Date.prototype.toLocaleString` APIs. There is no public `raster_runtime:timezone` module.
+Lexe provides timezone support through the global `Intl.DateTimeFormat` and `Date.prototype.toLocaleString` APIs. There is no public `lexe:timezone` module.
 
 ### Intl.DateTimeFormat
 
-raster_runtime provides a minimal `Intl.DateTimeFormat` implementation focused on timezone support. This enables libraries like dayjs to work with timezone conversions transparently.
+lexe provides a minimal `Intl.DateTimeFormat` implementation focused on timezone support. This enables libraries like dayjs to work with timezone conversions transparently.
 
 ```javascript
 // Create a formatter for a specific timezone
@@ -1127,7 +1127,7 @@ const denver = date.tz("America/Denver");
 console.log(denver.startOf("day").format()); // "2022-03-02T00:00:00-07:00"
 ```
 
-## raster_runtime:qjs
+## lexe:qjs
 
 ```typescript
 interface MemoryInfo {
@@ -1161,7 +1161,7 @@ interface MemoryInfo {
 export function ComputeMemoryUsage(): MemoryInfo;
 ```
 
-## raster_runtime:xml
+## lexe:xml
 
 A lightweight and fast XML parser and builder
 
@@ -1193,7 +1193,7 @@ export class XMLParser(options?: XmlParserOptions){
 ```
 
 
-## raster_runtime:util
+## lexe:util
 
 ```typescript
 export function dimensions(): [number, number];
@@ -1329,7 +1329,7 @@ export function print(value: any): void;
 
 [WebAssembly](https://developer.mozilla.org/en-US/docs/WebAssembly/Reference/JavaScript_interface)
 
-Raster installs a fresh, realm-scoped `WebAssembly` global on every QuickJS context, backed by [`wasmi`](https://github.com/wasmi-labs/wasmi) `1.1.0`.
+Lexe installs a fresh, realm-scoped `WebAssembly` global on every QuickJS context, backed by [`wasmi`](https://github.com/wasmi-labs/wasmi) `1.1.0`.
 
 Implemented:
 
@@ -1347,12 +1347,12 @@ Implemented:
 >
 > Every `Instance`/`Memory`/`Table`/`Global`/exported-function object is scoped to the QuickJS context (realm) that created it; passing one into a different realm's `WebAssembly` APIs (e.g. across a `vm.runInNewContext` boundary, if that child context also had `WebAssembly` installed) throws `LinkError` rather than silently mixing `wasmi` stores.
 >
-> `externref` lifetime: to preserve JS identity for every Wasm reference safely, Raster retains the `Persistent<Value>` associated with an `externref` until its WebAssembly realm is torn down. `wasmi` 1.1.0 does not expose the complete set of roots required to reclaim individual entries safely (including Wasm-private tables, globals, and active frames). Consequently, a long-lived realm that continuously stores distinct JS values as `externref` can grow its retained memory until realm teardown; applications with that pattern should use bounded/reused references or periodically recreate the realm.
+> `externref` lifetime: to preserve JS identity for every Wasm reference safely, Lexe retains the `Persistent<Value>` associated with an `externref` until its WebAssembly realm is torn down. `wasmi` 1.1.0 does not expose the complete set of roots required to reclaim individual entries safely (including Wasm-private tables, globals, and active frames). Consequently, a long-lived realm that continuously stores distinct JS values as `externref` can grow its retained memory until realm teardown; applications with that pattern should use bounded/reused references or periodically recreate the realm.
 
-Not implemented (out of scope for this batch): `WebAssembly.Function`, `Tag`, `Exception`, JSPI (`Suspending`/`promising`), the garbage-collection, exception-handling, and function-references proposals, shared memory/threads, `Memory64`, WASI, and the `.wasm` ESM loader. `WebAssembly.validate`/`compile` reject modules using any of these as a `CompileError` (or `false`, for `validate`) rather than passing them through to `wasmi` or risking a panic. Raster does not provide a WebAssembly-level security sandbox or execution-time/memory quota beyond what `wasmi`'s interpreter itself enforces.
+Not implemented (out of scope for this batch): `WebAssembly.Function`, `Tag`, `Exception`, JSPI (`Suspending`/`promising`), the garbage-collection, exception-handling, and function-references proposals, shared memory/threads, `Memory64`, WASI, and the `.wasm` ESM loader. `WebAssembly.validate`/`compile` reject modules using any of these as a `CompileError` (or `false`, for `validate`) rather than passing them through to `wasmi` or risking a panic. Lexe does not provide a WebAssembly-level security sandbox or execution-time/memory quota beyond what `wasmi`'s interpreter itself enforces.
 
 > [!IMPORTANT]
-> This implementation requires `wasmi 1.1.0` and Rust `1.86` or newer (the `raster_runtime_webassembly` crate's own `rust-version`; it does not raise the minimum for any other workspace crate).
+> This implementation requires `wasmi 1.1.0` and Rust `1.86` or newer (the `lexe_webassembly` crate's own `rust-version`; it does not raise the minimum for any other workspace crate).
 
 ## WEBCRYPTO
 

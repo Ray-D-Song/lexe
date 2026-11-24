@@ -1,16 +1,16 @@
-# Using node_modules (dependencies) with raster_runtime
+# Using node_modules (dependencies) with Lexe
 
-Since raster_runtime is meant for performance critical application it's not recommended to deploy `node_modules` without bundling, minification and tree-shaking.
+Since Lexe is meant for performance critical application it's not recommended to deploy `node_modules` without bundling, minification and tree-shaking.
 
-raster_runtime can work with any bundler of your choice. Below are some configurations for popular bundlers:
+Lexe can work with any bundler of your choice. Below are some configurations for popular bundlers:
 
 > [!WARNING]
-> raster_runtime implements native modules that are largely compatible with the following external packages.
+> Lexe implements native modules that are largely compatible with the following external packages.
 > By implementing the following conversions in the bundler's alias function, your application may be faster, but we recommend that you test thoroughly as they are not fully compatible.
 
-| Node.js         | raster_runtime     |
+| Node.js         | lexe     |
 | --------------- | ------------------ |
-| fast-xml-parser | raster_runtime:xml |
+| fast-xml-parser | lexe:xml |
 
 ### ESBuild
 

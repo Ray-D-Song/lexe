@@ -1,6 +1,6 @@
 # node-sqlite compatibility parity
 
-Structured differential tests for `node:sqlite` parity between Node 24.3 and Raster.
+Structured differential tests for `node:sqlite` parity between Node 24.3 and Lexe.
 
 ## Usage
 
@@ -16,7 +16,7 @@ make
 SQLITE_EXTENSION_PATH=$PWD/build/sqlite_extension.dylib node parity.mjs
 ```
 
-The parity probe prints one JSON document to stdout. `compat/run.mjs` runs the same script under Node 24.3 and Raster, normalizes volatile fields, and compares the results.
+The parity probe prints one JSON document to stdout. `compat/run.mjs` runs the same script under Node 24.3 and Lexe, normalizes volatile fields, and compares the results.
 
 ## ASan gate (Linux)
 

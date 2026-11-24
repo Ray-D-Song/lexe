@@ -1,7 +1,7 @@
 # Contributing Guidelines
 
-Thank you for your interest in contributing to raster_runtime. This project is
-maintained by Ray-D-Song for the Raster project.
+Thank you for your interest in contributing to lexe. This project is
+maintained by Ray-D-Song for the Lexe project.
 
 Please read through this document before submitting any issues or pull requests to ensure we have all the necessary
 information to effectively respond to your bug report or contribution.
