@@ -948,7 +948,11 @@ Startup probe only — Lexe does **not** implement the Node Inspector debugging 
 
 [isatty](https://nodejs.org/api/tty.html#ttyisattyfd)
 
-> `ReadStream` / `WriteStream` (including `process.stdin` / `stdout` / `stderr`) support `ref()` / `unref()`. Stdin reader tasks stop blocking exit when unref'd; readline follows `process.stdin`.
+[ReadStream](https://nodejs.org/api/tty.html#class-ttyreadstream)
+
+[WriteStream](https://nodejs.org/api/tty.html#class-ttywritestream)
+
+> `ReadStream` / `WriteStream` (including `process.stdin` / `stdout` / `stderr` and arbitrary file descriptors) support `ref()` / `unref()`, non-stdio reads/writes, and automatic `SIGWINCH`-driven `"resize"` events on `WriteStream`. Stdin reader tasks stop blocking exit when unref'd; readline follows `process.stdin`.
 
 ## url
 

@@ -49,11 +49,14 @@ pub async fn install(
 
     tokio::spawn(async move {
         while let Some(name) = rx.recv().await {
-            // Node: with no `signal` listener the OS default termination applies,
+            // Node: with no `signal` listener the OS default termination applies
+            // (except non-fatal signals like SIGWINCH whose default is ignore),
             // so the process dies by signal (exit code 128+signum) without running
             // `exit` handlers. Doing that here also avoids waiting for the runtime
             // lock, which a parked `idle` can hold indefinitely.
-            if lexe_process::lifecycle::signal_listener_count_snapshot() == Some(0) {
+            if name != "SIGWINCH"
+                && lexe_process::lifecycle::signal_listener_count_snapshot() == Some(0)
+            {
                 std::process::exit(i32::from(
                     lexe_process::lifecycle::default_exit_code_for_signal(&name),
                 ));
@@ -92,7 +95,8 @@ fn spawn_unix_listeners(
 
     forward(SignalKind::interrupt(), "SIGINT", tx.clone());
     forward(SignalKind::terminate(), "SIGTERM", tx.clone());
-    forward(SignalKind::hangup(), "SIGHUP", tx);
+    forward(SignalKind::hangup(), "SIGHUP", tx.clone());
+    forward(SignalKind::window_change(), "SIGWINCH", tx);
 
     Ok(())
 }

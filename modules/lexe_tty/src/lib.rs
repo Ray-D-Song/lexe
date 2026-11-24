@@ -10,7 +10,7 @@
 //! their own copy). Raw mode is reference-counted and restored on last use.
 
 use std::io;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[cfg(not(target_family = "wasm"))]
@@ -29,8 +29,9 @@ use lexe_buffer::Buffer;
 use lexe_context::CtxExtension;
 use lexe_events::{Emitter, EventEmitter};
 use lexe_utils::bytes::ObjectBytes;
-use lexe_utils::event_loop::EventLoopRef;
+use lexe_utils::event_loop::{self, EventLoopRef};
 use lexe_utils::module::{export_default, ModuleInfo};
+use lexe_utils::primordials::{BasePrimordials, Primordial};
 use rquickjs::{
     class::{Trace, Tracer},
     function::Opt,
@@ -38,7 +39,7 @@ use rquickjs::{
     prelude::{Func, This},
     Class, Ctx, Exception, IntoJs, JsLifetime, Object, Result, Value,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 
 // ---------------------------------------------------------------------------
 // Platform helpers
@@ -55,11 +56,14 @@ fn isatty(fd: i32) -> bool {
 #[cfg(windows)]
 fn isatty(fd: i32) -> bool {
     use std::io::{stderr, stdin, stdout, IsTerminal};
+    if fd < 0 {
+        return false;
+    }
     match fd {
         0 => stdin().is_terminal(),
         1 => stdout().is_terminal(),
         2 => stderr().is_terminal(),
-        _ => false,
+        _ => win_cancel::handle_for_fd(fd).is_some_and(win_cancel::is_console_handle),
     }
 }
 
@@ -102,7 +106,36 @@ fn write_all_fd(fd: i32, mut bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn write_all_fd(fd: i32, bytes: &[u8]) -> io::Result<()> {
+    use std::io::{stderr, stdout, Write};
+    if fd < 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bad file descriptor",
+        ));
+    }
+    match fd {
+        1 => {
+            let mut out = stdout().lock();
+            out.write_all(bytes)?;
+            out.flush()
+        },
+        2 => {
+            let mut out = stderr().lock();
+            out.write_all(bytes)?;
+            out.flush()
+        },
+        _ => {
+            let handle = win_cancel::handle_for_fd(fd).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "bad file descriptor")
+            })?;
+            win_cancel::write_handle_all(handle, bytes)
+        },
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn write_all_fd(fd: i32, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write;
     if fd < 0 {
@@ -130,7 +163,20 @@ fn write_all_fd(fd: i32, bytes: &[u8]) -> io::Result<()> {
     }
 }
 
-fn window_size_for_fd(_fd: i32) -> (u16, u16) {
+fn window_size_for_fd(fd: i32) -> (u16, u16) {
+    #[cfg(unix)]
+    if fd >= 0 {
+        let mut ws = libc::winsize {
+            ws_row: 0,
+            ws_col: 0,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        let rc = unsafe { libc::ioctl(fd as libc::c_int, libc::TIOCGWINSZ, &mut ws) };
+        if rc == 0 && (ws.ws_col > 0 || ws.ws_row > 0) {
+            return (ws.ws_col, ws.ws_row);
+        }
+    }
     #[cfg(not(target_family = "wasm"))]
     {
         match crossterm::terminal::size() {
@@ -140,6 +186,7 @@ fn window_size_for_fd(_fd: i32) -> (u16, u16) {
     }
     #[cfg(target_family = "wasm")]
     {
+        let _ = fd;
         (80, 24)
     }
 }
@@ -324,6 +371,10 @@ mod win_cancel {
     use std::os::windows::raw::HANDLE;
     use std::ptr;
 
+    extern "C" {
+        fn _get_osfhandle(fd: i32) -> isize;
+    }
+
     #[link(name = "kernel32")]
     extern "system" {
         fn CreateEventW(
@@ -351,6 +402,14 @@ mod win_cancel {
             dw_milliseconds: u32,
         ) -> u32;
         fn GetStdHandle(n_std_handle: u32) -> HANDLE;
+        fn WriteFile(
+            h_file: HANDLE,
+            lp_buffer: *const u8,
+            n_number_of_bytes_to_write: u32,
+            lp_number_of_bytes_written: *mut u32,
+            lp_overlapped: *mut core::ffi::c_void,
+        ) -> i32;
+        fn GetConsoleMode(h_console_handle: HANDLE, lp_mode: *mut u32) -> i32;
     }
 
     pub const WAIT_OBJECT_0: u32 = 0;
@@ -436,6 +495,55 @@ mod win_cancel {
         } else {
             Some(h)
         }
+    }
+
+    pub fn handle_for_fd(fd: i32) -> Option<HANDLE> {
+        if fd < 0 {
+            return None;
+        }
+        if matches!(fd, 0..=2) {
+            if let Some(h) = std_handle_for_fd(fd) {
+                return Some(h);
+            }
+        }
+        let h = unsafe { _get_osfhandle(fd) };
+        if h == 0 || h == -1isize {
+            None
+        } else {
+            Some(h as HANDLE)
+        }
+    }
+
+    pub fn is_console_handle(handle: HANDLE) -> bool {
+        let mut mode: u32 = 0;
+        unsafe { GetConsoleMode(handle, &mut mode) != 0 }
+    }
+
+    pub fn write_handle_all(handle: HANDLE, mut bytes: &[u8]) -> io::Result<()> {
+        while !bytes.is_empty() {
+            let chunk_len = bytes.len().min(u32::MAX as usize) as u32;
+            let mut written: u32 = 0;
+            let ok = unsafe {
+                WriteFile(
+                    handle,
+                    bytes.as_ptr(),
+                    chunk_len,
+                    &mut written,
+                    ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if written == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write whole buffer",
+                ));
+            }
+            bytes = &bytes[written as usize..];
+        }
+        Ok(())
     }
 
     pub fn wait_read_or_cancel(read_handle: HANDLE, cancel: HANDLE) -> io::Result<WaitOutcome> {
@@ -1075,9 +1183,9 @@ fn windows_reader_loop(fd: i32, cancel: WorkerCancel, tx: mpsc::UnboundedSender<
     use std::io::Read;
     use std::os::windows::io::{FromRawHandle, IntoRawHandle};
 
-    let Some(handle) = win_cancel::std_handle_for_fd(fd) else {
+    let Some(handle) = win_cancel::handle_for_fd(fd) else {
         let _ = tx.send(ReaderMsg::Error(
-            "non-stdio tty read is not supported on Windows".into(),
+            "EBADF: bad file descriptor, read".into(),
         ));
         return;
     };
@@ -1133,6 +1241,9 @@ pub struct WriteStream<'js> {
     columns: u16,
     rows: u16,
     ended: bool,
+    ended_flag: Arc<AtomicBool>,
+    winch_active: Arc<AtomicBool>,
+    winch_stop: Arc<Notify>,
     loop_ref: Arc<EventLoopRef>,
 }
 
@@ -1278,7 +1389,12 @@ impl<'js> WriteStream<'js> {
                 Ok(())
             })?;
         }
-        this.0.borrow_mut().ended = true;
+        {
+            let mut ws = this.0.borrow_mut();
+            ws.ended = true;
+            ws.ended_flag.store(true, Ordering::Release);
+            ws.winch_stop.notify_waiters();
+        }
         let _ = WriteStream::emit_str(this.0.clone(), &ctx, "finish", vec![], false);
         Ok(this.0)
     }
@@ -1464,6 +1580,109 @@ impl<'js> WriteStream<'js> {
 }
 
 impl<'js> WriteStream<'js> {
+    fn start_resize_watch(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<()> {
+        #[cfg(unix)]
+        {
+            let (is_tty, ended_flag, winch_active, stop_notify, loop_ref) = {
+                let borrow = this.borrow();
+                (
+                    borrow.is_tty,
+                    borrow.ended_flag.clone(),
+                    borrow.winch_active.clone(),
+                    borrow.winch_stop.clone(),
+                    borrow.loop_ref.clone(),
+                )
+            };
+            if !is_tty || ended_flag.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            if winch_active
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                return Ok(());
+            }
+            use tokio::signal::unix::{signal, SignalKind};
+            let Ok(mut sig) = signal(SignalKind::window_change()) else {
+                winch_active.store(false, Ordering::Release);
+                return Ok(());
+            };
+            let ws_clone = this.0.clone();
+            ctx.clone().spawn_exit(async move {
+                loop {
+                    if ended_flag.load(Ordering::Acquire)
+                        || !event_loop::keeps_event_loop_alive(&loop_ref)
+                    {
+                        break;
+                    }
+                    tokio::select! {
+                        _ = event_loop::wait_until_io_unref(loop_ref.clone()) => break,
+                        _ = stop_notify.notified() => break,
+                        evt = sig.recv() => {
+                            if evt.is_none() {
+                                break;
+                            }
+                            let _ = WriteStream::refresh_size(This(ws_clone.clone()), ctx.clone());
+                        }
+                    }
+                }
+                winch_active.store(false, Ordering::Release);
+                Ok(())
+            })?;
+        }
+        #[cfg(not(unix))]
+        let _ = (this, ctx);
+        Ok(())
+    }
+
+    fn stop_resize_watch(this: This<Class<'js, Self>>) {
+        this.borrow().winch_stop.notify_waiters();
+    }
+
+    fn ensure_prototype(ctx: &Ctx<'js>) -> Result<()> {
+        let _ = BasePrimordials::init(ctx);
+        let Some(proto) = Class::<WriteStream>::prototype(ctx)? else {
+            return Ok(());
+        };
+        if proto
+            .get::<_, Option<bool>>("__lexeTtyResizeHooked")?
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        WriteStream::add_event_emitter_prototype(ctx)?;
+        let start_watch = rquickjs::Function::new(ctx.clone(), WriteStream::start_resize_watch)?;
+        let stop_watch = rquickjs::Function::new(ctx.clone(), WriteStream::stop_resize_watch)?;
+        let install: rquickjs::Function = ctx.eval(
+            r#"(function (proto, startWatch, stopWatch) {
+  Object.defineProperty(proto, "__lexeTtyResizeHooked", { value: true });
+  for (const m of ["on", "once", "addListener", "prependListener", "prependOnceListener"]) {
+    const orig = proto[m];
+    if (typeof orig === "function") {
+      proto[m] = function (ev) {
+        const ret = orig.apply(this, arguments);
+        if (ev === "resize") startWatch.call(this);
+        return ret;
+      };
+    }
+  }
+  for (const m of ["off", "removeListener", "removeAllListeners"]) {
+    const orig = proto[m];
+    if (typeof orig === "function") {
+      proto[m] = function () {
+        const ret = orig.apply(this, arguments);
+        if (typeof this.listenerCount === "function" && this.listenerCount("resize") === 0) {
+          stopWatch.call(this);
+        }
+        return ret;
+      };
+    }
+  }
+})"#,
+        )?;
+        install.call::<_, ()>((proto, start_watch, stop_watch))
+    }
+
     pub fn new(ctx: Ctx<'js>, fd: i32) -> Result<Class<'js, Self>> {
         let emitter = EventEmitter::new();
         let is_tty = isatty(fd);
@@ -1484,10 +1703,13 @@ impl<'js> WriteStream<'js> {
                 columns,
                 rows,
                 ended: false,
+                ended_flag: Arc::new(AtomicBool::new(false)),
+                winch_active: Arc::new(AtomicBool::new(false)),
+                winch_stop: Arc::new(Notify::new()),
                 loop_ref,
             },
         )?;
-        WriteStream::add_event_emitter_prototype(&ctx)?;
+        WriteStream::ensure_prototype(&ctx)?;
         Ok(instance)
     }
 }
@@ -1511,7 +1733,7 @@ impl ModuleDef for TtyModule {
         let _ = Class::<ReadStream>::create_constructor(ctx)?;
         let _ = Class::<WriteStream>::create_constructor(ctx)?;
         ReadStream::add_event_emitter_prototype(ctx)?;
-        WriteStream::add_event_emitter_prototype(ctx)?;
+        WriteStream::ensure_prototype(ctx)?;
 
         export_default(ctx, exports, |default| {
             default.set("isatty", Func::from(isatty))?;
@@ -1839,5 +2061,87 @@ mod tests {
         }
         // destroy: no restart
         assert!(matches!(ReaderState::Destroyed, ReaderState::Destroyed));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_stream_sigwinch_emits_resize_automatically() {
+        let master = unsafe { libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY) };
+        assert!(master >= 0, "posix_openpt failed");
+        assert_eq!(unsafe { libc::grantpt(master) }, 0);
+        assert_eq!(unsafe { libc::unlockpt(master) }, 0);
+        let slave_name = unsafe { libc::ptsname(master) };
+        assert!(!slave_name.is_null());
+        let slave = unsafe { libc::open(slave_name, libc::O_RDWR | libc::O_NOCTTY) };
+        assert!(slave >= 0, "open pty slave failed");
+
+        let init_ws = libc::winsize {
+            ws_row: 30,
+            ws_col: 90,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        assert_eq!(unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &init_ws) }, 0);
+        assert!(isatty(slave));
+        assert_eq!(window_size_for_fd(slave), (90, 30));
+
+        test_async_with(|ctx| {
+            Box::pin(async move {
+                ModuleEvaluator::eval_rust::<TtyModule>(ctx.clone(), "tty")
+                    .await
+                    .unwrap();
+                ctx.globals().set("__ptyMaster", master).unwrap();
+                ctx.globals().set("__ptySlave", slave).unwrap();
+                let trigger_resize = rquickjs::Function::new(ctx.clone(), |m: i32| {
+                    let next_ws = libc::winsize {
+                        ws_row: 50,
+                        ws_col: 132,
+                        ws_xpixel: 0,
+                        ws_ypixel: 0,
+                    };
+                    unsafe {
+                        libc::ioctl(m as libc::c_int, libc::TIOCSWINSZ, &next_ws);
+                        libc::kill(libc::getpid(), libc::SIGWINCH);
+                    }
+                })
+                .unwrap();
+                ctx.globals().set("__triggerWinch", trigger_resize).unwrap();
+
+                let module = ModuleEvaluator::eval_js(
+                    ctx.clone(),
+                    "test",
+                    r#"
+                        import tty from "tty";
+                        export async function test() {
+                          const ws = new tty.WriteStream(globalThis.__ptySlave);
+                          if (ws.columns !== 90 || ws.rows !== 30) {
+                            throw new Error(`unexpected initial size: ${ws.columns}x${ws.rows}`);
+                          }
+                          ws.ref();
+                          return await new Promise((resolve) => {
+                            ws.once("resize", () => {
+                              ws.unref();
+                              resolve({ columns: ws.columns, rows: ws.rows });
+                            });
+                            globalThis.__triggerWinch(globalThis.__ptyMaster);
+                          });
+                        }
+                    "#,
+                )
+                .await
+                .unwrap();
+
+                let res: Object = call_test(&ctx, &module, ()).await;
+                let cols: u16 = res.get("columns").unwrap();
+                let rows: u16 = res.get("rows").unwrap();
+                assert_eq!((cols, rows), (132, 50));
+            })
+        })
+        .await;
+
+        unsafe {
+            libc::close(slave);
+            libc::close(master);
+        }
     }
 }

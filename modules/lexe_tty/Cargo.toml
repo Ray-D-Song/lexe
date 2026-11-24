@@ -21,6 +21,9 @@ libc = { version = "0.2", default-features = false }
 tokio = { version = "1", features = ["sync"], default-features = false }
 tracing = { version = "0.1", default-features = false }
 
+[target.'cfg(unix)'.dependencies]
+tokio = { version = "1", features = ["signal"], default-features = false }
+
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 crossterm = { version = "0.29", features = ["events", "windows"], default-features = false }
 

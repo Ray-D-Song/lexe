@@ -233,6 +233,9 @@ fn dispatch_signal(ctx: &Ctx<'_>, name: &str) -> rquickjs::Result<()> {
     if emit_os_signal(ctx, name)? {
         return Ok(());
     }
+    if name == "SIGWINCH" {
+        return Ok(());
+    }
 
     let code = default_exit_code_for_signal(name);
     EXIT_CODE.store(code, Ordering::Relaxed);

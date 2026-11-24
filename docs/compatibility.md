@@ -44,7 +44,7 @@
 | node:timers | ✔︎ | ✔︎ | — |
 | node:timers/promises | ✔︎ | ✔︎ | — |
 | node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
-| node:tty | ✔︎ | ✔︎⚠️ | Non-stdio fd writes and Windows non-stdio TTY reads unsupported; no automatic `SIGWINCH` `resize` event ([details](#nodetty)) |
+| node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎⚠️ | Missing `URLPattern`; minor `url`-crate parser quirks ([details](#nodeurl)) |
 | node:util | ✔︎ | ✔︎⚠️ | Missing `parseArgs` and `transferableAbort*`; `inspect` ignores options; `formatWithOptions` only honors `colors`; limited `TextDecoder` encodings ([details](#nodeutil-and-nodeutiltypes)) |
 | node:util/types | ✔︎ | ✔︎⚠️ | Missing `isWebAssemblyCompiledModule`; `isExternal`, `isKeyObject`, and `isCryptoKey` always return `false` ([details](#nodeutil-and-nodeutiltypes)) |
@@ -228,11 +228,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - TLS versions below 1.2 are not supported.
 - `TLSSocket.renegotiate()` fails with `"renegotiation not supported"`.
 - `TLSSocket.write()` always returns `true` without backpressure or `"drain"` signaling.
-
-#### `node:tty`
-
-- Writing to arbitrary non-stdio file descriptors and reading from non-stdio TTY file descriptors on Windows are not supported.
-- Automatic `SIGWINCH`-driven `"resize"` events on `WriteStream` are not hooked into process signal handling (only explicit `refreshSize()` emits `"resize"`).
 
 #### `node:url`
 
