@@ -5,7 +5,7 @@
 
 | [Node.js API](https://nodejs.org/api/index.html) | Node.js | lexe | Key differences from Node.js |
 | --- | --- | --- | --- |
-| node:assert | ✔︎ | ✔︎⚠️ | Missing `partialDeepStrictEqual` and `snapshot`; `node:assert/strict` lacks ESM named exports ([details](#nodeassert)) |
+| node:assert | ✔︎ | ✔︎ | — |
 | node:async_hooks | ✔︎ | ✔︎⚠️ | Public `createHook()` disabled by default (`LEXE_ASYNC_HOOKS=1`); missing `executionAsyncResource`, `asyncWrapProviders`, and `AsyncLocalStorage` Node 24 options ([details](#nodeasync_hooks)) |
 | node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`); no slab pooling; no `Buffer.prototype.inspect` or `INSPECT_MAX_BYTES` truncation; no `Uint64` paths ([details](#nodebuffer)) |
 | node:child_process | ✔︎ | ✔︎⚠️ | Missing `spawnSync`; limited `stdio` (`pipe`/`ignore`/`inherit`) and `spawn` options; `unref()` detaches wait handle ([details](#nodechild_process)) |
@@ -107,11 +107,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 ## Partial support details
 
 ### Node.js APIs
-
-#### `node:assert`
-
-- Missing `assert.partialDeepStrictEqual()` and `assert.snapshot()`.
-- `node:assert/strict` only exports `default`, so ESM named imports such as `import { strictEqual } from "node:assert/strict"` are unavailable.
 
 #### `node:async_hooks`
 

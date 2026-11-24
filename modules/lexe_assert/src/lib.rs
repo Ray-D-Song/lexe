@@ -3,10 +3,34 @@
 use lexe_utils::module::ModuleInfo;
 use rquickjs::{
     module::{Declarations, Exports, ModuleDef},
-    Ctx, Function, Object, Result,
+    Ctx, Object, Result, Value,
 };
 
 const ASSERT_JS: &str = include_str!("assert_impl.js");
+
+const ASSERT_EXPORTS: &[&str] = &[
+    "ok",
+    "fail",
+    "equal",
+    "notEqual",
+    "strictEqual",
+    "notStrictEqual",
+    "deepEqual",
+    "notDeepEqual",
+    "deepStrictEqual",
+    "notDeepStrictEqual",
+    "partialDeepStrictEqual",
+    "throws",
+    "doesNotThrow",
+    "rejects",
+    "doesNotReject",
+    "match",
+    "doesNotMatch",
+    "ifError",
+    "AssertionError",
+    "CallTracker",
+    "strict",
+];
 
 /// Build the `assert` object (a callable function with the full method set).
 fn build_assert<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
@@ -14,70 +38,33 @@ fn build_assert<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
     Ok(assert)
 }
 
+fn declare_assert_exports(declare: &Declarations) -> Result<()> {
+    for name in ASSERT_EXPORTS {
+        declare.declare(*name)?;
+    }
+    declare.declare("default")?;
+    Ok(())
+}
+
+fn export_assert_object<'js>(exports: &Exports<'js>, obj: Object<'js>) -> Result<()> {
+    for name in ASSERT_EXPORTS {
+        let value: Value<'js> = obj.get(*name)?;
+        exports.export(*name, value)?;
+    }
+    exports.export("default", obj.into_value())?;
+    Ok(())
+}
+
 pub struct AssertModule;
 
 impl ModuleDef for AssertModule {
     fn declare(declare: &Declarations) -> Result<()> {
-        // The whole surface is produced by the JS implementation, so every name
-        // it defines has to be declared here as well.
-        for name in [
-            "ok",
-            "fail",
-            "equal",
-            "notEqual",
-            "strictEqual",
-            "notStrictEqual",
-            "deepEqual",
-            "notDeepEqual",
-            "deepStrictEqual",
-            "notDeepStrictEqual",
-            "throws",
-            "doesNotThrow",
-            "rejects",
-            "doesNotReject",
-            "match",
-            "doesNotMatch",
-            "ifError",
-            "AssertionError",
-            "CallTracker",
-            "strict",
-            "default",
-        ] {
-            declare.declare(name)?;
-        }
-        Ok(())
+        declare_assert_exports(declare)
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         let assert = build_assert(ctx)?;
-        for name in [
-            "ok",
-            "fail",
-            "equal",
-            "notEqual",
-            "strictEqual",
-            "notStrictEqual",
-            "deepEqual",
-            "notDeepEqual",
-            "deepStrictEqual",
-            "notDeepStrictEqual",
-            "throws",
-            "doesNotThrow",
-            "rejects",
-            "doesNotReject",
-            "match",
-            "doesNotMatch",
-            "ifError",
-            "AssertionError",
-            "CallTracker",
-            "strict",
-        ] {
-            let value = assert.get::<_, rquickjs::Value<'js>>(name)?;
-            exports.export(name, value)?;
-        }
-        let as_value = assert.clone().into_value();
-        exports.export("default", as_value)?;
-        Ok(())
+        export_assert_object(exports, assert)
     }
 }
 
@@ -94,15 +81,13 @@ pub struct AssertStrictModule;
 
 impl ModuleDef for AssertStrictModule {
     fn declare(declare: &Declarations) -> Result<()> {
-        declare.declare("default")?;
-        Ok(())
+        declare_assert_exports(declare)
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         let assert = build_assert(ctx)?;
-        let strict: Function<'js> = assert.get("strict")?;
-        exports.export("default", strict)?;
-        Ok(())
+        let strict: Object<'js> = assert.get("strict")?;
+        export_assert_object(exports, strict)
     }
 }
 

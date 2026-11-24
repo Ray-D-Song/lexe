@@ -1,6 +1,11 @@
 (function () {
   "use strict";
 
+  const SINGLETON_KEY = Symbol.for("lexe.assert.singleton");
+  if (Object.prototype.hasOwnProperty.call(globalThis, SINGLETON_KEY) && globalThis[SINGLETON_KEY]) {
+    return globalThis[SINGLETON_KEY];
+  }
+
   const objectToString = Object.prototype.toString;
   const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
   const isObjectLike = (v) => typeof v === "object" && v !== null;
@@ -171,6 +176,187 @@
     return deepEqualInner(a, b, true, []);
   }
 
+  function bipartiteMatch(lenA, lenB, canMatch) {
+    // Match each index in 0..lenB to a distinct index in 0..lenA.
+    const matchToB = new Array(lenA).fill(-1);
+    function dfs(bi, visited) {
+      for (let ai = 0; ai < lenA; ai++) {
+        if (visited[ai]) continue;
+        if (!canMatch(ai, bi)) continue;
+        visited[ai] = true;
+        if (matchToB[ai] === -1 || dfs(matchToB[ai], visited)) {
+          matchToB[ai] = bi;
+          return true;
+        }
+      }
+      return false;
+    }
+    for (let bi = 0; bi < lenB; bi++) {
+      const visited = new Array(lenA).fill(false);
+      if (!dfs(bi, visited)) return false;
+    }
+    return true;
+  }
+
+  function bytesSubsequence(aBytes, bBytes) {
+    let ai = 0;
+    let bi = 0;
+    while (bi < bBytes.length && ai < aBytes.length) {
+      if (aBytes[ai] === bBytes[bi]) bi++;
+      ai++;
+    }
+    return bi === bBytes.length;
+  }
+
+  function partialKeysEqual(a, b, seen, skipArrayIndices) {
+    const keys = ownEnumerableKeys(b, true);
+    for (const k of keys) {
+      if (skipArrayIndices && typeof k !== "symbol" && /^\d+$/.test(String(k))) {
+        continue;
+      }
+      if (!hasOwn(a, k)) return false;
+      if (!partialDeepStrictEqualInner(a[k], b[k], seen)) return false;
+    }
+    return true;
+  }
+
+  function partialDeepStrictEqualInner(a, b, seen) {
+    if (Object.is(a, b)) return true;
+    if (!isObjectLike(a) || !isObjectLike(b)) return false;
+
+    for (const pair of seen) {
+      if (pair[0] === a && pair[1] === b) return true;
+    }
+    const nextSeen = seen.concat([[a, b]]);
+
+    const tagA = tagOf(a);
+    const tagB = tagOf(b);
+
+    // Special built-ins on `expected` (`b`) or `actual` (`a`) require compatible kinds.
+    if (tagA === "Error" || tagB === "Error") {
+      if (tagA !== "Error" || tagB !== "Error") return false;
+      if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
+      if (a.name !== b.name || a.message !== b.message) return false;
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+
+    if (tagB === "Date") {
+      if (tagA !== "Date" || !Object.is(a.getTime(), b.getTime())) return false;
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+    if (tagB === "RegExp") {
+      if (
+        tagA !== "RegExp" ||
+        a.source !== b.source ||
+        a.flags !== b.flags ||
+        a.lastIndex !== b.lastIndex
+      ) {
+        return false;
+      }
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+    if (
+      tagB === "Number" ||
+      tagB === "String" ||
+      tagB === "Boolean" ||
+      tagB === "BigInt" ||
+      tagB === "Symbol"
+    ) {
+      if (tagA !== tagB || !Object.is(a.valueOf(), b.valueOf())) return false;
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+    if (tagB === "Promise" || tagB === "WeakMap" || tagB === "WeakSet") {
+      return false;
+    }
+
+    if (isTypedArray(b)) {
+      if (!isTypedArray(a) || tagA !== tagB) return false;
+      if (b.length > a.length) return false;
+      let ai = 0;
+      let bi = 0;
+      while (bi < b.length && ai < a.length) {
+        if (Object.is(a[ai], b[bi])) bi++;
+        ai++;
+      }
+      if (bi < b.length) return false;
+      return partialKeysEqual(a, b, nextSeen, true);
+    }
+    if (tagB === "ArrayBuffer") {
+      if (tagA !== "ArrayBuffer") return false;
+      if (!bytesSubsequence(new Uint8Array(a), new Uint8Array(b))) return false;
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+    if (tagB === "DataView") {
+      if (tagA !== "DataView") return false;
+      if (!bytesSubsequence(bytesOf(a), bytesOf(b))) return false;
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+
+    if (Array.isArray(b)) {
+      if (!Array.isArray(a) || b.length > a.length) return false;
+      let ai = 0;
+      let bi = 0;
+      while (bi < b.length && ai < a.length) {
+        if (!hasOwn(b, bi)) {
+          // A sparse hole in `expected` matches any slot in `actual`.
+          bi++;
+          ai++;
+          continue;
+        }
+        if (hasOwn(a, ai) && partialDeepStrictEqualInner(a[ai], b[bi], nextSeen)) {
+          bi++;
+        }
+        ai++;
+      }
+      if (bi < b.length) return false;
+      return partialKeysEqual(a, b, nextSeen, true);
+    }
+
+    if (tagB === "Set") {
+      if (tagA !== "Set" || b.size > a.size) return false;
+      const aItems = Array.from(a);
+      const bItems = Array.from(b);
+      if (
+        !bipartiteMatch(aItems.length, bItems.length, (ai, bi) =>
+          partialDeepStrictEqualInner(aItems[ai], bItems[bi], nextSeen)
+        )
+      ) {
+        return false;
+      }
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+
+    if (tagB === "Map") {
+      if (tagA !== "Map" || b.size > a.size) return false;
+      const aEntries = Array.from(a.entries());
+      const bEntries = Array.from(b.entries());
+      if (
+        !bipartiteMatch(
+          aEntries.length,
+          bEntries.length,
+          (ai, bi) =>
+            partialDeepStrictEqualInner(aEntries[ai][0], bEntries[bi][0], nextSeen) &&
+            partialDeepStrictEqualInner(aEntries[ai][1], bEntries[bi][1], nextSeen)
+        )
+      ) {
+        return false;
+      }
+      return partialKeysEqual(a, b, nextSeen, false);
+    }
+
+    // Node rejects comparing e.g. a non-empty Array against an expected Date,
+    // while allowing `{}` / class instances / `Object.create(null)` to match each other.
+    if (Array.isArray(a) || tagA === "Set" || tagA === "Map" || tagA === "Date" || tagA === "RegExp") {
+      if (tagA !== tagB && tagB !== "Object") return false;
+    }
+
+    return partialKeysEqual(a, b, nextSeen, false);
+  }
+
+  function partialDeepStrictEqual(a, b) {
+    return partialDeepStrictEqualInner(a, b, []);
+  }
+
   // --- AssertionError -----------------------------------------------------
 
   class AssertionError extends Error {
@@ -185,7 +371,7 @@
       this.code = "ERR_ASSERTION";
       if ("actual" in opts) this.actual = opts.actual;
       if ("expected" in opts) this.expected = opts.expected;
-      this.operator = opts.operator || "fail";
+      this.operator = "operator" in opts ? opts.operator : "fail";
       if (opts.generatedMessage === undefined) this.generatedMessage = false;
       else this.generatedMessage = opts.generatedMessage;
     }
@@ -309,6 +495,21 @@
         actual,
         expected,
         operator: "notDeepStrictEqual",
+      });
+    }
+  }
+
+  function partialDeepStrictEqualAssert(actual, expected, message) {
+    if (!partialDeepStrictEqual(actual, expected)) {
+      throw new AssertionError({
+        message:
+          message === undefined
+            ? "Expected values to be partially strictly deep-equal"
+            : message,
+        actual,
+        expected,
+        operator: "partialDeepStrictEqual",
+        generatedMessage: message === undefined,
       });
     }
   }
@@ -538,33 +739,113 @@
     #calls = new Map();
 
     calls(fn, exact) {
-      const count = exact === undefined ? 1 : exact;
-      const existing = this.#calls.get(fn);
-      if (existing) {
-        existing.count += count;
-      } else {
-        this.#calls.set(fn, { count, fn });
+      if (typeof fn === "number") {
+        exact = fn;
+        fn = function noop() {};
+      } else if (fn === undefined) {
+        fn = function noop() {};
+        if (exact === undefined) exact = 1;
+      } else if (typeof fn !== "function") {
+        const err = new TypeError(
+          'The "fn" argument must be of type function. Received type ' + typeof fn
+        );
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
       }
-      return fn;
+
+      if (exact === undefined) exact = 1;
+      if (typeof exact !== "number") {
+        const err = new TypeError(
+          'The "exact" argument must be of type number. Received type ' + typeof exact
+        );
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      if (!Number.isInteger(exact) || exact < 1 || exact > 0xffffffff) {
+        const err = new RangeError(
+          'The value of "exact" is out of range. It must be >= 1 && <= 4294967295. Received ' + exact
+        );
+        err.code = "ERR_OUT_OF_RANGE";
+        throw err;
+      }
+
+      const name = fn.name || "calls";
+      const entry = {
+        exact,
+        fn,
+        name,
+        calls: [],
+        stack: new Error(),
+      };
+      const trackerFn = function (...args) {
+        entry.calls.push({ thisArg: this, arguments: args });
+        return fn.apply(this, args);
+      };
+      this.#calls.set(trackerFn, entry);
+      return trackerFn;
+    }
+
+    getCalls(fn) {
+      const entry = this.#calls.get(fn);
+      if (!entry) {
+        const err = new TypeError("The 'fn' argument must be a tracked function");
+        err.code = "ERR_INVALID_ARG_VALUE";
+        throw err;
+      }
+      return entry.calls.map((c) => ({
+        thisArg: c.thisArg,
+        arguments: c.arguments.slice(),
+      }));
     }
 
     report() {
+      const errors = [];
       for (const [, entry] of this.#calls) {
-        if (entry.count > 0) {
-          throw new AssertionError({
-            message: "Expected the function to be called " + entry.count + " more time(s)",
-            operator: "CallTracker.report",
+        const actual = entry.calls.length;
+        if (actual !== entry.exact) {
+          errors.push({
+            message:
+              "Expected the " +
+              entry.name +
+              " function to be executed " +
+              entry.exact +
+              " time(s) but was executed " +
+              actual +
+              " time(s).",
+            actual,
+            expected: entry.exact,
+            operator: entry.name,
+            stack: entry.stack,
           });
         }
       }
+      return errors;
     }
 
     verify() {
-      this.report();
+      const errors = this.report();
+      if (errors.length > 0) {
+        throw new AssertionError({
+          message: "Functions were not called the expected number of times",
+          operator: undefined,
+        });
+      }
     }
 
-    reset() {
-      this.#calls.clear();
+    reset(fn) {
+      if (fn !== undefined) {
+        const entry = this.#calls.get(fn);
+        if (!entry) {
+          const err = new TypeError("The 'fn' argument must be a tracked function");
+          err.code = "ERR_INVALID_ARG_VALUE";
+          throw err;
+        }
+        entry.calls = [];
+        return;
+      }
+      for (const [, entry] of this.#calls) {
+        entry.calls = [];
+      }
     }
   }
 
@@ -581,6 +862,7 @@
   assert.notDeepEqual = notDeepEqualAssert;
   assert.deepStrictEqual = deepStrictEqualAssert;
   assert.notDeepStrictEqual = notDeepStrictEqualAssert;
+  assert.partialDeepStrictEqual = partialDeepStrictEqualAssert;
   assert.throws = throws;
   assert.doesNotThrow = doesNotThrow;
   assert.rejects = rejects;
@@ -606,7 +888,16 @@
   strict.notStrictEqual = notStrictEqual;
   strict.deepStrictEqual = deepStrictEqualAssert;
   strict.notDeepStrictEqual = notDeepStrictEqualAssert;
+  strict.partialDeepStrictEqual = partialDeepStrictEqualAssert;
+  strict.strict = strict;
   assert.strict = strict;
+
+  Object.defineProperty(globalThis, SINGLETON_KEY, {
+    value: assert,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
 
   return assert;
 })()

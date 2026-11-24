@@ -7,6 +7,14 @@
 
 ## assert
 
+`node:assert` and `node:assert/strict` export the full Node.js assertion surface (`AssertionError`, `CallTracker`, `strict`, `ok`, `fail`, `equal`, `notEqual`, `strictEqual`, `notStrictEqual`, `deepEqual`, `notDeepEqual`, `deepStrictEqual`, `notDeepStrictEqual`, `partialDeepStrictEqual`, `throws`, `doesNotThrow`, `rejects`, `doesNotReject`, `match`, `doesNotMatch`, and `ifError`), with named ESM and CJS support on both `node:assert` and `node:assert/strict`.
+
+[partialDeepStrictEqual](https://nodejs.org/api/assert.html#assertpartialdeepstrictequalactual-expected-message)
+
+[strictEqual](https://nodejs.org/api/assert.html#assertstrictequalactual-expected-message)
+
+[deepStrictEqual](https://nodejs.org/api/assert.html#assertdeepstrictequalactual-expected-message)
+
 [ok](https://nodejs.org/api/assert.html#assertokvalue-message)
 
 ## async_hooks
