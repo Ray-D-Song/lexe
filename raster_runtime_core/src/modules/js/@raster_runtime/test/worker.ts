@@ -261,6 +261,13 @@ class TestAgent {
   private async complete() {
     await this.sendMessage("completed");
     await this.client.close();
+    // The worker has reported everything and closed its socket, so there is
+    // nothing left for it to do. Exit explicitly instead of waiting for the
+    // event loop to drain: a test that leaves a timer or handle behind would
+    // otherwise keep the process alive past the parent's exit gate, and the
+    // parent would report the file as leaking resources it does not own.
+    // `client.close()` has already flushed the last message.
+    process.exit(0);
   }
 
   private async sendMessage<T extends SocketReqMsg["type"]>(
