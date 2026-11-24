@@ -19,6 +19,9 @@ concurrency:
   group: compat-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  RUST_TOOLCHAIN: "1.100.0"
+
 jobs:
   changes:
     name: changes
@@ -80,6 +83,19 @@ jobs:
           echo "Diff touches no Rust/TS/bundle/workflow paths."
           echo "Heavy Rust + compat jobs skipped."
 
+  rust-fmt:
+    needs: changes
+    if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('rust-fmt', inputs.case_filter))
+    name: rust-fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
   rust-unit:
     needs: changes
     if: needs.changes.outputs.core == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('rust-unit-tests', inputs.case_filter))
@@ -102,7 +118,9 @@ jobs:
           # restore (13-19 s) costs more than the install it saves (2-13 s), for
           # ~888 MB of a 10 GB cache budget. Measured on rust-unit-tests.
       - run: yarn install --frozen-lockfile
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
           # Only main writes caches. PR refs restoring-and-resaving their own copy
@@ -115,7 +133,6 @@ jobs:
           cache-workspace-crates: "true"
           # A red run still leaves reusable artifacts; keep them for the next try.
           cache-on-failure: "true"
-      - run: cargo fmt --all -- --check
       - run: cargo test -p v8_compat --lib
       - run: cargo test -p raster_runtime_napi --lib -- --test-threads=1
       - run: cargo test -p raster_runtime_events --lib
@@ -142,7 +159,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24.3.0
@@ -181,7 +200,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           # Only main writes caches. PR refs restoring-and-resaving their own copy
@@ -223,7 +245,7 @@ jobs:
       - run: yarn install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.sanitizer == 'address' && 'nightly' || 'stable' }}
+          toolchain: ${{ matrix.sanitizer == 'address' && 'nightly' || env.RUST_TOOLCHAIN }}
           targets: x86_64-unknown-linux-gnu
       - uses: Swatinem/rust-cache@v2
         with:
@@ -275,7 +297,10 @@ jobs:
             "741975041995a272ff7e378bcbb6d6fa4b93f38f"
           grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
           grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           # Only main writes caches. PR refs restoring-and-resaving their own copy
@@ -295,7 +320,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           # Only main writes caches. PR refs restoring-and-resaving their own copy
@@ -354,7 +382,9 @@ jobs:
           cache: yarn
       - run: yarn install --frozen-lockfile
       - run: make js JS_MINIFY=0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
           # Only main writes caches. PR refs restoring-and-resaving their own copy
@@ -389,7 +419,9 @@ jobs:
           cache: yarn
       - run: yarn install --frozen-lockfile
       - run: make js JS_MINIFY=0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
           # Only main writes caches. PR refs restoring-and-resaving their own copy
@@ -465,7 +497,9 @@ jobs:
           cache: ${{ matrix.os != 'ubuntu-24.04-arm' && 'yarn' || '' }}
       - run: yarn install --frozen-lockfile
       - run: make js JS_MINIFY=0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
           # Only main writes caches. PR refs restoring-and-resaving their own copy

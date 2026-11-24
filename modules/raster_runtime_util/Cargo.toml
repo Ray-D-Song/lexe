@@ -17,7 +17,6 @@ raster_runtime_encoding = { version = "0.1.0", path = "../../libs/raster_runtime
 raster_runtime_logging = { version = "0.1.0", path = "../../libs/raster_runtime_logging" }
 raster_runtime_utils = { version = "0.1.0", path = "../../libs/raster_runtime_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
-unicode-width = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 raster_runtime_test = { path = "../../libs/raster_runtime_test" }

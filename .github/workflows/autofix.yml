@@ -1,0 +1,97 @@
+name: Auto Fix (fmt & clippy)
+
+on:
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/autofix.yml"
+
+env:
+  RUST_TOOLCHAIN: "1.100.0"
+
+concurrency:
+  group: autofix-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  autofix:
+    # Skip fork PRs where the workflow does not have write access to the head repo.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    name: autofix-fmt-clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          # Default GITHUB_TOKEN commits and pushes fixes out of the box, though
+          # GitHub suppresses downstream CI triggers for GITHUB_TOKEN pushes.
+          # Optionally set repository secret AUTOFIX_TOKEN (a Fine-grained PAT
+          # with Contents: Read & write and Workflows: Read & write) so autofix
+          # pushes automatically re-trigger the Compatibility workflow.
+          token: ${{ secrets.AUTOFIX_TOKEN || github.token }}
+
+      - name: Guard against autofix commit loops
+        id: guard
+        shell: bash
+        run: |
+          last_msg="$(git log -1 --pretty=%s)"
+          if [[ "$last_msg" == style\(autofix\):* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping autofix: HEAD commit is already an autofix commit."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: dtolnay/rust-toolchain@master
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          save-if: "false"
+          shared-key: cargo-registry
+          cache-targets: "false"
+
+      # Do NOT pass `-D warnings` here: `cargo clippy --fix` rolls back all
+      # edits if any unfixable warning (e.g. dead_code) is treated as an error.
+      # `compat.yml`'s `napi-clippy` job enforces `-D warnings`.
+      - name: Apply machine-applicable clippy fixes
+        if: steps.guard.outputs.skip != 'true'
+        run: >
+          cargo clippy
+          -p raster_runtime_napi
+          -p raster_runtime_events
+          -p raster_runtime_tty
+          -p raster_runtime_modules
+          -p raster_runtime_fs
+          -p raster_runtime_util
+          -p raster_runtime_sqlite
+          --all-targets --no-deps
+          --fix --allow-dirty --allow-staged
+
+      - name: Format Rust code
+        if: steps.guard.outputs.skip != 'true'
+        run: cargo fmt --all
+
+      - name: Commit and push autofix changes
+        if: steps.guard.outputs.skip != 'true'
+        shell: bash
+        run: |
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No formatting or clippy changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git commit -m "style(autofix): apply rustfmt and clippy fixes"
+          git push origin "HEAD:${{ github.head_ref }}"

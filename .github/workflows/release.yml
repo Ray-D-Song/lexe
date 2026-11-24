@@ -11,6 +11,7 @@ on:
         type: string
 
 env:
+  RUST_TOOLCHAIN: "1.100.0"
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
@@ -85,8 +86,9 @@ jobs:
           node-version: 24.3.0
           cache: yarn
       - run: yarn install --frozen-lockfile
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:

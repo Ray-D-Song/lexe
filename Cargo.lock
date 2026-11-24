@@ -3268,7 +3268,6 @@ dependencies = [
  "raster_runtime_utils",
  "rquickjs",
  "tokio",
- "unicode-width",
 ]
 
 [[package]]
