@@ -298,6 +298,13 @@ declare module "url" {
      * @param base The base URL to resolve against if the `input` is not absolute. If `base` is not a string, it is `converted to a string` first.
      */
     static parse(input: string, base?: string): URL | null;
+    /**
+     * Stores `blob` and returns a `'blob:nodedata:<uuid>'` URL that `buffer.resolveObjectURL()`
+     * resolves back to a `Blob`. Call `URL.revokeObjectURL()` to release it.
+     */
+    static createObjectURL(blob: Blob): string;
+    /** Forgets a URL returned by `URL.createObjectURL()`. Unknown URLs are ignored. */
+    static revokeObjectURL(url: string): void;
     constructor(
       input: string | { toString: () => string },
       base?: string | URL

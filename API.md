@@ -180,6 +180,22 @@
 
 [constants.MAX_STRING_LENGTH](https://nodejs.org/api/buffer.html#bufferconstantsmax_string_length)
 
+`constants.MAX_LENGTH` / `buffer.kMaxLength` is `2147483647` (the largest `ArrayBuffer` QuickJS allows), not Node's `2**53 - 1`.
+
+### Module functions
+
+[transcode](https://nodejs.org/api/buffer.html#buffertranscodesource-fromenc-toenc)
+
+[isUtf8](https://nodejs.org/api/buffer.html#bufferisutf8input)
+
+[isAscii](https://nodejs.org/api/buffer.html#bufferisasciiinput)
+
+[resolveObjectURL](https://nodejs.org/api/buffer.html#bufferresolveobjecturlid)
+
+[SlowBuffer](https://nodejs.org/api/buffer.html#class-slowbuffer)
+
+[Blob](https://nodejs.org/api/buffer.html#class-blob) and [File](https://nodejs.org/api/buffer.html#class-file) are the same objects as the globals. `kMaxLength`, `kStringMaxLength` and `INSPECT_MAX_BYTES` are exported; `INSPECT_MAX_BYTES` is validated but `util.inspect()` does not print a `Buffer` the way Node does, so it has no visible effect yet.
+
 Everything else inherited from [Uint8Array](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array)
 
 ## child_process
@@ -1245,6 +1261,8 @@ export function print(value: any): void;
 [URL](https://developer.mozilla.org/en-US/docs/Web/API/URL)
 
 [URLSearchParams](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams)
+
+[URL.createObjectURL](https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL_static) and [URL.revokeObjectURL](https://developer.mozilla.org/en-US/docs/Web/API/URL/revokeObjectURL_static) accept a `Blob` or `File` and return `blob:nodedata:<uuid>` URLs, as in Node; `buffer.resolveObjectURL()` resolves them.
 
 ## WEBASSEMBLY
 

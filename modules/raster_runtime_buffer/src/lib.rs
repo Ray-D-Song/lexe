@@ -21,7 +21,25 @@ mod array_buffer_view;
 mod blob;
 mod buffer;
 mod codec;
+mod extras;
 mod file;
+
+const EXTRA_EXPORTS: [&str; 10] = [
+    "SlowBuffer",
+    "transcode",
+    "isUtf8",
+    "isAscii",
+    "kMaxLength",
+    "kStringMaxLength",
+    "Blob",
+    "File",
+    "resolveObjectURL",
+    "INSPECT_MAX_BYTES",
+];
+
+/// Largest `ArrayBuffer` QuickJS allows (`INT32_MAX`), which bounds every Buffer.
+const MAX_LENGTH: u32 = i32::MAX as u32;
+const MAX_STRING_LENGTH: u32 = (1 << 30) - 1;
 
 pub struct BufferModule;
 
@@ -31,6 +49,9 @@ impl ModuleDef for BufferModule {
         declare.declare("atob")?;
         declare.declare("btoa")?;
         declare.declare("constants")?;
+        for name in EXTRA_EXPORTS {
+            declare.declare(name)?;
+        }
         declare.declare("default")?;
         Ok(())
     }
@@ -40,8 +61,8 @@ impl ModuleDef for BufferModule {
         let buf: Constructor = globals.get(stringify!(Buffer))?;
 
         let constants = Object::new(ctx.clone())?;
-        constants.set("MAX_LENGTH", u32::MAX)?; // For QuickJS
-        constants.set("MAX_STRING_LENGTH", (1 << 30) - 1)?; // For QuickJS
+        constants.set("MAX_LENGTH", MAX_LENGTH)?; // For QuickJS
+        constants.set("MAX_STRING_LENGTH", MAX_STRING_LENGTH)?; // For QuickJS
 
         let atob: Function = ctx.globals().get("atob")?;
         let btoa: Function = ctx.globals().get("btoa")?;
@@ -51,11 +72,21 @@ impl ModuleDef for BufferModule {
             default.set("atob", atob.into_js(ctx)?)?;
             default.set("btoa", btoa.into_js(ctx)?)?;
             default.set("constants", constants)?;
+            install_extras(ctx, default)?;
             Ok(())
         })?;
 
         Ok(())
     }
+}
+
+fn install_extras<'js>(ctx: &Ctx<'js>, target: &Object<'js>) -> Result<()> {
+    let natives = Object::new(ctx.clone())?;
+    natives.set("transcodeNative", Func::from(extras::transcode_native))?;
+    natives.set("isUtf8Native", Func::from(extras::is_utf8_native))?;
+    natives.set("isAsciiNative", Func::from(extras::is_ascii_native))?;
+    let install: Function = ctx.eval(include_str!("extras.js"))?;
+    install.call::<_, ()>((natives, target.clone(), MAX_LENGTH, MAX_STRING_LENGTH))
 }
 
 impl From<BufferModule> for ModuleInfo<BufferModule> {

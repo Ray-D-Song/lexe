@@ -1188,5 +1188,67 @@ declare module "buffer" {
    */
   function btoa(data: string): string;
 
-  export { Buffer, atob, btoa };
+  /** The global `Blob`. */
+  const Blob: typeof globalThis.Blob;
+  type Blob = globalThis.Blob;
+  /** The global `File`. */
+  const File: typeof globalThis.File;
+  type File = globalThis.File;
+
+  /** Largest length of a `Buffer`; equal to `constants.MAX_LENGTH`. */
+  export const kMaxLength: number;
+  /** Largest length of a string; equal to `constants.MAX_STRING_LENGTH`. */
+  export const kStringMaxLength: number;
+
+  /**
+   * How many bytes `util.inspect()` shows for a `Buffer`. Setting a negative or
+   * non-number value throws.
+   * @default 50
+   */
+  export let INSPECT_MAX_BYTES: number;
+
+  /**
+   * @deprecated Use `Buffer.allocUnsafeSlow()`.
+   */
+  function SlowBuffer(size: number): Buffer;
+
+  /**
+   * Re-encodes `source` between `ascii`, `latin1`/`binary`, `ucs2`/`utf16le` and `utf8`.
+   * Unsupported encodings and unrepresentable input throw an error whose `code` is an ICU
+   * error name such as `U_ILLEGAL_ARGUMENT_ERROR` or `U_INVALID_CHAR_FOUND`.
+   */
+  function transcode(
+    source: Uint8Array,
+    fromEnc: "ascii" | "latin1" | "binary" | "ucs2" | "ucs-2" | "utf16le" | "utf-16le" | "utf8" | "utf-8",
+    toEnc: "ascii" | "latin1" | "binary" | "ucs2" | "ucs-2" | "utf16le" | "utf-16le" | "utf8" | "utf-8"
+  ): Buffer;
+
+  type BinaryInput =
+    | ArrayBuffer
+    | SharedArrayBuffer
+    | Int8Array
+    | Uint8Array
+    | Uint8ClampedArray
+    | Int16Array
+    | Uint16Array
+    | Int32Array
+    | Uint32Array
+    | Float32Array
+    | Float64Array
+    | BigInt64Array
+    | BigUint64Array;
+
+  /** Returns `true` if `input` holds valid UTF-8. */
+  function isUtf8(input: BinaryInput): boolean;
+
+  /** Returns `true` if `input` holds only 7-bit ASCII bytes. */
+  function isAscii(input: BinaryInput): boolean;
+
+  /**
+   * Resolves a `'blob:nodedata:...'` URL created by `URL.createObjectURL()` to a new `Blob`
+   * with the same content and type, or `undefined` when there is none.
+   */
+  function resolveObjectURL(url: string): Blob | undefined;
+
+  export { Buffer, Blob, File, SlowBuffer, transcode, isUtf8, isAscii, resolveObjectURL, atob, btoa };
 }

@@ -196,6 +196,9 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     Class::<URLSearchParams>::define(&globals)?;
     Class::<URL>::define(&globals)?;
 
+    let install: Function = ctx.eval(include_str!("object_url.js"))?;
+    install.call::<_, ()>((globals.get::<_, Value>(stringify!(URL))?,))?;
+
     Ok(())
 }
 
