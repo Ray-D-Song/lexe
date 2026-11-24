@@ -35,33 +35,262 @@ pub fn domain_to_ascii(domain: &str) -> String {
     quirks::domain_to_ascii(domain)
 }
 
-// options are ignored
-pub fn path_to_file_url<'js>(ctx: Ctx<'js>, path: String, _: Opt<Value>) -> Result<URL<'js>> {
-    let url = Url::from_file_path(&path)
-        .map_err(|_| Exception::throw_type(&ctx, &["Path is not absolute: ", &path].concat()))?;
+// Node's `pathToFileURL`. Anything that is not absolute is resolved against the
+// current working directory first (Node does `path.resolve(path)`), so a
+// relative input never fails — it only fails if the resolved path is unusable.
+pub fn path_to_file_url<'js>(ctx: Ctx<'js>, path: String, _: Opt<Value<'js>>) -> Result<URL<'js>> {
+    let resolved = if std::path::Path::new(&path).is_absolute() {
+        std::path::PathBuf::from(&path)
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(&path),
+            Err(_) => {
+                return Err(throw_coded(
+                    &ctx,
+                    CodedError::Type,
+                    "ERR_INVALID_ARG_VALUE",
+                    &[
+                        "The argument 'path' must be a string or Uint8Array. Received ",
+                        &path,
+                    ]
+                    .concat(),
+                ));
+            },
+        }
+    };
+
+    let mut url = Url::from_file_path(&resolved).map_err(|_| {
+        throw_coded(
+            &ctx,
+            CodedError::Type,
+            "ERR_INVALID_ARG_VALUE",
+            &[
+                "The argument 'path' must be a string or Uint8Array. Received ",
+                &path,
+            ]
+            .concat(),
+        )
+    })?;
+
+    // `Url::from_file_path` normalises away a trailing separator; Node keeps it,
+    // which matters for `fileURLToPath(pathToFileURL("/tmp/a/"))`.
+    if path.ends_with('/') || path.ends_with(std::path::MAIN_SEPARATOR) {
+        let mut with_sep = url.path().to_string();
+        if !with_sep.ends_with('/') {
+            with_sep.push('/');
+            url.set_path(&with_sep);
+        }
+    }
 
     URL::from_url(ctx, url)
 }
 
-/// Convert a WHATWG `file:` URL into a platform filesystem path.
+/// Strict percent-decoding of a URL path.
 ///
-/// Handles percent-encoding and platform path conventions via [`Url::to_file_path`].
-/// Rejects encoded path separators that Node's `fileURLToPath` also rejects.
+/// Returns `None` for a malformed escape (`%zz`, `%2`, `%` at end), which is what
+/// makes Node raise `URIError("URI malformed")`. The `url` crate leaves invalid
+/// escapes untouched while parsing, so this is the first place they are noticed.
+fn percent_decode(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        if i + 2 >= bytes.len() {
+            return None;
+        }
+        let hi = (bytes[i + 1] as char).to_digit(16)?;
+        let lo = (bytes[i + 2] as char).to_digit(16)?;
+        out.push((hi * 16 + lo) as u8);
+        i += 3;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Throw a `TypeError` carrying a Node `code` property (same helper shape used by
+/// `raster_runtime_net` and `raster_runtime_sqlite`).
+fn throw_coded(ctx: &Ctx<'_>, kind: CodedError, code: &str, message: &str) -> rquickjs::Error {
+    let primordials = raster_runtime_utils::primordials::BasePrimordials::get(ctx);
+    let Ok(primordials) = primordials else {
+        return Exception::throw_message(ctx, message);
+    };
+    let ctor = match kind {
+        CodedError::Type => &primordials.constructor_type_error,
+        CodedError::Uri => return throw_uri_error(ctx, message),
+    };
+    let Ok(err) = ctor.construct((message.to_string(),)) else {
+        return Exception::throw_message(ctx, message);
+    };
+    let err: Object<'_> = err;
+    let _ = err.set("code", code);
+    ctx.throw(err.into_value())
+}
+
+#[derive(Clone, Copy)]
+enum CodedError {
+    Type,
+    /// `URIError` with no `code` — what Node raises for malformed percent escapes.
+    Uri,
+}
+
+fn throw_uri_error(ctx: &Ctx<'_>, message: &str) -> rquickjs::Error {
+    // Primordials does not carry URIError, so reach for the global constructor.
+    let ctor: Option<Constructor<'_>> = ctx.globals().get("URIError").ok();
+    let Some(ctor) = ctor else {
+        return Exception::throw_message(ctx, message);
+    };
+    match ctor.construct::<(String,), Object<'_>>((message.to_string(),)) {
+        Ok(err) => ctx.throw(err.into_value()),
+        Err(_) => Exception::throw_message(ctx, message),
+    }
+}
+
+/// Options accepted by `fileURLToPath` — currently just `windows`.
+fn read_windows_option(value: Option<Value<'_>>) -> bool {
+    let Some(value) = value else {
+        return cfg!(windows);
+    };
+    let Some(options) = value.as_object() else {
+        return cfg!(windows);
+    };
+    match options.get::<_, Option<bool>>("windows") {
+        Ok(Some(flag)) => flag,
+        _ => cfg!(windows),
+    }
+}
+
+/// Node-compatible `fileURLToPath(url[, options])`.
+///
+/// Error `code`s follow Node exactly, and that includes the one error that has
+/// **no** code: a malformed percent escape raises `URIError("URI malformed")`
+/// bare. The goal is parity with Node, not internal consistency.
+pub fn file_url_to_path<'js>(
+    ctx: Ctx<'js>,
+    url: Value<'js>,
+    options: Opt<Value<'js>>,
+) -> Result<String> {
+    let windows = read_windows_option(options.into_inner());
+
+    let parsed = if let Ok(url) = Class::<URL>::from_value(&url) {
+        let borrowed = url.borrow();
+        let inner = borrowed.inner();
+        if inner.scheme() != "file" {
+            return Err(throw_coded(
+                &ctx,
+                CodedError::Type,
+                "ERR_INVALID_URL_SCHEME",
+                "The URL must be of scheme file",
+            ));
+        }
+        inner.clone()
+    } else {
+        let url_string = url.get::<Coerced<String>>()?.to_string();
+        match Url::parse(&url_string) {
+            Ok(parsed) => {
+                if parsed.scheme() != "file" {
+                    return Err(throw_coded(
+                        &ctx,
+                        CodedError::Type,
+                        "ERR_INVALID_URL_SCHEME",
+                        "The URL must be of scheme file",
+                    ));
+                }
+                parsed
+            },
+            Err(_) => {
+                return Err(throw_coded(
+                    &ctx,
+                    CodedError::Type,
+                    "ERR_INVALID_URL",
+                    "Invalid URL",
+                ));
+            },
+        }
+    };
+
+    file_path_from_url_opts(&ctx, &parsed, windows)
+}
+
+/// Shared by `fileURLToPath` and the `node:url` helpers above.
 pub fn file_path_from_url(ctx: &Ctx<'_>, url: &Url) -> Result<String> {
+    file_path_from_url_opts(ctx, url, cfg!(windows))
+}
+
+fn file_path_from_url_opts(ctx: &Ctx<'_>, url: &Url, windows: bool) -> Result<String> {
     if url.scheme() != "file" {
-        return Err(Exception::throw_type(ctx, "The URL must be of scheme file"));
+        return Err(throw_coded(
+            ctx,
+            CodedError::Type,
+            "ERR_INVALID_URL_SCHEME",
+            "The URL must be of scheme file",
+        ));
     }
 
-    reject_encoded_path_separators(ctx, url)?;
+    // A non-empty, non-localhost host is an error. Node's message names the
+    // current platform ("on linux"); we match the code and keep the wording.
+    let host = url.host_str().unwrap_or("");
+    if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+        return Err(throw_coded(
+            ctx,
+            CodedError::Type,
+            "ERR_INVALID_FILE_URL_HOST",
+            &format!(
+                "File URL host must be \"localhost\" or empty on {}",
+                std::env::consts::OS
+            ),
+        ));
+    }
 
-    url.to_file_path()
-        .map(|path| path.to_string_lossy().into_owned())
-        .map_err(|_| Exception::throw_type(ctx, "File URL path must be absolute"))
+    // `%2F` (and `%5C` under Windows) must be rejected *before* decoding.
+    reject_encoded_path_separators(ctx, url, windows)?;
+
+    // Decoding itself: a malformed escape makes Node throw URIError, unchanged.
+    let decoded = match percent_decode(url.path()) {
+        Some(decoded) => decoded,
+        // Node raises a bare `URIError("URI malformed")` here, with no `code`.
+        None => return Err(throw_uri_error(ctx, "URI malformed")),
+    };
+
+    if windows {
+        windows_path_from_url(ctx, &decoded)
+    } else {
+        Ok(decoded)
+    }
+}
+
+/// Windows form: `/C:/x` becomes `C:\x`, and a path that is not driven or UNC
+/// absolute is rejected. Node: `getPathFromURLWin32`.
+fn windows_path_from_url(ctx: &Ctx<'_>, decoded: &str) -> Result<String> {
+    let mut path = decoded.to_string();
+    if path.starts_with('/') && path.len() >= 3 {
+        let bytes = path.as_bytes();
+        // "/C:/..." → "C:\..."
+        if bytes[2] == b':' && bytes[1].is_ascii_alphabetic() {
+            path.remove(0);
+        }
+    }
+    if !(path.starts_with("\\\\")
+        || (path.len() >= 3
+            && path.as_bytes()[1] == b':'
+            && path.as_bytes()[0].is_ascii_alphabetic()))
+    {
+        return Err(throw_coded(
+            ctx,
+            CodedError::Type,
+            "ERR_INVALID_FILE_URL_PATH",
+            "File URL path must be absolute",
+        ));
+    }
+    Ok(path.replace('/', "\\"))
 }
 
 /// Node rejects percent-encoded `/` (`%2F`) on all platforms, and `%5C` (`\`) on Windows,
 /// before decoding the path. See `getPathFromURLPosix` / `getPathFromURLWin32`.
-fn reject_encoded_path_separators(ctx: &Ctx<'_>, url: &Url) -> Result<()> {
+fn reject_encoded_path_separators(ctx: &Ctx<'_>, url: &Url, windows: bool) -> Result<()> {
     let pathname = url.path();
     let bytes = pathname.as_bytes();
     let mut i = 0;
@@ -70,25 +299,24 @@ fn reject_encoded_path_separators(ctx: &Ctx<'_>, url: &Url) -> Result<()> {
             let second = bytes[i + 1];
             let third = bytes[i + 2] | 0x20;
             if second == b'2' && third == b'f' {
-                #[cfg(windows)]
-                {
-                    return Err(Exception::throw_type(
-                        ctx,
-                        "File URL path must not include encoded \\ or / characters",
-                    ));
-                }
-                #[cfg(not(windows))]
-                {
-                    return Err(Exception::throw_type(
-                        ctx,
-                        "File URL path must not include encoded / characters",
-                    ));
-                }
+                let message = if windows {
+                    "File URL path must not include encoded \\ or / characters"
+                } else {
+                    "File URL path must not include encoded / characters"
+                };
+                return Err(throw_coded(
+                    ctx,
+                    CodedError::Type,
+                    "ERR_INVALID_FILE_URL_PATH",
+                    message,
+                ));
             }
             #[cfg(windows)]
             if second == b'5' && third == b'c' {
-                return Err(Exception::throw_type(
+                return Err(throw_coded(
                     ctx,
+                    CodedError::Type,
+                    "ERR_INVALID_FILE_URL_PATH",
                     "File URL path must not include encoded \\ or / characters",
                 ));
             }
@@ -96,19 +324,6 @@ fn reject_encoded_path_separators(ctx: &Ctx<'_>, url: &Url) -> Result<()> {
         i += 1;
     }
     Ok(())
-}
-
-// options are ignored
-pub fn file_url_to_path<'js>(ctx: Ctx<'js>, url: Value<'js>) -> Result<String> {
-    let parsed = if let Ok(url) = Class::<URL>::from_value(&url) {
-        url.borrow().inner().clone()
-    } else {
-        let url_string = url.get::<Coerced<String>>()?.to_string();
-        Url::parse(&url_string)
-            .map_err(|err| Exception::throw_type(&ctx, &format!("Invalid URL: {err}")))?
-    };
-
-    file_path_from_url(&ctx, &parsed)
 }
 
 pub fn url_format<'js>(url: Class<'js, URL<'js>>, options: Opt<Value<'js>>) -> Result<String> {
