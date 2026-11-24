@@ -1147,6 +1147,10 @@ export function print(value: any): void;
 
 # Web Platform API
 
+## COMPRESSION
+
+[CompressionStream](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream) / [DecompressionStream](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream) (`gzip`, `deflate`, `deflate-raw`)
+
 ## CONSOLE
 
 [Console](https://developer.mozilla.org/en-US/docs/Web/API/console)
