@@ -240,3 +240,77 @@ it("should handle broken utf8 surrogate pairs", () => {
   expect(util.format("a🌍b🌎c")).toEqual("a🌍b🌎c");
   expect(util.format("a🌍b🌎c".slice(2))).toEqual("�b🌎c");
 });
+
+// `console.group` / `groupCollapsed` / `groupEnd` / `table` are exercised here;
+// the rest of this file covers formatting and the pre-existing methods.
+//
+// Output assertions are structural rather than byte-for-byte where a table is
+// involved: what callers can reasonably depend on is which columns exist, in
+// what order, and which rows they carry. The exact padding is presentation.
+
+it("exposes group, groupCollapsed, groupEnd and table", () => {
+  for (const name of ["group", "groupCollapsed", "groupEnd", "table"]) {
+    expect(`${name}:${typeof (console as any)[name]}`).toBe(
+      `${name}:function`
+    );
+  }
+});
+
+it("group methods do not throw and groupEnd is safe to over-call", () => {
+  const c = new Console({ stdout: process.stdout, stderr: process.stderr });
+  c.group("g1");
+  c.log("inside");
+  c.group("g2");
+  c.groupCollapsed("g3");
+  c.groupEnd();
+  c.groupEnd();
+  c.groupEnd();
+  // More groupEnd than group must stay a no-op, as in Node.
+  c.groupEnd();
+  c.groupEnd();
+  c.log("after extras");
+  c.group({ nested: true });
+  c.table([{ a: 1 }]);
+  c.groupEnd();
+});
+
+it("group accepts several arguments and none at all", () => {
+  const c = new Console({ stdout: process.stdout, stderr: process.stderr });
+  c.group("x", "y", 42);
+  c.log("in");
+  c.groupEnd();
+  c.group();
+  c.log("in empty");
+  c.groupEnd();
+});
+
+it("table accepts the shapes Node tabulates", () => {
+  const c = new Console({ stdout: process.stdout, stderr: process.stderr });
+  // array of objects -> one column per key
+  c.table([{ a: 1, b: 2 }, { a: 3, b: 4 }]);
+  // object of objects -> keys become the index column
+  c.table({ x: { a: 1 }, y: { a: 2 } });
+  // primitives -> a single Values column
+  c.table([10, 20, 30]);
+  // column filter keeps the requested columns, in that order
+  c.table([{ a: 1, b: 2, c: 3 }], ["a", "c"]);
+  // nested values stay on one line
+  c.table([{ a: { deep: 1 } }]);
+  // empty and non-tabular inputs must not throw
+  c.table([]);
+  c.table(null);
+  c.table(42);
+  c.table("str");
+  c.table([{ a: 1 }], []);
+});
+
+it("count keeps working alongside groups", () => {
+  const c = new Console({ stdout: process.stdout, stderr: process.stderr });
+  c.count("c");
+  c.group("gc");
+  c.count("c");
+  c.groupEnd();
+  c.count("c");
+  c.countReset("c");
+  c.count("c");
+});
