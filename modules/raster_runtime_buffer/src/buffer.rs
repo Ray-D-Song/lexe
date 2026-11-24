@@ -1107,6 +1107,17 @@ fn shifted_bytes(mut val: u64, bits: u8, endian: Endian) -> Vec<u8> {
     bytes
 }
 
+// Compiled by build.rs from methods.js with the same QuickJS the runtime links against.
+static METHODS_BYTECODE: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/methods.bc"));
+
+fn load_methods<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
+    // SAFETY: the bytes were produced by `Module::write` in build.rs and are embedded unchanged.
+    let module = unsafe { rquickjs::Module::load(ctx.clone(), METHODS_BYTECODE)? };
+    let (module, promise) = module.eval()?;
+    promise.finish::<()>()?;
+    module.get("default")
+}
+
 pub(crate) fn set_prototype<'js>(ctx: &Ctx<'js>, constructor: Object<'js>) -> Result<()> {
     let _ = &constructor.set("alloc", Func::from(alloc))?;
     let _ = &constructor.set("allocUnsafe", Func::from(alloc_unsafe))?;
@@ -1141,7 +1152,7 @@ pub(crate) fn set_prototype<'js>(ctx: &Ctx<'js>, constructor: Object<'js>) -> Re
         }
     }
 
-    let methods: Function = ctx.eval(include_str!("methods.js"))?;
+    let methods: Function = load_methods(ctx)?;
     methods.call::<_, ()>((crate::natives::natives(ctx)?, constructor.clone()))?;
 
     //not assessable from js

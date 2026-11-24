@@ -19,6 +19,9 @@ rquickjs = { version = "=0.12.1", features = [
 ], default-features = false }
 ryu = { version = "1", default-features = false }
 
+[build-dependencies]
+rquickjs = { version = "=0.12.1", default-features = false }
+
 [dev-dependencies]
 raster_runtime_test = { path = "../../libs/raster_runtime_test" }
 tokio = { version = "1", features = ["full"], default-features = false }
