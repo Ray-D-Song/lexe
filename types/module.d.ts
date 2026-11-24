@@ -37,6 +37,100 @@ declare module "module" {
     /**
      */
     function isBuiltin(moduleName: string): boolean;
+    /**
+     * Copy the current properties of each loaded built-in's `module.exports` back
+     * into its ES module named exports. Names that were deleted become
+     * `undefined`; names that were added are not exported.
+     */
+    function syncBuiltinESMExports(): void;
+    interface SourceMapPayload {
+      file: string;
+      version: number;
+      sources: string[];
+      sourcesContent: string[];
+      names: string[];
+      mappings: string;
+      sourceRoot: string;
+    }
+    interface SourceMapping {
+      generatedLine: number;
+      generatedColumn: number;
+      originalSource: string;
+      originalLine: number;
+      originalColumn: number;
+      name?: string;
+    }
+    interface SourceOrigin {
+      name?: string;
+      fileName: string;
+      lineNumber: number;
+      columnNumber: number;
+    }
+    /**
+     * A Source Map V3 consumer.
+     */
+    class SourceMap {
+      constructor(payload: SourceMapPayload, options?: { lineLengths?: number[] });
+      /** A copy of the payload the map was built from. */
+      readonly payload: SourceMapPayload;
+      /** Line lengths of the generated source, when they were supplied. */
+      readonly lineLengths: number[] | undefined;
+      /**
+       * Find the mapping that covers a 0-indexed generated position, or `{}`.
+       */
+      findEntry(lineOffset: number, columnOffset: number): SourceMapping | {};
+      /**
+       * Find the original position of a 1-indexed generated call site, or `{}`.
+       */
+      findOrigin(lineNumber: number, columnNumber: number): SourceOrigin | {};
+    }
+    /**
+     * The source map of a file, when source map support is enabled and the file
+     * declares one. Never throws.
+     * @param path A file path or URL.
+     */
+    function findSourceMap(path: string): SourceMap | undefined;
+    interface SourceMapsSupport {
+      readonly enabled: boolean;
+      readonly nodeModules: boolean;
+      readonly generatedCode: boolean;
+    }
+    function getSourceMapsSupport(): SourceMapsSupport;
+    /**
+     * Governs what {@link findSourceMap} returns. Raster does not rewrite
+     * `Error.prepareStackTrace`.
+     */
+    function setSourceMapsSupport(
+      enabled: boolean,
+      options?: { nodeModules?: boolean | undefined; generatedCode?: boolean | undefined }
+    ): void;
+    /**
+     * The path of the `package.json` that governs `specifier`.
+     * @param specifier A bare package name, or a relative or `file:` specifier.
+     * @param base The URL or absolute path to resolve against. Defaults to `data:`.
+     */
+    function findPackageJSON(specifier: string | URL, base?: string | URL): string | undefined;
+    interface EnableCompileCacheResult {
+      status: number;
+      message?: string;
+      directory?: string;
+    }
+    /**
+     * Raster has no on-disk compile cache: this validates its argument and
+     * reports `constants.compileCacheStatus.FAILED`.
+     */
+    function enableCompileCache(cacheDir?: string): EnableCompileCacheResult;
+    function flushCompileCache(keepDeserializedCache?: boolean): void;
+    /** Always `undefined`: the compile cache is never enabled. */
+    function getCompileCacheDir(): string | undefined;
+    const constants: {
+      readonly compileCacheStatus: {
+        readonly FAILED: 0;
+        readonly ENABLED: 1;
+        readonly ALREADY_ENABLED: 2;
+        readonly DISABLED: 3;
+      };
+    };
     interface RegisterOptions<Data> {
       /**
        * If you want to resolve `specifier` relative to a

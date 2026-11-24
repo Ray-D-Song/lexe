@@ -207,6 +207,9 @@ impl ModuleDef for ModuleModule {
         declare.declare("_resolveFilename")?;
         declare.declare("_cache")?;
         declare.declare("_extensions")?;
+        for name in facade::MODULE_EXTRA_EXPORTS {
+            declare.declare(name)?;
+        }
         declare.declare("default")?;
 
         Ok(())
@@ -247,6 +250,9 @@ impl ModuleDef for ModuleModule {
         )?;
         exports.export("_cache", module_ctor.get::<_, Value>("_cache")?)?;
         exports.export("_extensions", module_ctor.get::<_, Value>("_extensions")?)?;
+        for name in facade::MODULE_EXTRA_EXPORTS {
+            exports.export(name, module_ctor.get::<_, Value>(name)?)?;
+        }
 
         Ok(())
     }

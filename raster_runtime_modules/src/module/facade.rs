@@ -1,13 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-use std::{cell::RefCell, collections::HashSet};
+use std::{cell::RefCell, collections::HashSet, ffi::CString};
 
 use raster_runtime_path as path;
 use raster_runtime_utils::{ctx::CtxExt, result::ResultExt};
 use rquickjs::{
     function::{Constructor, Opt},
     prelude::{Func, This},
-    Array, Ctx, Exception, Function, JsLifetime, Object, Result, Value,
+    qjs, Array, Ctx, Error, Exception, Function, JsLifetime, Object, Result, Value,
 };
 
 use crate::modules::path::resolve_path;
@@ -452,6 +452,73 @@ pub fn get_or_create_module_record<'js>(
     Ok(record)
 }
 
+/// Names implemented in `module_extras.js` and exported from `node:module`.
+pub(super) const MODULE_EXTRA_EXPORTS: [&str; 10] = [
+    "SourceMap",
+    "findSourceMap",
+    "getSourceMapsSupport",
+    "setSourceMapsSupport",
+    "findPackageJSON",
+    "enableCompileCache",
+    "flushCompileCache",
+    "getCompileCacheDir",
+    "constants",
+    "syncBuiltinESMExports",
+];
+
+const MODULE_EXTRAS_JS: &str = include_str!("module_extras.js");
+
+fn install_module_extras<'js>(ctx: &Ctx<'js>, module_ctor: &Constructor<'js>) -> Result<()> {
+    let extras: Object = ctx.eval(MODULE_EXTRAS_JS)?;
+    for name in MODULE_EXTRA_EXPORTS {
+        if name == "syncBuiltinESMExports" {
+            continue;
+        }
+        module_ctor.set(name, extras.get::<_, Value>(name)?)?;
+    }
+    module_ctor.set(
+        "syncBuiltinESMExports",
+        Function::new(ctx.clone(), sync_builtin_esm_exports)?.with_name("syncBuiltinESMExports")?,
+    )?;
+    Ok(())
+}
+
+/// Copy the live properties of each loaded builtin's `module.exports` back into
+/// its ES module named bindings, so an override made through `require()` is
+/// visible to `import { x } from "node:fs"`.
+fn sync_builtin_esm_exports(ctx: Ctx<'_>) -> Result<()> {
+    let names: Vec<String> = match ctx.userdata::<ModuleNames>() {
+        Some(names) => names
+            .ordinary()
+            .iter()
+            .filter(|name| names.is_builtin(name))
+            .cloned()
+            .collect(),
+        None => Vec::new(),
+    };
+
+    extern "C" {
+        fn JS_SyncModuleExportsFromDefault(
+            ctx: *mut qjs::JSContext,
+            module_name: *const std::os::raw::c_char,
+        ) -> std::os::raw::c_int;
+    }
+
+    for name in names {
+        for key in [name.clone(), format!("node:{name}")] {
+            let Ok(c_name) = CString::new(key) else {
+                continue;
+            };
+            let written =
+                unsafe { JS_SyncModuleExportsFromDefault(ctx.as_raw().as_ptr(), c_name.as_ptr()) };
+            if written < 0 {
+                return Err(Error::Exception);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn init_module_facade<'js>(
     ctx: &Ctx<'js>,
     module_list: HashSet<String>,
@@ -486,6 +553,7 @@ pub fn init_module_facade<'js>(
     )?;
     module_ctor.set("registerHooks", Func::from(register_hooks))?;
     module_ctor.set("Module", module_ctor.clone())?;
+    install_module_extras(ctx, &module_ctor)?;
 
     install_create_require_factory(ctx)?;
 

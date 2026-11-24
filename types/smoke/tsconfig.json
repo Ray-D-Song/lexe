@@ -36,7 +36,9 @@
       "net": ["./net.d.ts"],
       "node:net": ["./net.d.ts"],
       "crypto": ["./crypto.d.ts"],
-      "node:crypto": ["./crypto.d.ts"]
+      "node:crypto": ["./crypto.d.ts"],
+      "module": ["./module.d.ts"],
+      "node:module": ["./module.d.ts"]
     }
   },
   "include": ["./**/*.ts"]

@@ -29913,6 +29913,65 @@ int JS_SetModuleExport(JSContext *ctx, JSModuleDef *m, const char *export_name,
     return -1;
 }
 
+static JSModuleDef *js_find_loaded_module(JSContext *ctx, JSAtom name);
+
+/* Re-read the local exports of an evaluated module from the own properties
+   of its default export (Node's `module.syncBuiltinESMExports()`): a property
+   that is no longer there is written as undefined. A module that is not loaded
+   is skipped. Returns the number of bindings written, or -1 on exception. */
+int JS_SyncModuleExportsFromDefault(JSContext *ctx, const char *module_name)
+{
+    JSAtom name;
+    JSModuleDef *m;
+    JSExportEntry *def, *me;
+    JSValue default_obj, val;
+    int i, count = 0;
+
+    name = JS_NewAtom(ctx, module_name);
+    if (name == JS_ATOM_NULL)
+        return -1;
+    m = js_find_loaded_module(ctx, name);
+    JS_FreeAtom(ctx, name);
+    if (!m || m->status != JS_MODULE_STATUS_EVALUATED)
+        return 0;
+    def = find_export_entry(ctx, m, JS_ATOM_default);
+    if (!def || def->export_type != JS_EXPORT_TYPE_LOCAL || !def->u.local.var_ref)
+        return 0;
+    default_obj = JS_DupValue(ctx, *def->u.local.var_ref->pvalue);
+    if (!JS_IsObject(default_obj)) {
+        JS_FreeValue(ctx, default_obj);
+        return 0;
+    }
+    for (i = 0; i < m->export_entries_count; i++) {
+        JSPropertyDescriptor desc;
+        int own;
+        me = &m->export_entries[i];
+        if (me == def || me->export_type != JS_EXPORT_TYPE_LOCAL || !me->u.local.var_ref)
+            continue;
+        own = JS_GetOwnProperty(ctx, &desc, default_obj, me->export_name);
+        if (own < 0) {
+            JS_FreeValue(ctx, default_obj);
+            return -1;
+        }
+        if (own) {
+            JS_FreeValue(ctx, desc.value);
+            JS_FreeValue(ctx, desc.getter);
+            JS_FreeValue(ctx, desc.setter);
+            val = JS_GetProperty(ctx, default_obj, me->export_name);
+            if (JS_IsException(val)) {
+                JS_FreeValue(ctx, default_obj);
+                return -1;
+            }
+        } else {
+            val = JS_UNDEFINED;
+        }
+        set_value(ctx, me->u.local.var_ref->pvalue, val);
+        count++;
+    }
+    JS_FreeValue(ctx, default_obj);
+    return count;
+}
+
 void JS_SetModuleLoaderFunc(JSRuntime *rt,
                             JSModuleNormalizeFunc *module_normalize,
                             JSModuleLoaderFunc *module_loader, void *opaque)
