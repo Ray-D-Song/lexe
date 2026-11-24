@@ -1,7 +1,7 @@
 [package]
 name = "lexe_url"
 description = "lexe Module url"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 idna = { version = "1", features = ["std", "compiled_data"], default-features = false }
-lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+lexe_utils = { version = "0.1.1", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
 url = { version = "2", features = ["std"], default-features = false }
 

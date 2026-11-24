@@ -1,7 +1,7 @@
 [package]
 name = "lexe_inspector"
 description = "lexe Module inspector (startup probe only)"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -11,7 +11,7 @@ name = "lexe_inspector"
 path = "src/lib.rs"
 
 [dependencies]
-lexe_utils = { version = "0.1.0", path = "../../libs/lexe_utils", default-features = false }
+lexe_utils = { version = "0.1.1", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
 
 [dev-dependencies]
