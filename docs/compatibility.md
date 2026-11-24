@@ -31,7 +31,7 @@
 | node:path | ✔︎ | ✔︎⚠️ | Missing `toNamespacedPath` and `matchesGlob` ([details](#nodepath)) |
 | node:perf_hooks | ✔︎ | ✔︎⚠️ | Static `nodeTiming` stub; no automatic GC/resource entries; timer-based ms `monitorEventLoopDelay`; fallback `eventLoopUtilization` ([details](#nodeperf_hooks)) |
 | node:process | ✔︎ | ✔︎⚠️ | Missing `execPath`, `execArgv`, `ppid`, `uptime`, `memoryUsage`, `cpuUsage`, `resourceUsage`, `umask`, `loadEnvFile`, `report`, and `permission` ([details](#nodeprocess)) |
-| node:querystring | ✔︎ | ✔︎⚠️ | Missing `unescapeBuffer` export; `unescape()` does not decode `+` to space before `decodeURIComponent` succeeds ([details](#nodequerystring)) |
+| node:querystring | ✔︎ | ✔︎ | — |
 | node:readline | ✔︎ | ✔︎ | — |
 | node:readline/promises | ✔︎ | ✔︎ | — |
 | node:repl | ✔︎ | ✘ | Not implemented |
@@ -240,11 +240,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Missing common Node.js properties and methods: `execPath`, `execArgv`, `ppid`, `uptime()`, `memoryUsage()` / `memoryUsage.rss()`, `cpuUsage()`, `resourceUsage()`, `constrainedMemory()`, `availableMemory()`, `umask()`, `title`, `config`, `features`, `allowedNodeEnvironmentFlags`, `report`, `permission`, `loadEnvFile()`, `getActiveResourcesInfo()`, `setUncaughtExceptionCaptureCallback()`, `abort()`, `finalization`, `ref()`/`unref()`, and `setSourceMapsEnabled()`.
 - `process.version` (`v24.3.0`) and `process.versions.node` (`24.3.0`) advertise Node 24.3 compatibility while `process.release.name` is `"lexe"` and engine keys such as `v8`, `uv`, and `openssl` are absent from `process.versions`.
-
-#### `node:querystring`
-
-- `querystring.unescapeBuffer` is kept internal and not exported (and returns a decoded string rather than a `Buffer`).
-- `querystring.unescape(str)` attempts `decodeURIComponent(str)` first without replacing `+` with spaces, so valid strings containing `+` (such as `querystring.unescape("a+b")`) leave `+` literal instead of decoding it to `" "` (`parse()` converts `+` separately before unescaping).
 
 #### `node:sqlite`
 

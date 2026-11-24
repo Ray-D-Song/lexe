@@ -116,11 +116,15 @@ const QUERYSTRING_FACTORY: &str = r#"(function () {
   }
 
   function unescapeBuffer(s, decodeSpaces) {
+    if (typeof s !== "string") {
+      throw new TypeError(
+        'The "str" argument must be of type string. Received type ' + typeof s
+      );
+    }
     const out = new Uint8Array(s.length);
     let index = 0;
     let outIndex = 0;
     const maxLength = s.length - 2;
-    let hasHex = false;
     while (index < s.length) {
       let currentChar = s.charCodeAt(index);
       if (currentChar === 43 && decodeSpaces) {
@@ -141,22 +145,23 @@ const QUERYSTRING_FACTORY: &str = r#"(function () {
           out[outIndex++] = 37;
           index--;
         } else {
-          hasHex = true;
           currentChar = hexHigh * 16 + hexLow;
         }
       }
       out[outIndex++] = currentChar;
       index++;
     }
-    const bytes = hasHex ? out.subarray(0, outIndex) : out.subarray(0, outIndex);
-    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    const bytes = out.subarray(0, outIndex);
+    return typeof Buffer === "function" ? Buffer.from(bytes) : bytes;
   }
 
   function qsUnescape(s, decodeSpaces) {
     try {
       return decodeURIComponent(s);
     } catch {
-      return unescapeBuffer(s, decodeSpaces !== false);
+      return new TextDecoder("utf-8", { fatal: false }).decode(
+        unescapeBuffer(s, Boolean(decodeSpaces))
+      );
     }
   }
 
@@ -392,6 +397,7 @@ const QUERYSTRING_FACTORY: &str = r#"(function () {
     parse,
     escape: qsEscape,
     unescape: qsUnescape,
+    unescapeBuffer,
     encode: stringify,
     decode: parse,
   };
@@ -413,6 +419,7 @@ impl ModuleDef for QuerystringModule {
         declare.declare("parse")?;
         declare.declare("escape")?;
         declare.declare("unescape")?;
+        declare.declare("unescapeBuffer")?;
         declare.declare("encode")?;
         declare.declare("decode")?;
         declare.declare("default")?;

@@ -732,6 +732,8 @@ configure QuickJS). Serialization, snapshots, and profilers are not implemented.
 
 [unescape](https://nodejs.org/api/querystring.html#querystringunescapestr)
 
+[unescapeBuffer](https://nodejs.org/api/querystring.html#querystringunescapebufferstr-decodespaces)
+
 > [!NOTE]
 > `encode` / `decode` follow Node.js and alias `stringify` / `parse`, not `escape` / `unescape`. Empty `sep` or `eq` arguments fall back to `&` and `=` respectively. `escape` throws `URIError` for lone surrogate code units.
 
