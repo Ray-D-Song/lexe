@@ -329,3 +329,100 @@ describe("relative", () => {
     }
   });
 });
+
+describe("toNamespacedPath and _makeLong", () => {
+  it("aliases _makeLong to toNamespacedPath on path, posix, and win32", () => {
+    expect(path._makeLong).toBe(path.toNamespacedPath);
+    expect(path.posix._makeLong).toBe(path.posix.toNamespacedPath);
+    expect(path.win32._makeLong).toBe(path.win32.toNamespacedPath);
+  });
+
+  it("returns values unchanged on posix", () => {
+    expect(path.posix.toNamespacedPath("")).toBe("");
+    expect(path.posix.toNamespacedPath("/a/b")).toBe("/a/b");
+    expect(path.posix.toNamespacedPath("foo/bar")).toBe("foo/bar");
+    expect(path.posix.toNamespacedPath("C:\\foo\\bar")).toBe("C:\\foo\\bar");
+    expect(path.posix.toNamespacedPath(123 as any)).toBe(123);
+    expect(path.posix.toNamespacedPath(null as any)).toBeNull();
+  });
+
+  it("formats Windows drive and UNC paths cleanly on win32", () => {
+    expect(path.win32.toNamespacedPath("")).toBe("");
+    expect(path.win32.toNamespacedPath("C:\\")).toBe("\\\\?\\C:\\");
+    expect(path.win32.toNamespacedPath("C:/foo/bar/")).toBe("\\\\?\\C:\\foo\\bar");
+    expect(path.win32.toNamespacedPath("C:\\foo\\..\\bar")).toBe("\\\\?\\C:\\bar");
+    expect(path.win32.toNamespacedPath("\\\\server\\share\\a")).toBe(
+      "\\\\?\\UNC\\server\\share\\a"
+    );
+    expect(path.win32.toNamespacedPath("\\\\server\\share")).toBe(
+      "\\\\?\\UNC\\server\\share\\"
+    );
+    expect(path.win32.toNamespacedPath("\\\\?\\C:\\a")).toBe("\\\\?\\C:\\a");
+    expect(path.win32.toNamespacedPath("\\\\.\\pipe\\x")).toBe("\\\\.\\pipe\\x");
+    expect(path.win32.toNamespacedPath("/")).toBe("/");
+    expect(path.win32.toNamespacedPath(123 as any)).toBe(123);
+    expect(path.win32.toNamespacedPath(undefined as any)).toBeUndefined();
+  });
+});
+
+describe("matchesGlob", () => {
+  it("supports wildcards, globstars, character classes, and braces", () => {
+    expect(path.posix.matchesGlob("/foo/bar", "/foo/*")).toBe(true);
+    expect(path.posix.matchesGlob("/foo/bar/baz", "/foo/*")).toBe(false);
+    expect(path.posix.matchesGlob("/foo/bar/baz", "/foo/**")).toBe(true);
+    expect(path.posix.matchesGlob("/foo/bar/baz", "/foo/**/baz")).toBe(true);
+    expect(path.posix.matchesGlob("/foo/baz", "/foo/**/baz")).toBe(true);
+    expect(path.posix.matchesGlob("/foo/bar", "/foo/b?r")).toBe(true);
+    expect(path.posix.matchesGlob("foo/a1", "foo/a[0-9]")).toBe(true);
+    expect(path.posix.matchesGlob("foo/a1", "foo/a[!0-9]")).toBe(false);
+    expect(path.posix.matchesGlob("foo/bar.ts", "foo/*.{js,ts}")).toBe(true);
+    expect(path.posix.matchesGlob("foo/qux", "foo/{bar,{baz,qux}}")).toBe(true);
+    expect(path.posix.matchesGlob("", "")).toBe(true);
+    expect(path.posix.matchesGlob("", "**")).toBe(true);
+    expect(path.posix.matchesGlob("", "*")).toBe(false);
+  });
+
+  it("enforces dotfile, trailing-slash, and extglob semantics matching Node.js", () => {
+    expect(path.posix.matchesGlob(".hidden", "*")).toBe(false);
+    expect(path.posix.matchesGlob(".hidden", ".*")).toBe(true);
+    expect(path.posix.matchesGlob(".js", "*.js")).toBe(false);
+    expect(path.posix.matchesGlob("a/.b/c", "**/c")).toBe(false);
+    expect(path.posix.matchesGlob("a/.b/c", "**/.b/c")).toBe(true);
+    expect(path.posix.matchesGlob("foo/.a", "foo/[.]a")).toBe(true);
+    expect(path.posix.matchesGlob("foo/.a", "foo/[!b]a")).toBe(false);
+    expect(path.posix.matchesGlob("foo/.a", "foo/!(c)")).toBe(false);
+    expect(path.posix.matchesGlob("foo.js", "@(foo|bar).js")).toBe(true);
+    expect(path.posix.matchesGlob("baz.js", "!(foo|bar).js")).toBe(true);
+    expect(path.posix.matchesGlob("foo.js", "!(foo|bar).js")).toBe(false);
+    expect(path.posix.matchesGlob("aaa", "+(a)")).toBe(true);
+    expect(path.posix.matchesGlob("", "*(a)")).toBe(true);
+    expect(path.posix.matchesGlob("a", "?(a)")).toBe(true);
+    expect(path.posix.matchesGlob("a/b", "a/b/")).toBe(false);
+    expect(path.posix.matchesGlob("a/b/", "a/b")).toBe(true);
+    expect(path.win32.matchesGlob("C:\\foo\\bar.js", "C:/foo/*.js")).toBe(true);
+    expect(path.win32.matchesGlob("C:/foo/bar.js", "C:\\foo\\*.js")).toBe(true);
+    expect(path.win32.matchesGlob("FOO/bar", "foo/bar")).toBe(false);
+  });
+
+  it("throws ERR_INVALID_ARG_TYPE for non-string arguments", () => {
+    for (const bad of [123, null, undefined, {}]) {
+      let err1: any;
+      try {
+        path.matchesGlob(bad as any, "*");
+      } catch (e) {
+        err1 = e;
+      }
+      expect(err1).toBeInstanceOf(TypeError);
+      expect(err1.code).toBe("ERR_INVALID_ARG_TYPE");
+
+      let err2: any;
+      try {
+        path.matchesGlob("a", bad as any);
+      } catch (e) {
+        err2 = e;
+      }
+      expect(err2).toBeInstanceOf(TypeError);
+      expect(err2.code).toBe("ERR_INVALID_ARG_TYPE");
+    }
+  });
+});

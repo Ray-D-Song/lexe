@@ -1,5 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+mod glob;
+
 use std::{
     borrow::Cow,
     path::{Component, Path, PathBuf, MAIN_SEPARATOR, MAIN_SEPARATOR_STR},
@@ -10,7 +12,7 @@ use rquickjs::{
     function::Opt,
     module::{Declarations, Exports, ModuleDef},
     prelude::{Func, Rest},
-    Ctx, Object, Result,
+    Ctx, Exception, IntoJs, Object, Result, Value,
 };
 
 pub struct PathModule;
@@ -639,16 +641,215 @@ fn join_win32(parts: Rest<String>) -> String {
     }
 }
 
+fn resolve_win32_strs<S: AsRef<str>>(parts: &[S]) -> std::result::Result<String, std::io::Error> {
+    let mut resolved_device = String::new();
+    let mut resolved_tail = String::new();
+    let mut resolved_absolute = false;
+
+    // Iterate right-to-left (stopping after processing current working directory if needed).
+    for step in (0..=parts.len()).rev() {
+        let owned_cwd: String;
+        let path_str: &str = if step > 0 {
+            parts[step - 1].as_ref()
+        } else {
+            owned_cwd = std::env::current_dir()?.to_string_lossy().into_owned();
+            &owned_cwd
+        };
+
+        if path_str.is_empty() {
+            continue;
+        }
+
+        let bytes = path_str.as_bytes();
+        let len = bytes.len();
+        let mut root_end = 0usize;
+        let mut device = String::new();
+        let mut is_absolute = false;
+
+        if len == 1 {
+            if matches!(bytes[0], b'/' | b'\\') {
+                root_end = 1;
+                is_absolute = true;
+            }
+        } else if matches!(bytes[0], b'/' | b'\\') {
+            if matches!(bytes[1], b'/' | b'\\') {
+                // UNC or device root: `\\server\share`
+                let mut j = 2usize;
+                let mut last = j;
+                while j < len && !matches!(bytes[j], b'/' | b'\\') {
+                    j += 1;
+                }
+                if j < len && j != last {
+                    let first_part = &path_str[last..j];
+                    last = j;
+                    while j < len && matches!(bytes[j], b'/' | b'\\') {
+                        j += 1;
+                    }
+                    if j < len && j != last {
+                        last = j;
+                        while j < len && !matches!(bytes[j], b'/' | b'\\') {
+                            j += 1;
+                        }
+                        if j == len || j != last {
+                            let second_part = &path_str[last..j];
+                            device = format!("\\\\{first_part}\\{second_part}");
+                            root_end = if j == len { j } else { j + 1 };
+                        }
+                    }
+                } else {
+                    root_end = 1;
+                }
+            } else {
+                root_end = 1;
+            }
+            is_absolute = true;
+        } else if bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+            device = path_str[..2].to_string();
+            root_end = 2;
+            if len > 2 && matches!(bytes[2], b'/' | b'\\') {
+                is_absolute = true;
+                root_end = 3;
+            }
+        }
+
+        if !device.is_empty() {
+            if !resolved_device.is_empty() {
+                if !device.eq_ignore_ascii_case(&resolved_device) {
+                    continue;
+                }
+            } else {
+                resolved_device = device;
+            }
+        }
+
+        if resolved_absolute {
+            if !resolved_device.is_empty() {
+                break;
+            }
+        } else {
+            let tail = &path_str[root_end..];
+            if !tail.is_empty() {
+                if resolved_tail.is_empty() {
+                    resolved_tail = tail.to_string();
+                } else {
+                    resolved_tail = format!("{tail}\\{resolved_tail}");
+                }
+            }
+            resolved_absolute = is_absolute;
+            if is_absolute && !resolved_device.is_empty() {
+                break;
+            }
+        }
+    }
+
+    // Normalize segments in resolved_tail (`/` -> `\`, resolve `.` and `..`).
+    let normalized_tail = normalize_win32_tail(&resolved_tail, resolved_absolute);
+    if !resolved_absolute {
+        return Ok(if normalized_tail.is_empty() {
+            format!("{resolved_device}.")
+        } else {
+            format!("{resolved_device}{normalized_tail}")
+        });
+    }
+    if resolved_device.is_empty() {
+        return Ok(format!("\\{normalized_tail}"));
+    }
+    Ok(format!("{resolved_device}\\{normalized_tail}"))
+}
+
+fn normalize_win32_tail(tail: &str, allow_above_root_drop: bool) -> String {
+    let mut stack: Vec<&str> = Vec::new();
+    for seg in tail.split(['/', '\\']) {
+        match seg {
+            "" | "." => {},
+            ".." => {
+                if stack.last().is_some_and(|s| *s != "..") {
+                    stack.pop();
+                } else if !allow_above_root_drop {
+                    stack.push("..");
+                }
+            },
+            _ => stack.push(seg),
+        }
+    }
+    stack.join("\\")
+}
+
 fn resolve_win32(path: Rest<String>) -> Result<String> {
-    #[cfg(windows)]
-    {
-        resolve_path_with_separator(path.0, false)
+    Ok(resolve_win32_strs(&path.0)?)
+}
+
+fn to_namespaced_path_posix<'js>(path: Value<'js>) -> Value<'js> {
+    path
+}
+
+fn to_namespaced_path_win32<'js>(ctx: Ctx<'js>, path: Value<'js>) -> Result<Value<'js>> {
+    let Some(s_val) = path.as_string() else {
+        return Ok(path);
+    };
+    let s = s_val.to_string()?;
+    if s.is_empty() {
+        return Ok(path);
     }
-    #[cfg(not(windows))]
-    {
-        let resolved = resolve_path_with_separator(path.0, true)?;
-        Ok(resolved.replace('/', "\\"))
+    let resolved = resolve_win32_strs(&[s])?;
+    if resolved.len() <= 2 {
+        return Ok(path);
     }
+    let bytes = resolved.as_bytes();
+    let out = if bytes.starts_with(b"\\\\") {
+        // UNC paths (excluding `\\?\` and `\\.\`) become `\\?\UNC\...`.
+        if !matches!(bytes.get(2), Some(b'?') | Some(b'.')) {
+            format!("\\\\?\\UNC\\{}", &resolved[2..])
+        } else {
+            resolved
+        }
+    } else if bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && bytes[2] == b'\\'
+    {
+        format!("\\\\?\\{resolved}")
+    } else {
+        resolved
+    };
+    out.into_js(&ctx)
+}
+
+fn throw_invalid_arg_type(ctx: &Ctx<'_>, name: &str, value: &Value<'_>) -> rquickjs::Error {
+    let type_name = value.type_of().as_str();
+    let msg = format!("The \"{name}\" argument must be of type string. Received type {type_name}");
+    if let Ok(ctor) = ctx.globals().get::<_, rquickjs::Function>("TypeError") {
+        if let Ok(err) = ctor.call::<_, Object>((msg.clone(),)) {
+            let _ = err.set("code", "ERR_INVALID_ARG_TYPE");
+            return ctx.throw(err.into_value());
+        }
+    }
+    Exception::throw_type(ctx, &msg)
+}
+
+fn matches_glob_impl<'js>(
+    ctx: &Ctx<'js>,
+    path: Value<'js>,
+    pattern: Value<'js>,
+    is_windows: bool,
+) -> Result<bool> {
+    let Some(path_js) = path.as_string() else {
+        return Err(throw_invalid_arg_type(ctx, "path", &path));
+    };
+    let Some(pattern_js) = pattern.as_string() else {
+        return Err(throw_invalid_arg_type(ctx, "pattern", &pattern));
+    };
+    let path_str = path_js.to_string()?;
+    let pattern_str = pattern_js.to_string()?;
+    Ok(glob::matches_glob(&path_str, &pattern_str, is_windows))
+}
+
+fn matches_glob_posix<'js>(ctx: Ctx<'js>, path: Value<'js>, pattern: Value<'js>) -> Result<bool> {
+    matches_glob_impl(&ctx, path, pattern, false)
+}
+
+fn matches_glob_win32<'js>(ctx: Ctx<'js>, path: Value<'js>, pattern: Value<'js>) -> Result<bool> {
+    matches_glob_impl(&ctx, path, pattern, true)
 }
 
 fn is_absolute_win32(path: String) -> bool {
@@ -675,6 +876,9 @@ impl ModuleDef for PathModule {
         declare.declare("relative")?;
         declare.declare("normalize")?;
         declare.declare("isAbsolute")?;
+        declare.declare("toNamespacedPath")?;
+        declare.declare("_makeLong")?;
+        declare.declare("matchesGlob")?;
         declare.declare("delimiter")?;
         declare.declare("sep")?;
         declare.declare("posix")?;
@@ -686,6 +890,16 @@ impl ModuleDef for PathModule {
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         export_default(ctx, exports, |default| {
+            let ns_posix = Func::from(to_namespaced_path_posix).into_js(ctx)?;
+            let ns_win32 = Func::from(to_namespaced_path_win32).into_js(ctx)?;
+            let glob_posix = Func::from(matches_glob_posix).into_js(ctx)?;
+            let glob_win32 = Func::from(matches_glob_win32).into_js(ctx)?;
+
+            #[cfg(windows)]
+            let (default_ns, default_glob) = (ns_win32.clone(), glob_win32.clone());
+            #[cfg(not(windows))]
+            let (default_ns, default_glob) = (ns_posix.clone(), glob_posix.clone());
+
             default.set("dirname", Func::from(dirname::<String>))?;
             default.set("basename", Func::from(basename))?;
             default.set("extname", Func::from(extname))?;
@@ -696,6 +910,9 @@ impl ModuleDef for PathModule {
             default.set("resolve", Func::from(resolve))?;
             default.set("normalize", Func::from(normalize::<String>))?;
             default.set("isAbsolute", Func::from(|s: String| is_absolute(&s)))?;
+            default.set("toNamespacedPath", default_ns.clone())?;
+            default.set("_makeLong", default_ns)?;
+            default.set("matchesGlob", default_glob)?;
             default.prop("delimiter", DELIMITER.to_string())?;
             default.prop("sep", MAIN_SEPARATOR.to_string())?;
 
@@ -711,6 +928,9 @@ impl ModuleDef for PathModule {
             posix.set("resolve", Func::from(resolve_posix))?;
             posix.set("normalize", Func::from(normalize_posix))?;
             posix.set("isAbsolute", Func::from(is_absolute_posix))?;
+            posix.set("toNamespacedPath", ns_posix.clone())?;
+            posix.set("_makeLong", ns_posix)?;
+            posix.set("matchesGlob", glob_posix)?;
             posix.prop("delimiter", ":")?;
             posix.prop("sep", "/")?;
 
@@ -737,6 +957,9 @@ impl ModuleDef for PathModule {
                 }),
             )?;
             win32.set("isAbsolute", Func::from(is_absolute_win32))?;
+            win32.set("toNamespacedPath", ns_win32.clone())?;
+            win32.set("_makeLong", ns_win32)?;
+            win32.set("matchesGlob", glob_win32)?;
             win32.prop("delimiter", ";")?;
             win32.prop("sep", "\\")?;
 

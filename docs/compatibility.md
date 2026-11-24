@@ -28,7 +28,7 @@
 | node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
 | node:net | ✔︎ | ✔︎⚠️ | `Socket.setTimeout` does not fire idle timeouts; `autoSelectFamily` flag is not wired to Happy-Eyeballs; several `Server` options and `maxConnections` ignored ([details](#nodenet)) |
 | node:os | ✔︎ | ✔︎⚠️ | Missing `os.constants`; `setPriority` unsupported on Windows; `networkInterfaces()` reports IPv6 `scopeid: 0` ([details](#nodeos)) |
-| node:path | ✔︎ | ✔︎⚠️ | Missing `toNamespacedPath` and `matchesGlob` ([details](#nodepath)) |
+| node:path | ✔︎ | ✔︎ | — |
 | node:perf_hooks | ✔︎ | ✔︎⚠️ | Static `nodeTiming` stub; no automatic GC/resource entries; timer-based ms `monitorEventLoopDelay`; fallback `eventLoopUtilization` ([details](#nodeperf_hooks)) |
 | node:process | ✔︎ | ✔︎⚠️ | Missing `execPath`, `execArgv`, `ppid`, `uptime`, `memoryUsage`, `cpuUsage`, `resourceUsage`, `umask`, `loadEnvFile`, `report`, and `permission` ([details](#nodeprocess)) |
 | node:querystring | ✔︎ | ✔︎ | — |
@@ -223,10 +223,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `os.constants` (`signals`, `errno`, `dlopen`, `priority`, `libuv`) is not exported.
 - `os.setPriority()` is not implemented on Windows.
 - `os.networkInterfaces()` always reports `scopeid: 0` for IPv6 addresses.
-
-#### `node:path`
-
-- Missing `path.toNamespacedPath()` and `path.matchesGlob()`.
 
 #### `node:perf_hooks`
 

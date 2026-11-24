@@ -618,13 +618,25 @@ CommonJS loader facade (also on the default `Module` export):
 
 [join](https://nodejs.org/api/path.html#pathjoinpaths)
 
+[matchesGlob](https://nodejs.org/api/path.html#pathmatchesglobpath-pattern)
+
 [normalize](https://nodejs.org/api/path.html#pathnormalizepath)
 
 [parse](https://nodejs.org/api/path.html#pathparsepath)
 
+[posix](https://nodejs.org/api/path.html#pathposix)
+
 [relative](https://nodejs.org/api/path.html#pathrelativefrom-to)
 
 [resolve](https://nodejs.org/api/path.html#pathresolvepaths)
+
+[sep](https://nodejs.org/api/path.html#pathsep)
+
+[toNamespacedPath](https://nodejs.org/api/path.html#pathtonamespacedpathpath)
+
+[win32](https://nodejs.org/api/path.html#pathwin32)
+
+`_makeLong` (alias of `toNamespacedPath`)
 
 ## perf_hooks
 
