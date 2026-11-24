@@ -1141,6 +1141,9 @@ pub(crate) fn set_prototype<'js>(ctx: &Ctx<'js>, constructor: Object<'js>) -> Re
         }
     }
 
+    let methods: Function = ctx.eval(include_str!("methods.js"))?;
+    methods.call::<_, ()>((crate::natives::natives(ctx)?, constructor.clone()))?;
+
     //not assessable from js
     prototype.prop(PredefinedAtom::Meta, stringify!(Buffer))?;
 

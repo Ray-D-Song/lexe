@@ -23,6 +23,7 @@ mod buffer;
 mod codec;
 mod extras;
 mod file;
+mod natives;
 
 const EXTRA_EXPORTS: [&str; 10] = [
     "SlowBuffer",

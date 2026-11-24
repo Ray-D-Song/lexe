@@ -82,6 +82,9 @@
 > [!NOTE]
 > `toString`, `from`, `write`, `alloc`, `byteLength` and `isEncoding` support the Node encodings utf8, utf16le (ucs2), latin1 (binary), ascii, base64, base64url and hex, matched case-insensitively without trimming.
 
+> [!NOTE]
+> Instance methods (`fill`, `indexOf`/`lastIndexOf`/`includes`, `compare`/`equals`, `copy`, `slice`/`subarray`, `swap16/32/64`, `toJSON`, the `read*`/`write*` families and the `*Slice`/`*Write` helpers) follow Node's argument coercion and error codes. `Buffer.prototype.inspect` is not provided yet. `Buffer.poolSize` is only a number; Raster does not pool allocations.
+
 ### Static methods
 
 [alloc](https://nodejs.org/api/buffer.html#static-method-bufferallocsize-fill-encoding)
@@ -92,6 +95,10 @@
 
 [byteLength](https://nodejs.org/api/buffer.html#static-method-bufferbytelengthstring-encoding)
 
+[compare](https://nodejs.org/api/buffer.html#static-method-buffercomparebuf1-buf2)
+
+[copyBytesFrom](https://nodejs.org/api/buffer.html#static-method-buffercopybytesfromview-offset-length)
+
 [concat](https://nodejs.org/api/buffer.html#static-method-bufferconcatlist-totallength)
 
 [from](https://nodejs.org/api/buffer.html#static-method-bufferfromarray)
@@ -100,9 +107,25 @@
 
 [isEncoding](https://nodejs.org/api/buffer.html#static-method-bufferisencodingencoding)
 
+[of](https://nodejs.org/api/buffer.html#static-method-bufferofitems)
+
+[poolSize](https://nodejs.org/api/buffer.html#bufferpoolsize)
+
 ### Prototype methods
 
+[compare](https://nodejs.org/api/buffer.html#bufcomparetarget-targetstart-targetend-sourcestart-sourceend)
+
 [copy](https://nodejs.org/api/buffer.html#bufcopytarget-targetstart-sourcestart-sourceend)
+
+[equals](https://nodejs.org/api/buffer.html#bufequalsotherbuffer)
+
+[fill](https://nodejs.org/api/buffer.html#buffillvalue-offset-end-encoding)
+
+[includes](https://nodejs.org/api/buffer.html#bufincludesvalue-byteoffset-encoding)
+
+[indexOf](https://nodejs.org/api/buffer.html#bufindexofvalue-byteoffset-encoding)
+
+[lastIndexOf](https://nodejs.org/api/buffer.html#buflastindexofvalue-byteoffset-encoding)
 
 [readBigInt64BE](https://nodejs.org/api/buffer.html#bufreadbigint64beoffset)
 
@@ -136,7 +159,29 @@
 
 [readUInt32LE](https://nodejs.org/api/buffer.html#bufreaduint32leoffset)
 
+[readBigUInt64BE](https://nodejs.org/api/buffer.html#bufreadbiguint64beoffset)
+
+[readBigUInt64LE](https://nodejs.org/api/buffer.html#bufreadbiguint64leoffset)
+
+[readIntBE](https://nodejs.org/api/buffer.html#bufreadintbeoffset-bytelength)
+
+[readIntLE](https://nodejs.org/api/buffer.html#bufreadintleoffset-bytelength)
+
+[readUIntBE](https://nodejs.org/api/buffer.html#bufreaduintbeoffset-bytelength)
+
+[readUIntLE](https://nodejs.org/api/buffer.html#bufreaduintleoffset-bytelength)
+
 [subarray](https://nodejs.org/api/buffer.html#bufsubarraystart-end)
+
+[swap16](https://nodejs.org/api/buffer.html#bufswap16)
+
+[swap32](https://nodejs.org/api/buffer.html#bufswap32)
+
+[swap64](https://nodejs.org/api/buffer.html#bufswap64)
+
+[toJSON](https://nodejs.org/api/buffer.html#buftojson)
+
+[toLocaleString](https://nodejs.org/api/buffer.html#buftolocalestringencoding-start-end)
 
 [toString](https://nodejs.org/api/buffer.html#buftostringencoding-start-end)
 
@@ -173,6 +218,18 @@
 [writeUInt32BE](https://nodejs.org/api/buffer.html#bufwriteuint32bevalue-offset)
 
 [writeUInt32LE](https://nodejs.org/api/buffer.html#bufwriteuint32levalue-offset)
+
+[writeBigUInt64BE](https://nodejs.org/api/buffer.html#bufwritebiguint64bevalue-offset)
+
+[writeBigUInt64LE](https://nodejs.org/api/buffer.html#bufwritebiguint64levalue-offset)
+
+[writeIntBE](https://nodejs.org/api/buffer.html#bufwriteintbevalue-offset-bytelength)
+
+[writeIntLE](https://nodejs.org/api/buffer.html#bufwriteintlevalue-offset-bytelength)
+
+[writeUIntBE](https://nodejs.org/api/buffer.html#bufwriteuintbevalue-offset-bytelength)
+
+[writeUIntLE](https://nodejs.org/api/buffer.html#bufwriteuintlevalue-offset-bytelength)
 
 ### Constants
 
