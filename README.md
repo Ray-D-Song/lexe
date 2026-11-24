@@ -36,6 +36,9 @@ lexe --version
 # Compile to a standalone executable
 lexe compile ./main.mjs ./app --executable
 ./app
+
+# Upgrade Lexe (standalone installs)
+lexe upgrade
 ```
 
 ## Documentation

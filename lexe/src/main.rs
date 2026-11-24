@@ -25,7 +25,7 @@ mod worker_isolate;
 
 use constcat::concat;
 #[cfg(not(target_family = "wasm"))]
-use lexe::executable;
+use lexe::{executable, upgrade};
 use lexe_core::modules::{
     module_builder::{ModuleBuilder, ModuleBuilderConfig},
     process::{argv, set_argv, EXIT_CODE, NO_WARNINGS, TRACE_WARNINGS},
@@ -317,6 +317,7 @@ Usage:
   lexe --import <file> [--import <file> ...] <main.js>
   lexe compile <input.js> [output] [options]
   lexe test <test_args>
+  lexe upgrade [options]
 
 Options:
   -v, --version     Print version information
@@ -343,6 +344,12 @@ Options:
 
   test              Run tests with provided arguments:
                       <test_args> -d <directory> <test-filter>
+
+  upgrade           Upgrade Lexe in place from GitHub Releases:
+                      --version <ver>        Install a specific version (e.g. 0.2.0)
+                      --dry-run              Check target version without replacing binary
+                      -f, --force            Reinstall even if already on target version
+                      -h, --help             Show upgrade options
 
 "#
     );
@@ -474,6 +481,32 @@ async fn start_cli(vm: &Vm) {
                         eprintln!("compile: input filename is required.");
                         exit(1);
                     }
+                }
+            },
+            "upgrade" => {
+                #[cfg(not(target_family = "wasm"))]
+                {
+                    let upgrade_args = match upgrade::parse_upgrade_args(&args[i + 1..]) {
+                        Ok(parsed) => parsed,
+                        Err(error) => {
+                            eprintln!("{error}");
+                            exit(1);
+                        },
+                    };
+                    if upgrade_args.help {
+                        upgrade::print_upgrade_usage();
+                        return;
+                    }
+                    if let Err(error) = upgrade::run_upgrade(&upgrade_args).await {
+                        eprintln!("{error}");
+                        exit(1);
+                    }
+                    return;
+                }
+                #[cfg(target_family = "wasm")]
+                {
+                    eprintln!("upgrade is not supported on WASI");
+                    exit(1);
                 }
             },
             _ => break,

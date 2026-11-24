@@ -209,8 +209,8 @@ test("bin/lexe.mjs forwards args and exit codes via LEXE_BINARY_PATH and downloa
 
   const isWin = process.platform === "win32";
   const mockScript = isWin
-    ? "@echo off\r\necho forward:%1:%2\r\nexit /b 7\r\n"
-    : '#!/bin/sh\necho "forward:$1:$2"\nexit 7\n';
+    ? "@echo off\r\necho forward:%1:%2:%LEXE_MANAGED_BY%\r\nexit /b 7\r\n"
+    : '#!/bin/sh\necho "forward:$1:$2:$LEXE_MANAGED_BY"\nexit 7\n';
 
   const localBin = path.join(tmpDir, isWin ? "mock.cmd" : "mock-lexe");
   await writeFile(localBin, mockScript, "utf8");
@@ -222,7 +222,7 @@ test("bin/lexe.mjs forwards args and exit codes via LEXE_BINARY_PATH and downloa
     env: { ...process.env, LEXE_BINARY_PATH: localBin },
   });
   assert.equal(directRun.status, 7);
-  assert.match(directRun.stdout, /forward:--version:extra/);
+  assert.match(directRun.stdout, /forward:--version:extra:npm/);
 
   if (!isWin) {
     const cacheDir = path.join(tmpDir, "cache");
@@ -239,6 +239,6 @@ test("bin/lexe.mjs forwards args and exit codes via LEXE_BINARY_PATH and downloa
       },
     });
     assert.equal(downloadedRun.status, 7);
-    assert.match(downloadedRun.stdout, /forward:--help:arg2/);
+    assert.match(downloadedRun.stdout, /forward:--help:arg2:npm/);
   }
 });

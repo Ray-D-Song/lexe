@@ -78,7 +78,7 @@ We provide a concrete example in `example/register-hooks`. Hook files can also b
 
 ### `LEXE_RELEASE_BASE_URL=url`
 
-Override the base URL used by `lexe compile --executable` and the `lexe` npm CLI wrapper to fetch `SHA256SUMS` and prebuilt runtime assets (defaults to `https://github.com/Ray-D-Song/lexe/releases/download/v<VERSION>`).
+Override the base URL used by `lexe compile --executable`, `lexe upgrade`, and the `lexe` npm CLI wrapper to fetch `SHA256SUMS` and prebuilt runtime assets (defaults to `https://github.com/Ray-D-Song/lexe/releases/download/v<VERSION>`).
 
 ### `LEXE_SKIP_DOWNLOAD=value`
 

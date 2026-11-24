@@ -514,16 +514,78 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         feature = "tls-openssl"
     )
 ))]
-async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, ExecError> {
+async fn send_get(uri: &hyper::Uri) -> Result<hyper::Response<hyper::body::Incoming>, ExecError> {
     use bytes::Bytes;
-    use http_body_util::{BodyExt, Empty};
-    use hyper::{header, Request, StatusCode, Uri};
-
-    const MAX_REDIRECTS: usize = 10;
+    use http_body_util::Empty;
+    use hyper::{header, Request};
 
     let client = lexe_http::HTTP_CLIENT
         .as_ref()
         .map_err(|e| format!("Failed to initialize HTTP client for runtime download: {e}"))?;
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(uri)
+        .header(header::USER_AGENT, format!("lexe/{VERSION}"))
+        .header(header::ACCEPT, "*/*")
+        .body(Empty::<Bytes>::new().boxed())?;
+
+    use http_body_util::BodyExt as _;
+    Ok(client.request(req).await?)
+}
+
+#[cfg(all(
+    any(feature = "base", feature = "http"),
+    any(
+        feature = "tls-ring",
+        feature = "tls-aws-lc",
+        feature = "tls-graviola",
+        feature = "tls-openssl"
+    )
+))]
+pub(crate) async fn fetch_redirect_location(url: &str) -> Result<String, ExecError> {
+    use hyper::{header, StatusCode, Uri};
+
+    let uri: Uri = url
+        .parse()
+        .map_err(|e| format!("Invalid URL '{url}': {e}"))?;
+    let resp = send_get(&uri).await?;
+    let status = resp.status();
+
+    if !matches!(
+        status,
+        StatusCode::MOVED_PERMANENTLY
+            | StatusCode::FOUND
+            | StatusCode::SEE_OTHER
+            | StatusCode::TEMPORARY_REDIRECT
+            | StatusCode::PERMANENT_REDIRECT
+    ) {
+        return Err(format!("Expected redirect from {url}, got HTTP {status}").into());
+    }
+
+    let location = resp
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| format!("Redirect ({status}) missing Location header for {url}"))?;
+
+    resolve_redirect_url(&uri, location)
+}
+
+#[cfg(all(
+    any(feature = "base", feature = "http"),
+    any(
+        feature = "tls-ring",
+        feature = "tls-aws-lc",
+        feature = "tls-graviola",
+        feature = "tls-openssl"
+    )
+))]
+pub(crate) async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, ExecError> {
+    use http_body_util::BodyExt;
+    use hyper::{header, StatusCode, Uri};
+
+    const MAX_REDIRECTS: usize = 10;
 
     let mut current_url = url.to_string();
     for _ in 0..=MAX_REDIRECTS {
@@ -531,14 +593,7 @@ async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, ExecError> {
             .parse()
             .map_err(|e| format!("Invalid URL '{current_url}': {e}"))?;
 
-        let req = Request::builder()
-            .method("GET")
-            .uri(&uri)
-            .header(header::USER_AGENT, format!("lexe/{VERSION}"))
-            .header(header::ACCEPT, "*/*")
-            .body(Empty::<Bytes>::new().boxed())?;
-
-        let resp = client.request(req).await?;
+        let resp = send_get(&uri).await?;
         let status = resp.status();
 
         if matches!(
@@ -614,7 +669,20 @@ fn resolve_redirect_url(base: &hyper::Uri, location: &str) -> Result<String, Exe
         feature = "tls-openssl"
     )
 )))]
-async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, ExecError> {
+pub(crate) async fn fetch_redirect_location(url: &str) -> Result<String, ExecError> {
+    Err(format!("Cannot query {url}: this lexe binary was built without HTTP/TLS support.").into())
+}
+
+#[cfg(not(all(
+    any(feature = "base", feature = "http"),
+    any(
+        feature = "tls-ring",
+        feature = "tls-aws-lc",
+        feature = "tls-graviola",
+        feature = "tls-openssl"
+    )
+)))]
+pub(crate) async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, ExecError> {
     Err(format!(
         "Cannot download {url}: this lexe binary was built without HTTP/TLS support. Provide prebuilt binaries via --runtime-dir or LEXE_BIN_DIR."
     )

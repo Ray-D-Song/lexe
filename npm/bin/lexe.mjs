@@ -13,6 +13,10 @@ try {
 
 const result = spawnSync(binaryPath, process.argv.slice(2), {
   stdio: "inherit",
+  env: {
+    ...process.env,
+    LEXE_MANAGED_BY: "npm",
+  },
 });
 
 if (result.error) {
