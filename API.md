@@ -1,7 +1,7 @@
 # API documentation
 
 > [!NOTE]
-> The long term goal for lexe is to become [WinterTC compliant](https://min-common-api.proposal.wintertc.org/). Not every API from Node.js will be supported.
+> Lexe's primary goal is Node.js compatibility, alongside standard Web Platform APIs ([WinterTC](https://min-common-api.proposal.wintertc.org/)). See the [compatibility matrix](docs/compatibility.md) for current module coverage and remaining gaps.
 
 # Node.js API
 
