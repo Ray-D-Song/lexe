@@ -39,6 +39,50 @@ pub const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
 
 const MAX_INDENTATION_LEVEL: usize = 4;
 const MAX_EXPANSION_DEPTH: usize = 4;
+
+/// Node prints at most this many bytes of a Buffer before eliding the rest
+/// (`<Buffer 00 01 ... 30 more bytes>`).
+const BUFFER_INSPECT_MAX_BYTES: usize = 50;
+
+/// Read a JS Buffer's bytes. A Buffer surfaces as an array-like object here, so
+/// indexed reads are the reliable route.
+fn bytes_of_buffer(obj: &Object<'_>) -> Result<Vec<u8>> {
+    let len: usize = obj.get::<_, u32>("length").unwrap_or(0) as usize;
+    let mut out = Vec::with_capacity(len);
+    for index in 0..len {
+        out.push(obj.get::<_, u8>(index as u32).unwrap_or(0));
+    }
+    Ok(out)
+}
+
+/// Node's Buffer inspect form: `<Buffer 00 01 ff>`, or `<Buffer >` when empty
+/// (note the trailing space — Node emits it, and it must not be "tidied" away).
+///
+/// Beyond 50 bytes the tail is replaced with `... N more byte(s)`, singular for
+/// exactly one remaining byte.
+fn format_buffer_inspect(bytes: &[u8]) -> String {
+    let mut out = String::from("<Buffer ");
+    let shown = bytes.len().min(BUFFER_INSPECT_MAX_BYTES);
+    for (index, byte) in bytes[..shown].iter().enumerate() {
+        if index > 0 {
+            out.push(SPACING);
+        }
+        out.push_str(&format!("{byte:02x}"));
+    }
+    let remaining = bytes.len() - shown;
+    if remaining > 0 {
+        out.push_str(" ... ");
+        out.push_str(&remaining.to_string());
+        out.push_str(if remaining == 1 {
+            " more byte"
+        } else {
+            " more bytes"
+        });
+    }
+    out.push('>');
+    out
+}
+
 const INDENTATION_LOOKUP: [&str; MAX_INDENTATION_LEVEL + 1] =
     ["", "  ", "    ", "        ", "                "];
 
@@ -539,6 +583,19 @@ fn format_raw_inner<'js>(
             }
 
             if depth < MAX_EXPANSION_DEPTH {
+                // `Buffer` has its own inspect form in Node: `<Buffer 00 01 ff>`
+                // with hex bytes, hard-truncated at 50 bytes. It is not the
+                // generic typed-array form, and it does not consult
+                // `maxArrayLength` or `depth` — Node's Buffer inspect is a
+                // custom implementation with those values baked in.
+                if let Some(class_name) = class_name.as_deref() {
+                    if class_name == "Buffer" {
+                        let bytes = bytes_of_buffer(&obj)?;
+                        result.push_str(&format_buffer_inspect(&bytes));
+                        return Ok(());
+                    }
+                }
+
                 let mut is_typed_array = false;
                 if let Some(class_name) = class_name {
                     result.push_str(&class_name);
