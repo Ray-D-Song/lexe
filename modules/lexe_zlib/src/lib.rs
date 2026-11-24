@@ -15,8 +15,8 @@ mod zstd;
 use self::brotli::{br_comp, br_comp_sync, br_decomp, br_decomp_sync};
 use self::stream::{create_decoder_js, create_encoder_js};
 use self::zlib::{
-    deflate, deflate_raw, deflate_raw_sync, deflate_sync, gunzip, gunzip_sync, gzip, gzip_sync,
-    inflate, inflate_raw, inflate_raw_sync, inflate_sync,
+    crc32, deflate, deflate_raw, deflate_raw_sync, deflate_sync, gunzip, gunzip_sync, gzip,
+    gzip_sync, inflate, inflate_raw, inflate_raw_sync, inflate_sync, unzip, unzip_sync,
 };
 use self::zstd::{zstd_comp, zstd_comp_sync, zstd_decomp, zstd_decomp_sync};
 
@@ -77,6 +77,7 @@ const STREAM_FACTORIES: &[&str] = &[
     "createInflate",
     "createDeflateRaw",
     "createInflateRaw",
+    "createUnzip",
     "createBrotliCompress",
     "createBrotliDecompress",
     "createZstdCompress",
@@ -91,6 +92,7 @@ const STREAM_CLASSES: &[&str] = &[
     "Inflate",
     "DeflateRaw",
     "InflateRaw",
+    "Unzip",
     "BrotliCompress",
     "BrotliDecompress",
     "ZstdCompress",
@@ -163,29 +165,30 @@ const STREAM_GLUE_JS: &str = r#"(function () {
   function build(createEncoder, createDecoder) {
     const { Transform } = require("node:stream");
 
-    function toLevel(options) {
-      if (!options || options.level === undefined || options.level === null) {
-        return 6;
-      }
-      const level = Number(options.level);
-      if (level === -1 || Number.isNaN(level)) return 6;
-      return Math.max(0, Math.min(11, level | 0));
-    }
-
     function makeTransform(encoding, decompress) {
       return class extends Transform {
         constructor(options) {
           super(options || {});
           this._encoding = encoding;
           this._decompress = decompress;
+          this._options = options || {};
           this._handle = decompress
-            ? createDecoder(encoding)
-            : createEncoder(encoding, toLevel(options));
+            ? createDecoder(encoding, this._options)
+            : createEncoder(encoding, this._options);
           this._finished = false;
+          this._closed = false;
+          this._bytesWritten = 0;
+        }
+
+        get bytesWritten() {
+          return this._handle ? this._handle.bytesWritten() : this._bytesWritten;
         }
 
         _transform(chunk, _enc, cb) {
           try {
+            if (!this._handle) {
+              throw new Error("zlib handle is closed");
+            }
             const out = this._handle.push(chunk);
             if (out && out.length > 0) {
               this.push(out);
@@ -198,8 +201,9 @@ const STREAM_GLUE_JS: &str = r#"(function () {
 
         _flush(cb) {
           try {
-            if (!this._finished) {
+            if (!this._finished && this._handle) {
               this._finished = true;
+              this._bytesWritten = this._handle.bytesWritten();
               const tail = this._handle.finish();
               if (tail && tail.length > 0) {
                 this.push(tail);
@@ -212,20 +216,88 @@ const STREAM_GLUE_JS: &str = r#"(function () {
         }
 
         _destroy(err, cb) {
-          this._handle = null;
+          if (this._handle) {
+            this._bytesWritten = this._handle.bytesWritten();
+            this._handle.close();
+            this._handle = null;
+          }
+          this._closed = true;
           cb(err);
         }
 
-        // Node exposes these on the stream instance.
-        flush(cb) {
-          if (typeof cb === "function") cb();
+        flush(kind, cb) {
+          if (typeof kind === "function") {
+            cb = kind;
+            kind = undefined;
+          }
+          if (kind === undefined) {
+            kind = this._encoding === "br" ? 1 : 3;
+          }
+          if (!this._handle || !this._handle.alive()) {
+            if (typeof cb === "function") queueMicrotask(cb);
+            return;
+          }
+          try {
+            const out = this._handle.flush(kind);
+            if (out && out.length > 0) {
+              this.push(out);
+            }
+            if (typeof cb === "function") queueMicrotask(cb);
+          } catch (err) {
+            if (typeof cb === "function") {
+              queueMicrotask(() => cb(err));
+            } else {
+              this.destroy(err);
+            }
+          }
+        }
+
+        params(level, strategy, cb) {
+          if (typeof level !== "number" || typeof strategy !== "number") {
+            throw new TypeError("The \"level\" and \"strategy\" arguments must be numbers");
+          }
+          if (!this._handle || !this._handle.alive()) {
+            if (typeof cb === "function") queueMicrotask(cb);
+            return;
+          }
+          try {
+            const out = this._handle.params(level, strategy);
+            if (out && out.length > 0) {
+              this.push(out);
+            }
+            if (typeof cb === "function") queueMicrotask(cb);
+          } catch (err) {
+            if (typeof cb === "function") {
+              queueMicrotask(() => cb(err));
+            } else {
+              this.destroy(err);
+            }
+          }
         }
 
         reset() {
-          this._handle = this._decompress
-            ? createDecoder(this._encoding)
-            : createEncoder(this._encoding, 6);
+          if (this._closed || this.destroyed) return;
+          if (this._handle && this._handle.alive()) {
+            this._handle.reset();
+          } else {
+            const prev = this._bytesWritten;
+            this._handle = this._decompress
+              ? createDecoder(this._encoding, this._options)
+              : createEncoder(this._encoding, this._options);
+            this._bytesWritten = prev;
+          }
           this._finished = false;
+        }
+
+        close(cb) {
+          if (this._closed || this.destroyed) {
+            if (typeof cb === "function") queueMicrotask(cb);
+            return;
+          }
+          if (typeof cb === "function") {
+            this.once("close", cb);
+          }
+          this.destroy();
         }
       };
     }
@@ -237,6 +309,7 @@ const STREAM_GLUE_JS: &str = r#"(function () {
       Inflate: makeTransform("deflate", true),
       DeflateRaw: makeTransform("deflate-raw", false),
       InflateRaw: makeTransform("deflate-raw", true),
+      Unzip: makeTransform("unzip", true),
       BrotliCompress: makeTransform("br", false),
       BrotliDecompress: makeTransform("br", true),
       ZstdCompress: makeTransform("zstd", false),
@@ -250,6 +323,7 @@ const STREAM_GLUE_JS: &str = r#"(function () {
       createInflate: (options) => new classes.Inflate(options),
       createDeflateRaw: (options) => new classes.DeflateRaw(options),
       createInflateRaw: (options) => new classes.InflateRaw(options),
+      createUnzip: (options) => new classes.Unzip(options),
       createBrotliCompress: (options) => new classes.BrotliCompress(options),
       createBrotliDecompress: (options) => new classes.BrotliDecompress(options),
       createZstdCompress: (options) => new classes.ZstdCompress(options),
@@ -281,6 +355,11 @@ impl ModuleDef for ZlibModule {
 
         declare.declare("gunzip")?;
         declare.declare("gunzipSync")?;
+
+        declare.declare("unzip")?;
+        declare.declare("unzipSync")?;
+
+        declare.declare("crc32")?;
 
         declare.declare("brotliCompress")?;
         declare.declare("brotliCompressSync")?;
@@ -326,6 +405,11 @@ impl ModuleDef for ZlibModule {
 
             default.set("gunzip", Func::from(gunzip))?;
             default.set("gunzipSync", Func::from(gunzip_sync))?;
+
+            default.set("unzip", Func::from(unzip))?;
+            default.set("unzipSync", Func::from(unzip_sync))?;
+
+            default.set("crc32", Func::from(crc32))?;
 
             default.set("brotliCompress", Func::from(br_comp))?;
             default.set("brotliCompressSync", Func::from(br_comp_sync))?;

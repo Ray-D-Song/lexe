@@ -19,7 +19,7 @@ all-rust = ["brotli-rust", "flate2-rust", "zstd-rust"]
 brotli-c = ["brotlic"]
 brotli-rust = ["brotli"]
 
-flate2-c = ["flate2/zlib-ng"]
+flate2-c = ["flate2/zlib-ng", "dep:libz-ng-sys"]
 flate2-rust = ["flate2/rust_backend"]
 
 zstd-c = ["zstd"]
@@ -32,4 +32,5 @@ brotli = { version = "8", features = [
     "std",
 ], default-features = false, optional = true }
 flate2 = { version = "1", default-features = false, optional = true }
+libz-ng-sys = { version = "1.1", default-features = false, optional = true }
 zstd = { version = "0.13", default-features = false, optional = true }

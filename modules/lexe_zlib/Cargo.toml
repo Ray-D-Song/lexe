@@ -27,6 +27,7 @@ compression-rust = [
 ]
 
 [dependencies]
+crc32fast = { version = "1", default-features = false }
 lexe_buffer = { version = "0.1.1", path = "../lexe_buffer" }
 lexe_compression = { version = "0.1.1", path = "../../libs/lexe_compression", default-features = false }
 lexe_context = { version = "0.1.1", path = "../../libs/lexe_context" }

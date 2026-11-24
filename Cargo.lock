@@ -1926,6 +1926,7 @@ dependencies = [
  "brotli",
  "brotlic",
  "flate2",
+ "libz-ng-sys",
  "zstd",
 ]
 
@@ -2713,6 +2714,7 @@ dependencies = [
 name = "lexe_zlib"
 version = "0.1.1"
 dependencies = [
+ "crc32fast",
  "lexe_buffer",
  "lexe_compression",
  "lexe_context",

@@ -52,7 +52,7 @@
 | node:vm | ✔︎ | ✔︎⚠️ | Exports `runInNewContext` only (no `Script`/`createContext`/modules); only `{ filename }` option; shared QuickJS runtime ([details](#nodevm)) |
 | node:wasi | ✔︎ | ✘ | Not implemented |
 | node:worker_threads | ✔︎ | ✔︎⚠️ | `moveMessagePortToContext` throws; missing `BroadcastChannel`, `SHARE_ENV`, `resourceLimits`, `getHeapSnapshot`, `postMessageToThread`, and piped worker stdio ([details](#nodeworker_threads)) |
-| node:zlib | ✔︎ | ✔︎⚠️ | Missing `unzip*` and `crc32`; `flush` ignores flush kind; missing `params`/`close`/`bytesWritten` and `dictionary`/`windowBits`/`memLevel` ([details](#nodezlib)) |
+| node:zlib | ✔︎ | ✔︎ | — |
 
 | [lexe API](https://github.com/Ray-D-Song/lexe/blob/main/API.md) | Node.js | lexe |
 | --- | --- | --- |
@@ -63,7 +63,7 @@
 
 | [Web Platform API](https://min-common-api.proposal.wintertc.org/) | lexe | Key differences from standard / Node.js |
 | --- | --- | --- |
-| COMPRESSION | ✔︎⚠️ | Supports `gzip`/`deflate`/`deflate-raw` via `node:zlib`; inherits `node:stream/web` and `node:zlib` limits ([details](#compression)) |
+| COMPRESSION | ✔︎⚠️ | Supports `gzip`/`deflate`/`deflate-raw` via `node:zlib`; inherits `node:stream/web` streaming limits ([details](#compression)) |
 | CONSOLE | ✔︎⚠️ | Missing `dirxml`, `profile`/`profileEnd`, `timeStamp`, plus `console-log-symbol` and `idlharness` WPT edge cases ([details](#console)) |
 | DOM | ✔︎⚠️ | WinterTC `Event`/`EventTarget`/`AbortController`/`AbortSignal` subset only; no `ErrorEvent`, `CloseEvent`, or browser DOM ([details](#dom)) |
 | ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
@@ -260,17 +260,11 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `moveMessagePortToContext()` throws (not implemented).
 - Missing `BroadcastChannel`, `SHARE_ENV`, `resourceLimits`, `Worker.prototype.getHeapSnapshot()`, `postMessageToThread()`, and piped worker stdio (`stdin: true`, `stdout: true`, `stderr: true`).
 
-#### `node:zlib`
-
-- Missing `unzip` / `unzipSync` / `createUnzip` / `Unzip` (auto-detecting gzip/deflate) and `zlib.crc32()`.
-- Streaming `flush(kind, cb)` ignores the flush kind and completes immediately.
-- Missing stream methods and options: `params()`, `close()`, `bytesWritten`, `dictionary`, `windowBits`, and `memLevel`.
-
 ### Web Platform APIs
 
 #### `COMPRESSION`
 
-- Supports `CompressionStream` and `DecompressionStream` for `gzip`, `deflate`, and `deflate-raw` via `node:zlib`, inheriting `node:stream/web` and `node:zlib` streaming limitations.
+- Supports `CompressionStream` and `DecompressionStream` for `gzip`, `deflate`, and `deflate-raw` via `node:zlib`, inheriting `node:stream/web` streaming limitations.
 
 #### `CONSOLE`
 

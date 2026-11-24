@@ -212,3 +212,144 @@ describe("raw deflate streaming (ws permessage-deflate)", () => {
     expect(Buffer.concat(back).toString()).toBe("websocket frame payload");
   });
 });
+
+describe("unzip, crc32, streaming controls, and zlib options", () => {
+  it("crc32 computes unsigned 32-bit CRC and supports incremental chaining", () => {
+    const zlib = defaultImport as unknown as typeof import("node:zlib");
+    expect(zlib.crc32("hello")).toBe(907060870);
+    // Bit-31-set CRC must stay unsigned (positive > 2^31 - 1).
+    expect(zlib.crc32("foo")).toBe(2356372769);
+    expect(zlib.crc32(Buffer.from("hello"))).toBe(907060870);
+    expect(zlib.crc32(new Uint8Array([102, 111, 111]))).toBe(2356372769);
+    expect(zlib.crc32("lo", zlib.crc32("hel"))).toBe(907060870);
+
+    expect(() => zlib.crc32("a", -1)).toThrow();
+    expect(() => zlib.crc32("a", 0x100000000)).toThrow();
+    // @ts-expect-error runtime validation check
+    expect(() => zlib.crc32("a", "1")).toThrow();
+  });
+
+  it("unzip, unzipSync, and createUnzip auto-detect gzip and deflate", async () => {
+    const zlib = defaultImport as unknown as typeof import("node:zlib");
+    const msg = "auto-detect header payload";
+    const gz = zlib.gzipSync(msg);
+    const df = zlib.deflateSync(msg);
+
+    expect(zlib.unzipSync(gz).toString()).toBe(msg);
+    expect(zlib.unzipSync(df).toString()).toBe(msg);
+    expect(() => zlib.unzipSync(Buffer.alloc(0))).toThrow();
+
+    await new Promise<void>((resolve, reject) => {
+      zlib.unzip(gz, (err, out) => {
+        if (err) return reject(err);
+        expect(out.toString()).toBe(msg);
+        resolve();
+      });
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      zlib.unzip(df, (err, out) => {
+        if (err) return reject(err);
+        expect(out.toString()).toBe(msg);
+        resolve();
+      });
+    });
+
+    for (const input of [gz, df]) {
+      const u = zlib.createUnzip();
+      expect(typeof zlib.Unzip).toBe("function");
+      expect(u instanceof zlib.Unzip).toBe(true);
+      const chunks: Buffer[] = [];
+      u.on("data", (c: Buffer) => chunks.push(c));
+      await new Promise<void>((resolve, reject) => {
+        u.on("end", resolve);
+        u.on("error", reject);
+        u.end(input);
+      });
+      expect(Buffer.concat(chunks).toString()).toBe(msg);
+    }
+  });
+
+  it("supports dictionary, windowBits, memLevel, and strategy options", async () => {
+    const zlib = defaultImport as unknown as typeof import("node:zlib");
+    const dict = Buffer.from("the quick brown fox jumps over the lazy dog");
+    const plain = "the quick brown fox and the lazy dog repeated twice: the quick brown fox";
+
+    const deflated = zlib.deflateSync(plain, {
+      dictionary: dict,
+      windowBits: 12,
+      memLevel: 4,
+      strategy: zlib.constants.Z_FILTERED,
+      level: 9,
+    });
+    // Without the dictionary, inflating must fail.
+    expect(() => zlib.inflateSync(deflated, { windowBits: 12 })).toThrow();
+    expect(
+      zlib.inflateSync(deflated, { dictionary: dict, windowBits: 12 }).toString()
+    ).toBe(plain);
+
+    const raw = zlib.deflateRawSync(plain, { dictionary: dict, windowBits: 11 });
+    expect(
+      zlib.inflateRawSync(raw, { dictionary: dict, windowBits: 11 }).toString()
+    ).toBe(plain);
+
+    // Streaming with dictionary
+    const enc = zlib.createDeflate({ dictionary: dict, windowBits: 12 });
+    const dec = zlib.createInflate({ dictionary: dict, windowBits: 12 });
+    const out: Buffer[] = [];
+    dec.on("data", (c: Buffer) => out.push(c));
+    await new Promise<void>((resolve, reject) => {
+      dec.on("end", resolve);
+      dec.on("error", reject);
+      enc.pipe(dec);
+      enc.end(plain);
+    });
+    expect(Buffer.concat(out).toString()).toBe(plain);
+  });
+
+  it("supports real flush(kind), params(), bytesWritten, reset(), and close()", async () => {
+    const zlib = defaultImport as unknown as typeof import("node:zlib");
+
+    const enc = zlib.createDeflate();
+    const dec = zlib.createInflate();
+    const compressedChunks: Buffer[] = [];
+    const decodedChunks: Buffer[] = [];
+    enc.on("data", (c: Buffer) => {
+      compressedChunks.push(c);
+      dec.write(c);
+    });
+    dec.on("data", (c: Buffer) => decodedChunks.push(c));
+
+    enc.write("first ");
+    await new Promise<void>((resolve, reject) =>
+      enc.flush(zlib.constants.Z_SYNC_FLUSH, (err?: Error | null) =>
+        err ? reject(err) : resolve()
+      )
+    );
+    // After Z_SYNC_FLUSH, compressed bytes are emitted and decodable BEFORE end().
+    expect(Buffer.concat(compressedChunks).length).toBeGreaterThan(0);
+    expect(Buffer.concat(decodedChunks).toString()).toBe("first ");
+    expect(enc.bytesWritten).toBe(6);
+
+    await new Promise<void>((resolve, reject) =>
+      enc.params(1, zlib.constants.Z_DEFAULT_STRATEGY, (err?: Error | null) =>
+        err ? reject(err) : resolve()
+      )
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      dec.on("end", resolve);
+      dec.on("error", reject);
+      enc.on("end", () => dec.end());
+      enc.end("second");
+    });
+    expect(enc.bytesWritten).toBe(12);
+    expect(Buffer.concat(decodedChunks).toString()).toBe("first second");
+
+    const toClose = zlib.createGzip();
+    toClose.write("abc");
+    expect(toClose.bytesWritten).toBe(3);
+    await new Promise<void>((resolve) => toClose.close(() => resolve()));
+    expect(toClose.bytesWritten).toBe(3);
+  });
+});
