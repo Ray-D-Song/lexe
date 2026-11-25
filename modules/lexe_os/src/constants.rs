@@ -62,7 +62,7 @@ pub fn visit_dlopen_constants(mut f: impl FnMut(&'static str, i32) -> Result<()>
     ] {
         f(name, val)?;
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
     f("RTLD_DEEPBIND", libc::RTLD_DEEPBIND)?;
     Ok(())
 }
