@@ -4,12 +4,15 @@
 use std::{cell::RefCell, rc::Rc};
 
 use rquickjs::{
-    atom::PredefinedAtom, class::Trace, function::Opt, Class, Coerced, Ctx, Exception, FromJs,
-    IntoJs, Null, Object, Result, Value,
+    atom::PredefinedAtom, class::Trace, function::Opt, Class, Coerced, Ctx, FromJs, IntoJs, Null,
+    Object, Result, Value,
 };
 use url::{quirks, Url};
 
-use super::{convert_trailing_space, url_search_params::URLSearchParams};
+use super::{
+    convert_trailing_space, throw_coded, throw_invalid_url, url_search_params::URLSearchParams,
+    CodedError,
+};
 
 /// Naively checks for hostname delimiter, a colon ":", that's *probably* not
 /// part of an IPv6 address
@@ -57,49 +60,10 @@ pub struct URL<'js> {
 #[rquickjs::methods(rename_all = "camelCase")]
 impl<'js> URL<'js> {
     #[qjs(constructor)]
-    pub fn new(ctx: Ctx<'js>, input: Value<'js>, base: Opt<Value<'js>>) -> Result<Self> {
-        let input: Result<Coerced<String>> = Coerced::from_js(&ctx, input);
-        let base = base.into_inner().filter(|value| !value.is_undefined());
-
-        if let Some(base) = base {
-            if base.is_null() {
-                return Err(Exception::throw_type(&ctx, "Invalid URL"));
-            }
-            // Node/WHATWG: base may be a string or a URL object (use its href).
-            let base_str = if let Some(s) = base.as_string() {
-                Some(s.to_string()?)
-            } else if let Some(obj) = base.as_object() {
-                if let Some(url_inst) = Class::<URL>::from_object(obj) {
-                    Some(url_inst.borrow().url.borrow().as_str().to_string())
-                } else if let Ok(href) = obj.get::<_, String>("href") {
-                    Some(href)
-                } else {
-                    // Last resort: coerce to string (may yield "[object Object]").
-                    Coerced::<String>::from_js(&ctx, base).ok().map(|c| c.0)
-                }
-            } else {
-                Coerced::<String>::from_js(&ctx, base).ok().map(|c| c.0)
-            };
-
-            if let Some(base) = base_str {
-                let mut url: Url = base.parse().map_err(|err| {
-                    Exception::throw_type(&ctx, format!("Invalid base URL: {}", err).as_str())
-                })?;
-
-                if let Ok(input) = input {
-                    url = url.join(input.as_str()).map_err(|err| {
-                        Exception::throw_type(&ctx, format!("Invalid URL: {}", err).as_str())
-                    })?;
-                }
-
-                return Self::from_url(ctx, url);
-            }
-        }
-
-        if let Ok(input) = input {
-            Self::from_str(ctx, input.as_str())
-        } else {
-            Err(Exception::throw_message(&ctx, "Invalid URL"))
+    pub fn new(ctx: Ctx<'js>, input: Opt<Value<'js>>, base: Opt<Value<'js>>) -> Result<Self> {
+        match Self::parse_url_parts(&ctx, input, base)? {
+            Ok(url) => Self::from_url(ctx, url),
+            Err(invalid_input) => Err(throw_invalid_url(&ctx, &invalid_input)),
         }
     }
 
@@ -113,11 +77,11 @@ impl<'js> URL<'js> {
     }
 
     #[qjs(set, rename = "hash")]
-    pub fn set_hash(&mut self, hash: String) -> String {
+    pub fn set_hash(&mut self, hash: Coerced<String>) -> String {
         convert_trailing_space(&mut self.url.borrow_mut());
 
         quirks::set_hash(&mut self.url.borrow_mut(), hash.as_str());
-        hash
+        hash.0
     }
 
     #[qjs(get)]
@@ -155,11 +119,12 @@ impl<'js> URL<'js> {
     }
 
     #[qjs(set, rename = "href")]
-    pub fn set_href(&mut self, href: String) -> String {
+    pub fn set_href(&mut self, ctx: Ctx<'js>, href: Coerced<String>) -> Result<String> {
+        if quirks::set_href(&mut self.url.borrow_mut(), href.as_str()).is_err() {
+            return Err(throw_invalid_url(&ctx, href.as_str()));
+        }
         convert_trailing_space(&mut self.url.borrow_mut());
-
-        let _ = quirks::set_href(&mut self.url.borrow_mut(), href.as_str());
-        href
+        Ok(href.0)
     }
 
     #[qjs(get)]
@@ -199,22 +164,13 @@ impl<'js> URL<'js> {
     }
 
     #[qjs(set, rename = "port")]
-    pub fn set_port(&mut self, ctx: Ctx<'js>, port: Value<'js>) -> Value<'js> {
+    pub fn set_port(&mut self, port: Coerced<String>) -> String {
         convert_trailing_space(&mut self.url.borrow_mut());
 
-        // TODO: negative ports should be handled in Url
-        if port.is_null()
-            || port.is_undefined()
-            || (port.is_int() && unsafe { port.as_int().unwrap_unchecked() } < 0)
-        {
-            return port;
+        if !port.as_str().starts_with('-') {
+            let _ = quirks::set_port(&mut self.url.borrow_mut(), port.as_str());
         }
-
-        let port_string: Result<Coerced<String>> = Coerced::from_js(&ctx, port.clone());
-        if let Ok(port_string) = port_string {
-            let _ = quirks::set_port(&mut self.url.borrow_mut(), port_string.as_str());
-        }
-        port
+        port.0
     }
 
     #[qjs(get)]
@@ -271,14 +227,20 @@ impl<'js> URL<'js> {
     //
 
     #[qjs(static)]
-    pub fn can_parse(ctx: Ctx<'js>, input: Value<'js>, base: Opt<Value<'js>>) -> bool {
-        Self::new(ctx, input, base).is_ok()
+    pub fn can_parse(ctx: Ctx<'js>, input: Opt<Value<'js>>, base: Opt<Value<'js>>) -> Result<bool> {
+        Ok(Self::parse_url_parts(&ctx, input, base)?.is_ok())
     }
 
     #[qjs(static)]
-    pub fn parse(ctx: Ctx<'js>, input: Value<'js>, base: Opt<Value<'js>>) -> Result<Value<'js>> {
-        Self::new(ctx.clone(), input, base)
-            .map_or_else(|_| Null.into_js(&ctx), |instance| instance.into_js(&ctx))
+    pub fn parse(
+        ctx: Ctx<'js>,
+        input: Opt<Value<'js>>,
+        base: Opt<Value<'js>>,
+    ) -> Result<Value<'js>> {
+        match Self::parse_url_parts(&ctx, input, base)? {
+            Ok(url) => Self::from_url(ctx.clone(), url)?.into_js(&ctx),
+            Err(_) => Null.into_js(&ctx),
+        }
     }
 
     //
@@ -303,10 +265,61 @@ impl<'js> std::fmt::Display for URL<'js> {
 }
 
 impl<'js> URL<'js> {
+    fn parse_url_parts(
+        ctx: &Ctx<'js>,
+        input: Opt<Value<'js>>,
+        base: Opt<Value<'js>>,
+    ) -> Result<std::result::Result<Url, String>> {
+        let Some(input_val) = input.into_inner() else {
+            return Err(throw_coded(
+                ctx,
+                CodedError::Type,
+                "ERR_MISSING_ARGS",
+                "The \"url\" argument must be specified",
+            ));
+        };
+
+        let input_str = if let Some(obj) = input_val.as_object() {
+            if let Some(url_inst) = Class::<URL>::from_object(obj) {
+                url_inst.borrow().url.borrow().as_str().to_string()
+            } else {
+                Coerced::<String>::from_js(ctx, input_val)?.0
+            }
+        } else {
+            Coerced::<String>::from_js(ctx, input_val)?.0
+        };
+
+        let base = base.into_inner().filter(|value| !value.is_undefined());
+        if let Some(base) = base {
+            let base_str = if base.is_null() {
+                "null".to_string()
+            } else if let Some(obj) = base.as_object() {
+                if let Some(url_inst) = Class::<URL>::from_object(obj) {
+                    url_inst.borrow().url.borrow().as_str().to_string()
+                } else {
+                    Coerced::<String>::from_js(ctx, base)?.0
+                }
+            } else {
+                Coerced::<String>::from_js(ctx, base)?.0
+            };
+
+            let Ok(base_url) = base_str.parse::<Url>() else {
+                return Ok(Err(input_str));
+            };
+            let Ok(url) = base_url.join(&input_str) else {
+                return Ok(Err(input_str));
+            };
+            return Ok(Ok(url));
+        }
+
+        match input_str.parse::<Url>() {
+            Ok(url) => Ok(Ok(url)),
+            Err(_) => Ok(Err(input_str)),
+        }
+    }
+
     pub fn from_str(ctx: Ctx<'js>, input: &str) -> Result<Self> {
-        let url: Url = input
-            .parse()
-            .map_err(|_| Exception::throw_type(&ctx, "Invalid URL"))?;
+        let url: Url = input.parse().map_err(|_| throw_invalid_url(&ctx, input))?;
         Self::from_url(ctx, url)
     }
 

@@ -45,7 +45,7 @@
 | node:timers/promises | ✔︎ | ✔︎ | — |
 | node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
 | node:tty | ✔︎ | ✔︎ | — |
-| node:url | ✔︎ | ✔︎⚠️ | Missing `URLPattern`; minor `url`-crate parser quirks ([details](#nodeurl)) |
+| node:url | ✔︎ | ✔︎ | — |
 | node:util | ✔︎ | ✔︎⚠️ | Missing `parseArgs` and `transferableAbort*`; limited `TextDecoder` encodings ([details](#nodeutil-and-nodeutiltypes)) |
 | node:util/types | ✔︎ | ✔︎⚠️ | Missing `isWebAssemblyCompiledModule`; `isExternal`, `isKeyObject`, and `isCryptoKey` always return `false` ([details](#nodeutil-and-nodeutiltypes)) |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
@@ -74,7 +74,7 @@
 | HTML | ✔︎⚠️ | `navigator` only exposes `userAgent`; `structuredClone` omits `DOMException`/`Blob`/`File`/`MessagePort`/`CryptoKey`; no `BroadcastChannel` ([details](#html)) |
 | STREAMS | ✔︎⚠️ | Same limitations as `node:stream/web` ([details](#streams)) |
 | URL | ✔︎ | — |
-| URLPATTERN | ✘⏱ | Planned |
+| URLPATTERN | ✔︎ | — |
 | WASM-JS-API-2 | ✔︎⚠️ | `wasmi` interpreter; missing GC/exceptions/threads/Memory64/JSPI/`v128` boundary; copied `Memory.buffer`; retained `externref`s ([details](#wasm-js-api-2)) |
 | WASM-WEB-API-2 | ✔︎⚠️ | `compileStreaming`/`instantiateStreaming` buffer the full `Response` before compiling (no incremental streaming compilation) ([details](#wasm-web-api-2)) |
 | WEBCRYPTO | ✔︎⚠️ | Missing `X448`, `Ed448`, `Argon2`, `AES-OCB`, `ChaCha20-Poly1305` and some `deriveBits`/`deriveKey` WPT edge cases ([details](#webcrypto)) |
@@ -215,11 +215,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - TLS versions below 1.2 are not supported.
 - `TLSSocket.renegotiate()` fails with `"renegotiation not supported"`.
 - `TLSSocket.write()` always returns `true` without backpressure or `"drain"` signaling.
-
-#### `node:url`
-
-- `URLPattern` is not implemented (tracked separately under Web Platform APIs).
-- `URL` has minor `url`-crate parser quirks (for example, negative port handling).
 
 #### `node:util` and `node:util/types`
 

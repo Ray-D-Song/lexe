@@ -463,4 +463,43 @@ describe("URL Utility Functions", () => {
       "https://測試/?abc"
     );
   });
+
+  it("coerces hash and port setters and sets ERR_INVALID_URL codes", () => {
+    const u = new URL("https://example.com:8443/keep");
+    (u as any).hash = null;
+    expect(u.href).toBe("https://example.com:8443/keep#null");
+    (u as any).hash = 123;
+    expect(u.href).toBe("https://example.com:8443/keep#123");
+
+    u.port = "-1" as any;
+    expect(u.port).toBe("8443");
+    expect(() => {
+      u.port = Symbol("bad") as any;
+    }).toThrow(TypeError);
+
+    let hrefErr: any;
+    try {
+      u.href = "not-a-valid-url";
+    } catch (e) {
+      hrefErr = e;
+    }
+    expect(hrefErr).toBeInstanceOf(TypeError);
+    expect(hrefErr?.code).toBe("ERR_INVALID_URL");
+    expect(u.href).toBe("https://example.com:8443/keep#123");
+
+    let ctorErr: any;
+    try {
+      new URL("not-a-valid-url");
+    } catch (e) {
+      ctorErr = e;
+    }
+    expect(ctorErr).toBeInstanceOf(TypeError);
+    expect(ctorErr?.code).toBe("ERR_INVALID_URL");
+    expect(ctorErr?.input).toBe("not-a-valid-url");
+  });
+
+  it("exports globalThis.URLPattern on node:url", () => {
+    expect((defaultImport as any).URLPattern).toBe(globalThis.URLPattern);
+    expect(typeof globalThis.URLPattern).toBe("function");
+  });
 });

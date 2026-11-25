@@ -111,30 +111,54 @@ fn percent_decode(input: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// Throw a `TypeError` carrying a Node `code` property (same helper shape used by
-/// `lexe_net` and `lexe_sqlite`).
-fn throw_coded(ctx: &Ctx<'_>, kind: CodedError, code: &str, message: &str) -> rquickjs::Error {
+/// Throw a `TypeError` or `URIError` carrying an optional Node `code` property.
+pub(crate) fn throw_coded(
+    ctx: &Ctx<'_>,
+    kind: CodedError,
+    code: &str,
+    message: &str,
+) -> rquickjs::Error {
+    throw_coded_with_input(ctx, kind, code, message, None)
+}
+
+pub(crate) fn throw_invalid_url(ctx: &Ctx<'_>, input: &str) -> rquickjs::Error {
+    throw_coded_with_input(
+        ctx,
+        CodedError::Type,
+        "ERR_INVALID_URL",
+        "Invalid URL",
+        Some(input),
+    )
+}
+
+fn throw_coded_with_input(
+    ctx: &Ctx<'_>,
+    kind: CodedError,
+    code: &str,
+    message: &str,
+    input: Option<&str>,
+) -> rquickjs::Error {
     let primordials = lexe_utils::primordials::BasePrimordials::get(ctx);
     let Ok(primordials) = primordials else {
         return Exception::throw_message(ctx, message);
     };
     let ctor = match kind {
         CodedError::Type => &primordials.constructor_type_error,
-        CodedError::Uri => return throw_uri_error(ctx, message),
     };
     let Ok(err) = ctor.construct((message.to_string(),)) else {
         return Exception::throw_message(ctx, message);
     };
     let err: Object<'_> = err;
     let _ = err.set("code", code);
+    if let Some(input) = input {
+        let _ = err.set("input", input);
+    }
     ctx.throw(err.into_value())
 }
 
 #[derive(Clone, Copy)]
-enum CodedError {
+pub(crate) enum CodedError {
     Type,
-    /// `URIError` with no `code` — what Node raises for malformed percent escapes.
-    Uri,
 }
 
 fn throw_uri_error(ctx: &Ctx<'_>, message: &str) -> rquickjs::Error {
@@ -414,6 +438,9 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let install: Function = ctx.eval(include_str!("object_url.js"))?;
     install.call::<_, ()>((globals.get::<_, Value>(stringify!(URL))?,))?;
 
+    let install_pattern: Function = ctx.eval(include_str!("url_pattern.js"))?;
+    install_pattern.call::<_, ()>((globals.clone(),))?;
+
     Ok(())
 }
 
@@ -431,6 +458,7 @@ pub struct UrlModule;
 impl ModuleDef for UrlModule {
     fn declare(declare: &Declarations) -> Result<()> {
         declare.declare(stringify!(URL))?;
+        declare.declare(stringify!(URLPattern))?;
         declare.declare(stringify!(URLSearchParams))?;
         declare.declare("urlToHttpOptions")?;
         declare.declare("domainToUnicode")?;
@@ -448,10 +476,12 @@ impl ModuleDef for UrlModule {
         let globals = ctx.globals();
         BasePrimordials::init(ctx)?;
         let url: Constructor = globals.get(stringify!(URL))?;
+        let url_pattern: Value = globals.get(stringify!(URLPattern))?;
         let url_search_params: Constructor = globals.get(stringify!(URLSearchParams))?;
 
         export_default(ctx, exports, |default| {
             default.set(stringify!(URL), url)?;
+            default.set(stringify!(URLPattern), url_pattern)?;
             default.set(stringify!(URLSearchParams), url_search_params)?;
             default.set("urlToHttpOptions", Func::from(url_to_http_options))?;
             default.set(
