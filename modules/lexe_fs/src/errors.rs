@@ -8,14 +8,16 @@ pub fn io_error_code(err: &io::Error) -> &'static str {
     // Windows and Unix disagree on which `ErrorKind` an invalid descriptor
     // maps to, so the platform code wins when it is `EBADF`.
     #[cfg(unix)]
-    if err.raw_os_error() == Some(9) {
-        return "EBADF";
-    }
-    // ENOSPC has no dedicated `ErrorKind`; the raw code is the only reliable
-    // signal, and it is what a full disk reports.
-    #[cfg(unix)]
-    if err.raw_os_error() == Some(28) {
-        return "ENOSPC";
+    if let Some(raw) = err.raw_os_error() {
+        match raw {
+            libc::EPERM => return "EPERM",
+            libc::EBADF => return "EBADF",
+            libc::ENOSPC => return "ENOSPC",
+            libc::ENOSYS => return "ENOSYS",
+            #[allow(unreachable_patterns)]
+            libc::ENOTSUP | libc::EOPNOTSUPP => return "ENOTSUP",
+            _ => {},
+        }
     }
     #[cfg(windows)]
     if err.raw_os_error() == Some(6) || err.raw_os_error() == Some(9) {
@@ -41,7 +43,7 @@ pub fn io_error_code(err: &io::Error) -> &'static str {
         io::ErrorKind::OutOfMemory => "ENOMEM",
         io::ErrorKind::WriteZero => "EIO",
         // `EBADF` has no stable `ErrorKind` on all platforms; the raw code is
-        // checked below so a closed or write-only descriptor reports what Node
+        // checked above so a closed or write-only descriptor reports what Node
         // reports instead of `UNKNOWN`.
         io::ErrorKind::Unsupported => "EBADF",
         io::ErrorKind::UnexpectedEof => "EOF",
@@ -101,4 +103,26 @@ pub fn defer_fs_callback<'js>(
         },
     }
     Ok(())
+}
+
+/// Schedule a 3-argument Node fs callback `callback(null, v1, v2)` on the next job.
+///
+/// Uses a JS `queueMicrotask` trampoline rather than `Function::defer_arg`
+/// because rquickjs's stack-arg builder panics on >2 deferred arguments.
+pub fn defer_fs_callback_2<'js>(
+    ctx: &Ctx<'js>,
+    callback: Function<'js>,
+    v1: Value<'js>,
+    v2: Value<'js>,
+) -> Result<()> {
+    let globals = ctx.globals();
+    let defer_fn: Function<'js> = if let Ok(f) = globals.get::<_, Function<'js>>("__lexeFsDefer2") {
+        f
+    } else {
+        let f: Function<'js> =
+            ctx.eval("(function(cb, a, b) { queueMicrotask(() => cb(null, a, b)); })")?;
+        let _ = globals.set("__lexeFsDefer2", f.clone());
+        f
+    };
+    defer_fn.call::<_, ()>((callback, v1, v2))
 }

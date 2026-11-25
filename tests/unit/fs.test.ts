@@ -1028,16 +1028,43 @@ describe("callback access/stat/lstat and existsSync", () => {
     rmdirSync(tmpDir, { recursive: true });
   });
 
-  it("should throw for bigint Stats options", () => {
-    expect(() =>
-      statCb("fixtures/hello.txt", { bigint: true }, () => {})
-    ).toThrow(/BigIntStats is not supported/);
-    expect(() =>
-      lstatCb("fixtures/hello.txt", { bigint: true }, () => {})
-    ).toThrow(/BigIntStats is not supported/);
-    expect(() => statSync("fixtures/hello.txt", { bigint: true })).toThrow(
-      /BigIntStats is not supported/
-    );
+  it("supports bigint Stats and throwIfNoEntry options", async () => {
+    const syncBig = statSync("fixtures/hello.txt", { bigint: true });
+    expect(syncBig).toBeInstanceOf((defaultImport as any).BigIntStats);
+    expect(typeof syncBig.size).toBe("bigint");
+    expect(typeof syncBig.mtimeMs).toBe("bigint");
+    expect(typeof syncBig.mtimeNs).toBe("bigint");
+    expect(syncBig.mtimeMs).toBe(syncBig.mtimeNs / 1000000n);
+    expect(syncBig.mtime).toBeInstanceOf(Date);
+    expect(syncBig.isFile()).toBe(true);
+
+    const lstatBig = lstatSync("fixtures/hello.txt", { bigint: true });
+    expect(typeof lstatBig.dev).toBe("bigint");
+
+    const cbBig: any = await new Promise((resolve, reject) => {
+      statCb("fixtures/hello.txt", { bigint: true }, (err: any, st: any) =>
+        err ? reject(err) : resolve(st)
+      );
+    });
+    expect(typeof cbBig.size).toBe("bigint");
+
+    const cbLstatBig: any = await new Promise((resolve, reject) => {
+      lstatCb("fixtures/hello.txt", { bigint: true }, (err: any, st: any) =>
+        err ? reject(err) : resolve(st)
+      );
+    });
+    expect(typeof cbLstatBig.size).toBe("bigint");
+
+    expect(
+      statSync(path.join(os.tmpdir(), "missing-lexe-stat-entry"), {
+        throwIfNoEntry: false,
+      })
+    ).toBeUndefined();
+    expect(
+      lstatSync(path.join(os.tmpdir(), "missing-lexe-lstat-entry"), {
+        throwIfNoEntry: false,
+      })
+    ).toBeUndefined();
   });
 
   it("access callback should reject invalid mode values", () => {
@@ -1120,16 +1147,84 @@ describe("createReadStream", () => {
     ).rejects.toBeTruthy();
   });
 
-  it("rejects unsupported fd option", () => {
-    expect(() =>
-      createReadStream("fixtures/hello.txt", { fd: 3 } as any)
-    ).toThrow(/fd is not supported/);
+  it("supports fd and autoClose:false", async () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lexe-crs-fd-"));
+    const filePath = path.join(tmpDir, "fd.txt");
+    writeFileSync(filePath, "hello-fd-stream");
+    const fsApi = defaultImport as any;
+    try {
+      const fd = openSync(filePath, "r");
+      const rs = createReadStream(null as any, {
+        fd,
+        autoClose: false,
+        start: 6,
+        end: 7,
+      });
+      const chunks: Buffer[] = [];
+      for await (const c of rs) {
+        chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+      }
+      expect(Buffer.concat(chunks).toString()).toBe("fd");
+      expect(fstatSync(fd).size).toBe(15);
+      closeSync(fd);
+
+      const fh = await promises.open(filePath, "r");
+      const fhStream = createReadStream(null as any, { fd: fh as any });
+      const fhChunks: Buffer[] = [];
+      for await (const c of fhStream) {
+        fhChunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+      }
+      expect(Buffer.concat(fhChunks).toString()).toBe("hello-fd-stream");
+      expect(() => fsApi.fstatSync(fh.fd)).toThrow();
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
-  it("rejects autoClose:false (no close()/fd surface)", () => {
-    expect(() =>
-      createReadStream("fixtures/hello.txt", { autoClose: false } as any)
-    ).toThrow(/autoClose:false is not supported/);
+  it("supports AbortSignal and custom fs provider", async () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), "lexe-crs-sig-"));
+    const filePath = path.join(tmpDir, "sig.txt");
+    writeFileSync(filePath, "abcdef");
+    const fsApi = defaultImport as any;
+    try {
+      const ac = new AbortController();
+      ac.abort();
+      const aborted = createReadStream(filePath, { signal: ac.signal });
+      await expect(
+        (async () => {
+          for await (const _ of aborted) {
+            // drain
+          }
+        })()
+      ).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+
+      const ops: string[] = [];
+      const customFs = {
+        open(p: string, flags: string, mode: number, cb: any) {
+          ops.push("open");
+          fsApi.open(p, flags, mode, cb);
+        },
+        read(fd: number, buf: Buffer, off: number, len: number, pos: number | null, cb: any) {
+          ops.push("read");
+          fsApi.read(fd, buf, off, len, pos, cb);
+        },
+        close(fd: number, cb: any) {
+          ops.push("close");
+          fsApi.close(fd, cb);
+        },
+      };
+      const custom = createReadStream(filePath, { fs: customFs } as any);
+      const chunks: Buffer[] = [];
+      for await (const c of custom) {
+        chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+      }
+      expect(Buffer.concat(chunks).toString()).toBe("abcdef");
+      expect(ops[0]).toBe("open");
+      expect(ops).toContain("read");
+      expect(ops).toContain("close");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("accepts Buffer and file URL paths", async () => {
@@ -1249,13 +1344,65 @@ describe("createWriteStream", () => {
     fs.rmSync(file, { force: true });
   });
 
-  it("rejects unsupported options instead of silently ignoring them", () => {
-    expect(() =>
-      fs.createWriteStream(tmp("x.txt"), { fd: 3 } as any)
-    ).toThrow(/fd is not supported/);
-    expect(() =>
-      fs.createWriteStream(tmp("x.txt"), { autoClose: false } as any)
-    ).toThrow(/autoClose/);
+  it("supports fd, autoClose:false, signal, and custom fs provider", async () => {
+    const file = tmp("opts.txt");
+    const fd = fs.openSync(file, "w");
+    await new Promise<void>((resolve, reject) => {
+      const ws = fs.createWriteStream(null, { fd, autoClose: false });
+      ws.on("finish", resolve);
+      ws.on("error", reject);
+      ws.end("via-fd");
+    });
+    expect(fs.fstatSync(fd).size).toBe(6);
+    fs.closeSync(fd);
+    expect(fs.readFileSync(file, "utf8")).toBe("via-fd");
+
+    const file2 = tmp("opts-fh.txt");
+    const fh = await fsp.open(file2, "w");
+    await new Promise<void>((resolve, reject) => {
+      const ws = fs.createWriteStream(null, { fd: fh });
+      ws.on("finish", resolve);
+      ws.on("error", reject);
+      ws.end("via-fh");
+    });
+    expect(fs.readFileSync(file2, "utf8")).toBe("via-fh");
+    expect(() => fs.fstatSync(fh.fd)).toThrow();
+
+    const ac = new AbortController();
+    ac.abort();
+    const aborted = fs.createWriteStream(tmp("opts-abort.txt"), { signal: ac.signal });
+    const err = await new Promise<any>((resolve) => aborted.on("error", resolve));
+    expect(err.name).toBe("AbortError");
+    expect(err.code).toBe("ABORT_ERR");
+
+    const file3 = tmp("opts-custom.txt");
+    const ops: string[] = [];
+    const customFs = {
+      open(p: string, flags: string, mode: number, cb: any) {
+        ops.push("open");
+        fs.open(p, flags, mode, cb);
+      },
+      write(fdArg: number, buf: Buffer, off: number, len: number, pos: number | null, cb: any) {
+        ops.push("write");
+        fs.write(fdArg, buf, off, len, pos, cb);
+      },
+      close(fdArg: number, cb: any) {
+        ops.push("close");
+        fs.close(fdArg, cb);
+      },
+    };
+    await new Promise<void>((resolve, reject) => {
+      const ws = fs.createWriteStream(file3, { fs: customFs });
+      ws.on("close", resolve);
+      ws.on("error", reject);
+      ws.end("custom-write");
+    });
+    expect(fs.readFileSync(file3, "utf8")).toBe("custom-write");
+    expect(ops).toEqual(["open", "write", "close"]);
+
+    fs.rmSync(file, { force: true });
+    fs.rmSync(file2, { force: true });
+    fs.rmSync(file3, { force: true });
   });
 });
 

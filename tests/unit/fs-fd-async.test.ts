@@ -2,14 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-// The callback-style asynchronous fd family: `fs.fstat`, `fs.ftruncate`,
-// `fs.fchmod`, `fs.fsync`, `fs.fdatasync`, `fs.futimes`, `fs.readv`, `fs.writev`.
-//
-// Worth recording, because the docs read the other way: in Node these live on
-// `fs` (callback style) and on `FileHandle` (promise style). **`fs.promises.read`
-// and friends do not exist** — measured on Node 24, all ten are `undefined`.
-//
-// `fs.read` and `fs.write` are absent from Lexe and not covered here.
+// The asynchronous and synchronous fd family: `fs.read`, `fs.write`,
+// `fs.fstat`, `fs.ftruncate`, `fs.fchmod`, `fs.fchown`, `fs.fsync`,
+// `fs.fdatasync`, `fs.futimes`, `fs.readv`, `fs.writev`, and their Sync twins.
 
 const F = fs as any;
 
@@ -212,6 +207,132 @@ describe("async fd family", () => {
       expect(err && err.code).toBe("ENOSPC");
     } finally {
       fs.closeSync(fd);
+    }
+  });
+
+  it("readv and writev pass buffers as the 3rd callback argument", async () => {
+    const { file, cleanup } = tmp("abcdef");
+    const fd = fs.openSync(file, "r+");
+    try {
+      const wbufs = [Buffer.from("XY"), Buffer.from("ZW")];
+      const [wn, wOut] = await call<any>((cb) => F.writev(fd, wbufs, 0, cb));
+      expect(wn).toBe(4);
+      expect(wOut).toBe(wbufs);
+
+      const rbufs = [Buffer.alloc(2), Buffer.alloc(2)];
+      const [rn, rOut] = await call<any>((cb) => F.readv(fd, rbufs, 0, cb));
+      expect(rn).toBe(4);
+      expect(rOut).toBe(rbufs);
+      expect(rbufs.map((b) => b.toString())).toEqual(["XY", "ZW"]);
+    } finally {
+      fs.closeSync(fd);
+      cleanup();
+    }
+  });
+
+  it("fs.read supports positional, options object, and buffer-only overloads", async () => {
+    const { file, cleanup } = tmp("0123456789");
+    const fd = fs.openSync(file, "r");
+    try {
+      const b1 = Buffer.alloc(6);
+      const [n1, out1] = await call<any>((cb) => F.read(fd, b1, 1, 4, 2, cb));
+      expect(n1).toBe(4);
+      expect(out1).toBe(b1);
+      expect(b1.subarray(1, 5).toString()).toBe("2345");
+
+      const b2 = Buffer.alloc(3);
+      const [n2, out2] = await call<any>((cb) =>
+        F.read(fd, { buffer: b2, offset: 0, length: 3, position: 6 }, cb)
+      );
+      expect(n2).toBe(3);
+      expect(out2).toBe(b2);
+      expect(b2.toString()).toBe("678");
+
+      const b3 = Buffer.alloc(4);
+      const [n3, out3] = await call<any>((cb) => F.read(fd, b3, cb));
+      expect(n3).toBe(4);
+      expect(out3).toBe(b3);
+      expect(b3.toString()).toBe("0123");
+    } finally {
+      fs.closeSync(fd);
+      cleanup();
+    }
+  });
+
+  it("fs.write supports buffer, string, and options object overloads", async () => {
+    const { file, cleanup } = tmp("0123456789");
+    const fd = fs.openSync(file, "r+");
+    try {
+      const src = Buffer.from("_ABC_");
+      const [wn1, wout1] = await call<any>((cb) => F.write(fd, src, 1, 3, 2, cb));
+      expect(wn1).toBe(3);
+      expect(wout1).toBe(src);
+
+      const [wn2, wout2] = await call<any>((cb) => F.write(fd, "ZZ", 6, "utf8", cb));
+      expect(wn2).toBe(2);
+      expect(wout2).toBe("ZZ");
+
+      const src2 = Buffer.from("QQ");
+      const [wn3, wout3] = await call<any>((cb) =>
+        F.write(fd, src2, { offset: 0, length: 2, position: 8 }, cb)
+      );
+      expect(wn3).toBe(2);
+      expect(wout3).toBe(src2);
+
+      expect(fs.readFileSync(file, "utf8")).toBe("01ABC5ZZQQ");
+    } finally {
+      fs.closeSync(fd);
+      cleanup();
+    }
+  });
+
+  it("fs.fstat supports { bigint: true } and fs.fchown sets owner", async () => {
+    const { file, cleanup } = tmp("hello");
+    const fd = fs.openSync(file, "r+");
+    try {
+      const [bigStats] = await call<any>((cb) => F.fstat(fd, { bigint: true }, cb));
+      expect(typeof bigStats.size).toBe("bigint");
+      expect(bigStats.size).toBe(5n);
+
+      if (os.platform() !== "win32") {
+        await call((cb) => F.fchown(fd, process.getuid(), process.getgid(), cb));
+      }
+    } finally {
+      fs.closeSync(fd);
+      cleanup();
+    }
+  });
+
+  it("supports all synchronous fd variants", () => {
+    const { file, cleanup } = tmp("0123456789");
+    const fd = fs.openSync(file, "r+");
+    try {
+      const big = F.fstatSync(fd, { bigint: true });
+      expect(typeof big.size).toBe("bigint");
+      expect(big.size).toBe(10n);
+
+      expect(F.writevSync(fd, [Buffer.from("AB"), Buffer.from("CD")], 1)).toBe(4);
+      const rbufs = [Buffer.alloc(2), Buffer.alloc(2)];
+      expect(F.readvSync(fd, rbufs, 1)).toBe(4);
+      expect(rbufs.map((b) => b.toString())).toEqual(["AB", "CD"]);
+
+      F.ftruncateSync(fd, 6);
+      expect(fs.fstatSync(fd).size).toBe(6);
+
+      F.futimesSync(fd, 1_100_000, 1_100_000);
+      expect(Math.round(fs.fstatSync(fd).mtime.getTime() / 1000)).toBe(1_100_000);
+
+      F.fsyncSync(fd);
+      F.fdatasyncSync(fd);
+
+      if (os.platform() !== "win32") {
+        F.fchmodSync(fd, 0o600);
+        expect(fs.fstatSync(fd).mode & 0o777).toBe(0o600);
+        F.fchownSync(fd, process.getuid(), process.getgid());
+      }
+    } finally {
+      fs.closeSync(fd);
+      cleanup();
     }
   });
 });

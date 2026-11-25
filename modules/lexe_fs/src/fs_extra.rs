@@ -5,7 +5,198 @@
 //! `fs/promises` stay consistent.
 
 use lexe_utils::result::ResultExt;
-use rquickjs::{Ctx, IntoJs, Result};
+use rquickjs::{function::Opt, Ctx, Exception, IntoJs, Result};
+
+use crate::fd_sync::throw_out_of_range;
+
+fn throw_copyfile_error(
+    ctx: &Ctx<'_>,
+    err: std::io::Error,
+    src: &str,
+    dest: &str,
+) -> rquickjs::Error {
+    match crate::errors::create_fs_error(ctx, err, "copyfile", src) {
+        Ok(exc) => {
+            let _ = exc.as_object().set("dest", dest);
+            exc.throw()
+        },
+        Err(e) => e,
+    }
+}
+
+fn validate_copyfile_mode(ctx: &Ctx<'_>, mode: Opt<rquickjs::Value<'_>>) -> Result<i32> {
+    let val = match mode.0 {
+        None => 0,
+        Some(v) if v.is_null() || v.is_undefined() => 0,
+        Some(v) => v
+            .as_number()
+            .filter(|n| n.is_finite() && n.fract() == 0.0)
+            .map(|n| n as i32)
+            .ok_or_else(|| {
+                crate::fd_sync::throw_invalid_arg_type(
+                    ctx,
+                    "The \"mode\" argument must be of type number",
+                )
+            })?,
+    };
+    if !(0..=7).contains(&val) {
+        return Err(throw_out_of_range(
+            ctx,
+            &format!(
+                "The value of \"mode\" is out of range. It must be >= 0 && <= 7. Received {val}"
+            ),
+        ));
+    }
+    Ok(val)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_clonefile(src: &str, dest: &str) -> std::io::Result<()> {
+    extern "C" {
+        fn clonefile(src: *const libc::c_char, dst: *const libc::c_char, flags: u32)
+            -> libc::c_int;
+    }
+    let c_src = std::ffi::CString::new(src)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "NUL byte in path"))?;
+    let c_dst = std::ffi::CString::new(dest)
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "NUL byte in path"))?;
+    let rc = unsafe { clonefile(c_src.as_ptr(), c_dst.as_ptr(), 0) };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// `fs.copyFileSync(src, dest[, mode])`.
+pub fn copy_file_sync<'js>(
+    ctx: Ctx<'js>,
+    src: String,
+    dest: String,
+    mode: Opt<rquickjs::Value<'js>>,
+) -> Result<()> {
+    lexe_utils::permissions::ensure_fs_read(&ctx, &src)?;
+    lexe_utils::permissions::ensure_fs_write(&ctx, &dest)?;
+    let flags = validate_copyfile_mode(&ctx, mode)?;
+    let excl = (flags & 1) != 0;
+    let ficlone = (flags & 2) != 0;
+    let ficlone_force = (flags & 4) != 0;
+
+    if ficlone_force || ficlone {
+        #[cfg(target_os = "macos")]
+        {
+            if !excl && std::fs::metadata(&src).is_ok() && std::fs::symlink_metadata(&dest).is_ok()
+            {
+                let _ = std::fs::remove_file(&dest);
+            }
+            match macos_clonefile(&src, &dest) {
+                Ok(()) => return Ok(()),
+                Err(err) if ficlone_force => {
+                    return Err(throw_copyfile_error(&ctx, err, &src, &dest));
+                },
+                Err(_) => {},
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        if ficlone_force {
+            #[cfg(unix)]
+            let err = std::io::Error::from_raw_os_error(libc::ENOTSUP);
+            #[cfg(not(unix))]
+            let err = std::io::Error::new(std::io::ErrorKind::Unsupported, "ENOTSUP");
+            return Err(throw_copyfile_error(&ctx, err, &src, &dest));
+        }
+    }
+
+    if excl {
+        let mut src_file = std::fs::File::open(&src)
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+        let perms = src_file
+            .metadata()
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?
+            .permissions();
+        let mut dst_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+        std::io::copy(&mut src_file, &mut dst_file)
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+        let _ = dst_file.set_permissions(perms);
+        return Ok(());
+    }
+
+    std::fs::copy(&src, &dest).map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+    Ok(())
+}
+
+/// `fs.promises.copyFile(src, dest[, mode])`.
+pub async fn copy_file<'js>(
+    ctx: Ctx<'js>,
+    src: String,
+    dest: String,
+    mode: Opt<rquickjs::Value<'js>>,
+) -> Result<()> {
+    lexe_utils::permissions::ensure_fs_read(&ctx, &src)?;
+    lexe_utils::permissions::ensure_fs_write(&ctx, &dest)?;
+    let flags = validate_copyfile_mode(&ctx, mode)?;
+    let excl = (flags & 1) != 0;
+    let ficlone = (flags & 2) != 0;
+    let ficlone_force = (flags & 4) != 0;
+
+    if ficlone_force || ficlone {
+        #[cfg(target_os = "macos")]
+        {
+            if !excl
+                && tokio::fs::metadata(&src).await.is_ok()
+                && tokio::fs::symlink_metadata(&dest).await.is_ok()
+            {
+                let _ = tokio::fs::remove_file(&dest).await;
+            }
+            match macos_clonefile(&src, &dest) {
+                Ok(()) => return Ok(()),
+                Err(err) if ficlone_force => {
+                    return Err(throw_copyfile_error(&ctx, err, &src, &dest));
+                },
+                Err(_) => {},
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        if ficlone_force {
+            #[cfg(unix)]
+            let err = std::io::Error::from_raw_os_error(libc::ENOTSUP);
+            #[cfg(not(unix))]
+            let err = std::io::Error::new(std::io::ErrorKind::Unsupported, "ENOTSUP");
+            return Err(throw_copyfile_error(&ctx, err, &src, &dest));
+        }
+    }
+
+    if excl {
+        let mut src_file = tokio::fs::File::open(&src)
+            .await
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+        let perms = src_file
+            .metadata()
+            .await
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?
+            .permissions();
+        let mut dst_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+            .await
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+        tokio::io::copy(&mut src_file, &mut dst_file)
+            .await
+            .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+        let _ = dst_file.set_permissions(perms).await;
+        return Ok(());
+    }
+
+    let _ = &Exception::throw_message;
+    tokio::fs::copy(&src, &dest)
+        .await
+        .map_err(|err| throw_copyfile_error(&ctx, err, &src, &dest))?;
+    Ok(())
+}
 
 /// `fs.promises.link(existingPath, newPath)`.
 pub async fn link(ctx: Ctx<'_>, existing: String, new_path: String) -> Result<()> {
@@ -157,90 +348,60 @@ pub fn lchown_sync(ctx: Ctx<'_>, path: String, uid: u32, gid: u32) -> Result<()>
 
 /// `fs.promises.utimes(path, atime, mtime)`; times are seconds (number) or Date.
 pub async fn utimes(ctx: Ctx<'_>, path: String, atime: f64, mtime: f64) -> Result<()> {
-    use std::time::{Duration, UNIX_EPOCH};
-    let at = UNIX_EPOCH + Duration::from_secs_f64(atime.max(0.0));
-    let mt = UNIX_EPOCH + Duration::from_secs_f64(mtime.max(0.0));
-    let times = std::fs::FileTimes::new().set_accessed(at).set_modified(mt);
-    // `tokio::fs::File` has no `set_times`, so do this on the blocking pool.
-    let target = path.clone();
-    tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        let file = std::fs::OpenOptions::new().write(true).open(&target)?;
-        file.set_times(times)
-    })
-    .await
-    .or_throw_msg(&ctx, &format!("utimes {path}"))?
-    .or_throw_msg(&ctx, &format!("utimes {path}"))?;
-    Ok(())
+    utimes_impl(&ctx, &path, atime, mtime, true)
 }
 
 pub fn utimes_sync(ctx: Ctx<'_>, path: String, atime: f64, mtime: f64) -> Result<()> {
-    use std::time::{Duration, UNIX_EPOCH};
-    let at = UNIX_EPOCH + Duration::from_secs_f64(atime.max(0.0));
-    let mt = UNIX_EPOCH + Duration::from_secs_f64(mtime.max(0.0));
-    let times = std::fs::FileTimes::new().set_accessed(at).set_modified(mt);
-    let file = std::fs::OpenOptions::new()
-        .write(true)
-        .open(&path)
-        .or_throw_msg(&ctx, &format!("utimes {path}"))?;
-    file.set_times(times)
-        .or_throw_msg(&ctx, &format!("utimes {path}"))?;
-    Ok(())
+    utimes_impl(&ctx, &path, atime, mtime, true)
 }
 
 /// `fs.promises.lutimes(path, atime, mtime)` — `utimes` without following
 /// symlinks.
 pub async fn lutimes(ctx: Ctx<'_>, path: String, atime: f64, mtime: f64) -> Result<()> {
-    // On Unix, `lutimes` needs the raw syscall; `std` has no cross-platform
-    // binding, so follow the link target's own times when it is a symlink.
-    #[cfg(unix)]
-    {
-        let c_path = std::ffi::CString::new(path.as_str())
-            .or_throw_msg(&ctx, "lutimes: path contains a NUL byte")?;
-        let to_tv = |secs: f64| libc::timeval {
-            tv_sec: secs.max(0.0) as libc::time_t,
-            tv_usec: ((secs.max(0.0).fract()) * 1_000_000.0) as libc::suseconds_t,
-        };
-        let times = [to_tv(atime), to_tv(mtime)];
-        // SAFETY: `c_path` is a valid NUL-terminated string, and `times` is a
-        // two-element array as `lutimes` requires.
-        let rc = unsafe { libc::lutimes(c_path.as_ptr(), times.as_ptr()) };
-        if rc != 0 {
-            let err: Result<()> = Err::<(), _>(std::io::Error::last_os_error())
-                .or_throw_msg(&ctx, &format!("lutimes {path}"));
-            return err;
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        utimes(ctx, path, atime, mtime).await?;
-    }
-    Ok(())
+    utimes_impl(&ctx, &path, atime, mtime, false)
 }
 
 pub fn lutimes_sync(ctx: Ctx<'_>, path: String, atime: f64, mtime: f64) -> Result<()> {
+    utimes_impl(&ctx, &path, atime, mtime, false)
+}
+
+fn utimes_impl(ctx: &Ctx<'_>, path: &str, atime: f64, mtime: f64, follow: bool) -> Result<()> {
     #[cfg(unix)]
     {
-        let c_path = std::ffi::CString::new(path.as_str())
-            .or_throw_msg(&ctx, "lutimes: path contains a NUL byte")?;
-        let to_tv = |secs: f64| libc::timeval {
-            tv_sec: secs.max(0.0) as libc::time_t,
-            tv_usec: ((secs.max(0.0).fract()) * 1_000_000.0) as libc::suseconds_t,
+        let syscall = if follow { "utimes" } else { "lutimes" };
+        let c_path = std::ffi::CString::new(path)
+            .or_throw_msg(ctx, &format!("{syscall}: path contains a NUL byte"))?;
+        let to_ts = |secs: f64| {
+            let s = secs.max(0.0);
+            libc::timespec {
+                tv_sec: s as libc::time_t,
+                tv_nsec: (s.fract() * 1_000_000_000.0) as _,
+            }
         };
-        let times = [to_tv(atime), to_tv(mtime)];
-        // SAFETY: `c_path` is a valid NUL-terminated string, and `times` is a
-        // two-element array as `lutimes` requires.
-        let rc = unsafe { libc::lutimes(c_path.as_ptr(), times.as_ptr()) };
+        let times = [to_ts(atime), to_ts(mtime)];
+        let flags = if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
+        let rc = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), flags) };
         if rc != 0 {
-            let err: Result<()> = Err::<(), _>(std::io::Error::last_os_error())
-                .or_throw_msg(&ctx, &format!("lutimes {path}"));
-            return err;
+            return Err::<(), _>(std::io::Error::last_os_error())
+                .or_throw_msg(ctx, &format!("{syscall} {path}"));
         }
+        Ok(())
     }
     #[cfg(not(unix))]
     {
-        utimes_sync(ctx, path, atime, mtime)?;
+        let _ = follow;
+        use std::time::{Duration, UNIX_EPOCH};
+        let at = UNIX_EPOCH + Duration::from_secs_f64(atime.max(0.0));
+        let mt = UNIX_EPOCH + Duration::from_secs_f64(mtime.max(0.0));
+        let times = std::fs::FileTimes::new().set_accessed(at).set_modified(mt);
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .or_throw_msg(ctx, &format!("utimes {path}"))?;
+        file.set_times(times)
+            .or_throw_msg(ctx, &format!("utimes {path}"))?;
+        Ok(())
     }
-    Ok(())
 }
 
 /// `fs.promises.glob(pattern[, options])` — an async iterator of matching paths.

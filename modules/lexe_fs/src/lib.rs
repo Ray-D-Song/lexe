@@ -22,34 +22,41 @@ mod watch;
 mod write_file;
 mod write_stream;
 
+use std::collections::HashSet;
+
 use lexe_events::Emitter;
 use lexe_utils::module::{export_default, ModuleInfo};
 use lexe_utils::result::ResultExt;
 use rquickjs::{
+    atom::PredefinedAtom,
     module::{Declarations, Exports, ModuleDef},
     prelude::{Async, Func, Opt},
-    Exception, Function,
+    Array, BigInt, Class, Ctx, Exception, Function, IntoJs, Object, Result, Value,
 };
-use rquickjs::{Class, Ctx, IntoJs, Object, Result, Value};
 
 use self::access::{access, access_callback, access_sync};
-use self::chmod::{chmod, chmod_sync};
+use self::chmod::{chmod, chmod_sync, lchmod, lchmod_sync};
 use self::fd_async::{
-    fchmod_callback, fdatasync_callback, fstat_callback, fsync_callback, ftruncate_callback,
-    futimes_callback, readv_callback, writev_callback,
+    fchmod_callback, fchown_callback, fdatasync_callback, fstat_callback, fsync_callback,
+    ftruncate_callback, futimes_callback, read_callback, readv_callback, write_callback,
+    writev_callback,
 };
-use self::fd_sync::{close_sync, fstat_sync, open_sync, read_sync, write_sync};
+use self::fd_sync::{
+    close_sync, fchmod_sync, fchown_sync, fdatasync_sync, fstat_sync, fsync_sync, ftruncate_sync,
+    futimes_sync, open_sync, read_sync, readv_sync, write_sync, writev_sync,
+};
 use self::file_handle::FileHandle;
 use self::mkdir::{mkdir, mkdir_sync, mkdtemp, mkdtemp_sync};
 use self::open::open;
 use self::read_dir::{read_dir, read_dir_sync, readdir_callback, Dirent};
 use self::read_file::{read_file, read_file_sync};
 use self::read_stream::create_create_read_stream;
-use self::realpath::{realpath, realpath_promises, realpath_sync};
+use self::realpath::{path_from_value, realpath, realpath_promises, realpath_sync};
 use self::rename::{rename, rename_sync};
-use self::rm::{rmdir, rmdir_sync, rmfile, rmfile_sync};
+use self::rm::{rmdir, rmdir_sync, rmfile, rmfile_sync, unlink, unlink_sync};
 use self::stats::{
-    lstat_callback, lstat_fn, lstat_fn_sync, stat_callback, stat_fn, stat_fn_sync, Stats,
+    lstat_callback, lstat_fn, lstat_fn_sync, stat_callback, stat_fn, stat_fn_sync, zeroed_stats,
+    BigIntStats, Stats,
 };
 use self::symlink::{symlink, symlink_sync};
 use self::watch::{watch, FSWatcher};
@@ -61,207 +68,57 @@ pub const CONSTANT_R_OK: u32 = 4;
 pub const CONSTANT_W_OK: u32 = 2;
 pub const CONSTANT_X_OK: u32 = 1;
 
-pub struct FsPromisesModule;
-
-impl ModuleDef for FsPromisesModule {
-    fn declare(declare: &Declarations) -> Result<()> {
-        declare.declare("access")?;
-        declare.declare("open")?;
-        declare.declare("readFile")?;
-        declare.declare("writeFile")?;
-        declare.declare("appendFile")?;
-        declare.declare("rename")?;
-        declare.declare("readdir")?;
-        declare.declare("mkdir")?;
-        declare.declare("mkdtemp")?;
-        declare.declare("rm")?;
-        declare.declare("rmdir")?;
-        declare.declare("stat")?;
-        declare.declare("lstat")?;
-        declare.declare("constants")?;
-        declare.declare("chmod")?;
-        declare.declare("symlink")?;
-        declare.declare("realpath")?;
-        declare.declare("link")?;
-        declare.declare("readlink")?;
-        declare.declare("truncate")?;
-        declare.declare("chown")?;
-        declare.declare("lchown")?;
-        declare.declare("utimes")?;
-        declare.declare("lutimes")?;
-        declare.declare("opendir")?;
-        declare.declare("cp")?;
-        declare.declare("glob")?;
-        declare.declare("statfs")?;
-
-        declare.declare("default")?;
-
-        Ok(())
-    }
-
-    fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
-        let globals = ctx.globals();
-
-        Class::<Dirent>::define(&globals)?;
-        Class::<FileHandle>::define(&globals)?;
-        Class::<Stats>::define(&globals)?;
-
-        export_default(ctx, exports, |default| {
-            export_promises(ctx, default)?;
-
-            Ok(())
-        })
-    }
-}
-
-impl From<FsPromisesModule> for ModuleInfo<FsPromisesModule> {
-    fn from(val: FsPromisesModule) -> Self {
-        ModuleInfo {
-            name: "fs/promises",
-            module: val,
-        }
-    }
-}
-
-/// `fs.ReadStream` / `fs.WriteStream` / `fs.Dir` constructors.
-///
-/// These exist for `instanceof` checks and for `new fs.ReadStream(path)`. The
-/// stream bodies stay where they already were — `createReadStream` and
-/// `createWriteStream` build a `Readable`/`Writable` and re-parent it onto
-/// these prototypes — so there is one implementation, not two.
-const FS_STREAM_CLASSES_JS: &str = r#"(function () {
+/// Pure-JS base classes and helpers that have no external `require()` dependency
+/// at registration time (`Dir` and lazy `FileHandle` stream methods).
+const FS_BASE_CLASSES_JS: &str = r#"(function () {
   "use strict";
-  const { Readable, Writable } = require("node:stream");
 
-  // Node's ReadStream/WriteStream are Readable/Writable subclasses; the actual
-  // reading/writing is driven by the helpers in this module.
-  class ReadStream extends Readable {
-    constructor(path, options) {
-      options = options || {};
-      super(options);
-      this.path = path;
-      this.pending = true;
-      this.fd = options.fd == null ? null : options.fd;
-      this.flags = options.flags == null ? "r" : options.flags;
-      this.mode = options.mode == null ? 0o666 : options.mode;
-      this.start = options.start;
-      this.end = options.end;
-      this.pos = this.start;
-      this.bytesRead = 0;
-      this.closed = false;
-      if (!options._lexeNoAutoStart) this._start();
-    }
-
-    _start() {
-      const factory = globalThis.__lexeFsCreateReadStream;
-      if (typeof factory !== "function") return;
-      const target = factory(this.path, {
-        flags: this.flags,
-        mode: this.mode,
-        start: this.start,
-        end: this.end,
-        highWaterMark: this.readableHighWaterMark,
-      });
-      target.on("data", (chunk) => this.push(chunk));
-      target.on("end", () => {
-        this.bytesRead = target.bytesRead || this.bytesRead;
-        this.push(null);
-      });
-      target.on("error", (err) => this.destroy(err));
-      this._source = target;
-    }
-
-    close(cb) {
-      this.closed = true;
-      if (this._source && typeof this._source.destroy === "function") {
-        this._source.destroy();
-      }
-      this.destroy();
-      if (typeof cb === "function") process.nextTick(cb, null);
-    }
-
-    _destroy(err, cb) {
-      if (this._source && typeof this._source.destroy === "function") {
-        this._source.destroy();
-      }
-      cb(err);
-    }
+  function makeDirClosedError() {
+    const err = new Error("Directory handle was closed");
+    err.code = "ERR_DIR_CLOSED";
+    return err;
   }
 
-  class WriteStream extends Writable {
-    constructor(path, options) {
-      options = options || {};
-      super(options);
-      this.path = path;
-      this.pending = true;
-      this.fd = options.fd == null ? null : options.fd;
-      this.flags = options.flags == null ? "w" : options.flags;
-      this.mode = options.mode == null ? 0o666 : options.mode;
-      this.start = options.start;
-      this.pos = this.start;
-      this.bytesWritten = 0;
-      this.closed = false;
-      if (!options._lexeNoAutoStart) this._start();
-    }
-
-    _start() {
-      const factory = globalThis.__lexeFsCreateWriteStream;
-      if (typeof factory !== "function") return;
-      const target = factory(this.path, {
-        flags: this.flags,
-        mode: this.mode,
-        start: this.start,
-      });
-      this._sink = target;
-      target.on("error", (err) => this.destroy(err));
-    }
-
-    _write(chunk, encoding, cb) {
-      if (!this._sink) {
-        cb(new Error("WriteStream has no sink"));
-        return;
-      }
-      this.bytesWritten += chunk.length;
-      this._sink.write(chunk, encoding, cb);
-    }
-
-    _final(cb) {
-      if (this._sink) this._sink.end(cb);
-      else cb();
-    }
-
-    close(cb) {
-      this.closed = true;
-      this.destroy();
-      if (typeof cb === "function") process.nextTick(cb, null);
-    }
-
-    _destroy(err, cb) {
-      if (this._sink && typeof this._sink.destroy === "function") {
-        this._sink.destroy();
-      }
-      cb(err);
-    }
-  }
-
-  // `fs.Dir`: an async iterator over Dirents with close()/read(). The entries
-  // come from `fs.readdir(withFileTypes: true)`, which already returns Dirents.
   class Dir {
     constructor(path, entries) {
       this.path = path;
-      this._entries = entries;
+      this._entries = entries || [];
       this._index = 0;
       this._closed = false;
     }
 
-    read() {
-      if (this._closed) return Promise.resolve(null);
+    readSync() {
+      if (this._closed) throw makeDirClosedError();
+      if (this._index >= this._entries.length) return null;
+      return this._entries[this._index++];
+    }
+
+    read(cb) {
+      if (typeof cb === "function") {
+        queueMicrotask(() => {
+          if (this._closed) {
+            cb(makeDirClosedError());
+            return;
+          }
+          if (this._index >= this._entries.length) {
+            cb(null, null);
+            return;
+          }
+          cb(null, this._entries[this._index++]);
+        });
+        return;
+      }
+      if (this._closed) return Promise.reject(makeDirClosedError());
       if (this._index >= this._entries.length) return Promise.resolve(null);
       return Promise.resolve(this._entries[this._index++]);
     }
 
-    close() {
+    close(cb) {
       this._closed = true;
+      if (typeof cb === "function") {
+        queueMicrotask(() => cb(null));
+        return;
+      }
       return Promise.resolve();
     }
 
@@ -278,8 +135,668 @@ const FS_STREAM_CLASSES_JS: &str = r#"(function () {
     }
   }
 
-  return { ReadStream, WriteStream, Dir };
+  if (typeof Symbol.dispose === "symbol") {
+    Dir.prototype[Symbol.dispose] = function () {
+      this.closeSync();
+    };
+  }
+  if (typeof Symbol.asyncDispose === "symbol") {
+    Dir.prototype[Symbol.asyncDispose] = function () {
+      return this.close();
+    };
+  }
+
+  if (typeof globalThis.__lexeFsDefer2 !== "function") {
+    Object.defineProperty(globalThis, "__lexeFsDefer2", {
+      value(cb, a, b) {
+        queueMicrotask(() => cb(null, a, b));
+      },
+      configurable: true,
+    });
+  }
+
+  return { Dir };
 })()"#;
+
+/// Stream subclasses (`ReadStream`, `WriteStream`) registered when `node:fs` loads.
+const FS_STREAM_CLASSES_JS: &str = r#"(function () {
+  "use strict";
+  const { Readable, Writable } = require("node:stream");
+
+  class ReadStream extends Readable {
+    constructor(path, options) {
+      const factory = globalThis.__lexeFsCreateReadStream;
+      if (typeof factory === "function") {
+        return factory(path, options);
+      }
+      options = options || {};
+      super(options);
+      this.path = path;
+      this.pending = true;
+      this.fd = options.fd == null ? null : options.fd;
+      this.flags = options.flags == null ? "r" : options.flags;
+      this.mode = options.mode == null ? 0o666 : options.mode;
+      this.start = options.start;
+      this.end = options.end;
+      this.pos = this.start;
+      this.bytesRead = 0;
+    }
+  }
+
+  class WriteStream extends Writable {
+    constructor(path, options) {
+      const factory = globalThis.__lexeFsCreateWriteStream;
+      if (typeof factory === "function") {
+        return factory(path, options);
+      }
+      options = options || {};
+      super(options);
+      this.path = path;
+      this.pending = true;
+      this.fd = options.fd == null ? null : options.fd;
+      this.flags = options.flags == null ? "w" : options.flags;
+      this.mode = options.mode == null ? 0o666 : options.mode;
+      this.start = options.start;
+      this.pos = this.start;
+      this.bytesWritten = 0;
+    }
+  }
+
+  return { ReadStream, WriteStream };
+})()"#;
+
+/// Full `cp` / `cpSync` JS helpers supporting `recursive`, `force`,
+/// `errorOnExist`, `preserveTimestamps`, `dereference`, `verbatimSymlinks`, and `filter`.
+const FS_CP_HELPER_JS: &str = r#"(function (api) {
+  "use strict";
+
+  function joinPath(a, b) {
+    if (a.endsWith("/")) return a + b;
+    return a + "/" + b;
+  }
+
+  function dirname(p) {
+    const idx = p.lastIndexOf("/");
+    if (idx <= 0) return idx === 0 ? "/" : ".";
+    return p.slice(0, idx);
+  }
+
+  function resolveRelative(fromDir, target) {
+    if (target.startsWith("/")) return target;
+    return joinPath(fromDir, target);
+  }
+
+  function makeCpError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+  }
+
+  function normalizeCpOptions(options) {
+    const opts = options || {};
+    return {
+      dereference: Boolean(opts.dereference),
+      errorOnExist: Boolean(opts.errorOnExist),
+      filter: typeof opts.filter === "function" ? opts.filter : null,
+      force: opts.force === undefined ? true : Boolean(opts.force),
+      mode: typeof opts.mode === "number" ? opts.mode : 0,
+      preserveTimestamps: Boolean(opts.preserveTimestamps),
+      recursive: Boolean(opts.recursive),
+      verbatimSymlinks: Boolean(opts.verbatimSymlinks),
+    };
+  }
+
+  function existsSyncNoThrow(p) {
+    return api.statSync(p, { throwIfNoEntry: false }) !== undefined ||
+      api.lstatSync(p, { throwIfNoEntry: false }) !== undefined;
+  }
+
+  async function existsAsyncNoThrow(p) {
+    try {
+      await api.lstat(p);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function tryLstatAsync(p) {
+    try {
+      return await api.lstat(p);
+    } catch (e) {
+      if (e && e.code === "ENOENT") return null;
+      throw e;
+    }
+  }
+
+  function copySync(src, dest, options) {
+    const opts = normalizeCpOptions(options);
+    const statFn = opts.dereference ? api.statSync : api.lstatSync;
+    const srcStat = statFn(src);
+
+    function runFilter(s, d) {
+      if (!opts.filter) return true;
+      const res = opts.filter(s, d);
+      if (res && (typeof res === "object" || typeof res === "function") && typeof res.then === "function") {
+        const err = new TypeError("The filter function must not return a Promise for cpSync");
+        err.code = "ERR_INVALID_RETURN_VALUE";
+        throw err;
+      }
+      return Boolean(res);
+    }
+
+    function copyEntry(curSrc, curDest, curStat, isRoot) {
+      if (!runFilter(curSrc, curDest)) return;
+      const destLstat = api.lstatSync(curDest, { throwIfNoEntry: false });
+
+      if (curStat.isSymbolicLink()) {
+        if (destLstat !== undefined) {
+          if (!opts.force) {
+            if (opts.errorOnExist) {
+              throw makeCpError("ERR_FS_CP_EEXIST", `Destination already exists: ${curDest}`);
+            }
+            return;
+          }
+          api.rmSync(curDest, { recursive: true, force: true });
+        }
+        let linkTarget = api.readlinkSync(curSrc);
+        if (!opts.verbatimSymlinks) {
+          linkTarget = resolveRelative(dirname(curSrc), linkTarget);
+        }
+        api.symlinkSync(linkTarget, curDest);
+        if (opts.preserveTimestamps) {
+          api.lutimesSync(curDest, curStat.atime, curStat.mtime);
+        }
+        return;
+      }
+
+      if (curStat.isDirectory()) {
+        if (!opts.recursive) {
+          throw makeCpError("ERR_FS_EISDIR", `${curSrc} is a directory (use recursive: true)`);
+        }
+        if (destLstat !== undefined && !destLstat.isDirectory()) {
+          if (!opts.force) {
+            if (opts.errorOnExist) {
+              throw makeCpError("ERR_FS_CP_EEXIST", `Destination already exists: ${curDest}`);
+            }
+            return;
+          }
+          api.rmSync(curDest, { recursive: true, force: true });
+        }
+        if (destLstat === undefined || !destLstat.isDirectory()) {
+          api.mkdirSync(curDest, { recursive: true });
+        }
+        const names = api.readdirSync(curSrc);
+        for (const name of names) {
+          const childSrc = joinPath(curSrc, name);
+          const childDest = joinPath(curDest, name);
+          const childStat = statFn(childSrc);
+          copyEntry(childSrc, childDest, childStat, false);
+        }
+        if (opts.preserveTimestamps) {
+          api.utimesSync(curDest, curStat.atime, curStat.mtime);
+        }
+        return;
+      }
+
+      if (destLstat !== undefined) {
+        if (destLstat.isDirectory()) {
+          throw makeCpError("ERR_FS_CP_DIR_TO_NON_DIR", `Cannot overwrite directory ${curDest} with non-directory`);
+        }
+        if (!opts.force) {
+          if (opts.errorOnExist) {
+            throw makeCpError("ERR_FS_CP_EEXIST", `Destination already exists: ${curDest}`);
+          }
+          return;
+        }
+        if (destLstat.isSymbolicLink()) {
+          api.unlinkSync(curDest);
+        }
+      } else if (isRoot) {
+        const parent = dirname(curDest);
+        if (parent && parent !== "." && !existsSyncNoThrow(parent)) {
+          api.mkdirSync(parent, { recursive: true });
+        }
+      }
+      api.copyFileSync(curSrc, curDest, opts.mode);
+      if (opts.preserveTimestamps) {
+        api.utimesSync(curDest, curStat.atime, curStat.mtime);
+      }
+    }
+
+    copyEntry(src, dest, srcStat, true);
+  }
+
+  async function copyAsync(src, dest, options) {
+    const opts = normalizeCpOptions(options);
+    const statFn = opts.dereference ? api.stat : api.lstat;
+    const srcStat = await statFn(src);
+
+    async function copyEntry(curSrc, curDest, curStat, isRoot) {
+      if (opts.filter) {
+        const keep = await opts.filter(curSrc, curDest);
+        if (!keep) return;
+      }
+      const destLstat = await tryLstatAsync(curDest);
+
+      if (curStat.isSymbolicLink()) {
+        if (destLstat !== null) {
+          if (!opts.force) {
+            if (opts.errorOnExist) {
+              throw makeCpError("ERR_FS_CP_EEXIST", `Destination already exists: ${curDest}`);
+            }
+            return;
+          }
+          await api.rm(curDest, { recursive: true, force: true });
+        }
+        let linkTarget = await api.readlink(curSrc);
+        if (!opts.verbatimSymlinks) {
+          linkTarget = resolveRelative(dirname(curSrc), linkTarget);
+        }
+        await api.symlink(linkTarget, curDest);
+        if (opts.preserveTimestamps) {
+          await api.lutimes(curDest, curStat.atime, curStat.mtime);
+        }
+        return;
+      }
+
+      if (curStat.isDirectory()) {
+        if (!opts.recursive) {
+          throw makeCpError("ERR_FS_EISDIR", `${curSrc} is a directory (use recursive: true)`);
+        }
+        if (destLstat !== null && !destLstat.isDirectory()) {
+          if (!opts.force) {
+            if (opts.errorOnExist) {
+              throw makeCpError("ERR_FS_CP_EEXIST", `Destination already exists: ${curDest}`);
+            }
+            return;
+          }
+          await api.rm(curDest, { recursive: true, force: true });
+        }
+        if (destLstat === null || !destLstat.isDirectory()) {
+          await api.mkdir(curDest, { recursive: true });
+        }
+        const names = await api.readdir(curSrc);
+        for (const name of names) {
+          const childSrc = joinPath(curSrc, name);
+          const childDest = joinPath(curDest, name);
+          const childStat = await statFn(childSrc);
+          await copyEntry(childSrc, childDest, childStat, false);
+        }
+        if (opts.preserveTimestamps) {
+          await api.utimes(curDest, curStat.atime, curStat.mtime);
+        }
+        return;
+      }
+
+      if (destLstat !== null) {
+        if (destLstat.isDirectory()) {
+          throw makeCpError("ERR_FS_CP_DIR_TO_NON_DIR", `Cannot overwrite directory ${curDest} with non-directory`);
+        }
+        if (!opts.force) {
+          if (opts.errorOnExist) {
+            throw makeCpError("ERR_FS_CP_EEXIST", `Destination already exists: ${curDest}`);
+          }
+          return;
+        }
+        if (destLstat.isSymbolicLink()) {
+          await api.unlink(curDest);
+        }
+      } else if (isRoot) {
+        const parent = dirname(curDest);
+        if (parent && parent !== "." && !(await existsAsyncNoThrow(parent))) {
+          await api.mkdir(parent, { recursive: true });
+        }
+      }
+      await api.copyFile(curSrc, curDest, opts.mode);
+      if (opts.preserveTimestamps) {
+        await api.utimes(curDest, curStat.atime, curStat.mtime);
+      }
+    }
+
+    await copyEntry(src, dest, srcStat, true);
+  }
+
+  return { copySync, copyAsync };
+})"#;
+
+/// JS helper creating `fs/promises.watch(filename[, options])` AsyncIterable.
+const FS_PROMISES_WATCH_JS: &str = r#"(function (watchFn) {
+  "use strict";
+
+  function makeAbortError(signal) {
+    const err = new Error("The operation was aborted", { cause: signal.reason });
+    err.name = "AbortError";
+    err.code = "ABORT_ERR";
+    return err;
+  }
+
+  return function watchAsyncIterable(filename, options) {
+    let opts = {};
+    if (typeof options === "string") {
+      opts = { encoding: options };
+    } else if (options != null) {
+      if (typeof options !== "object") {
+        throw new TypeError('The "options" argument must be of type object. Received type ' + typeof options);
+      }
+      opts = options;
+    }
+
+    const signal = opts.signal || null;
+
+    return {
+      [Symbol.asyncIterator]() {
+        if (signal && signal.aborted) {
+          let rejectedOnce = false;
+          return {
+            next() {
+              if (!rejectedOnce) {
+                rejectedOnce = true;
+                return Promise.reject(makeAbortError(signal));
+              }
+              return Promise.resolve({ value: undefined, done: true });
+            },
+            return() {
+              return Promise.resolve({ value: undefined, done: true });
+            },
+          };
+        }
+
+        const queue = [];
+        const waiters = [];
+        let closed = false;
+        let pendingError = null;
+        const watcher = watchFn(filename, opts);
+
+        function flushError(err) {
+          if (closed) return;
+          closed = true;
+          queue.length = 0;
+          try { watcher.close(); } catch (_) {}
+          if (waiters.length > 0) {
+            const w = waiters.shift();
+            w.reject(err);
+          } else {
+            pendingError = err;
+          }
+          while (waiters.length > 0) {
+            waiters.shift().resolve({ value: undefined, done: true });
+          }
+        }
+
+        watcher.on("change", (eventType, changedName) => {
+          if (closed) return;
+          const item = { eventType, filename: changedName };
+          if (waiters.length > 0) {
+            waiters.shift().resolve({ value: item, done: false });
+          } else {
+            queue.push(item);
+          }
+        });
+
+        watcher.on("error", (err) => {
+          flushError(err);
+        });
+
+        watcher.on("close", () => {
+          if (closed) return;
+          closed = true;
+          while (waiters.length > 0) {
+            waiters.shift().resolve({ value: undefined, done: true });
+          }
+        });
+
+        return {
+          next() {
+            if (pendingError !== null) {
+              const err = pendingError;
+              pendingError = null;
+              return Promise.reject(err);
+            }
+            if (queue.length > 0) {
+              return Promise.resolve({ value: queue.shift(), done: false });
+            }
+            if (closed) {
+              return Promise.resolve({ value: undefined, done: true });
+            }
+            return new Promise((resolve, reject) => {
+              waiters.push({ resolve, reject });
+            });
+          },
+          return() {
+            if (!closed) {
+              closed = true;
+              try { watcher.close(); } catch (_) {}
+              while (waiters.length > 0) {
+                waiters.shift().resolve({ value: undefined, done: true });
+              }
+            }
+            return Promise.resolve({ value: undefined, done: true });
+          },
+        };
+      },
+    };
+  };
+})"#;
+
+/// JS implementation of `fs.watchFile` / `fs.unwatchFile` (`StatWatcher`).
+const FS_WATCH_FILE_JS: &str = r#"(function (statSync, zeroedStats) {
+  "use strict";
+  const EventEmitter = require("node:events");
+  const pathMod = require("node:path");
+
+  class StatWatcher extends EventEmitter {
+    constructor(bigint) {
+      super();
+      this._bigint = Boolean(bigint);
+      this._timer = null;
+      this._prev = null;
+      this._stopped = false;
+    }
+
+    ref() {
+      if (this._timer && typeof this._timer.ref === "function") {
+        this._timer.ref();
+      }
+      return this;
+    }
+
+    unref() {
+      if (this._timer && typeof this._timer.unref === "function") {
+        this._timer.unref();
+      }
+      return this;
+    }
+  }
+
+  const statWatchers = new Map();
+
+  function safeStat(filename, bigint) {
+    const res = statSync(filename, { bigint: Boolean(bigint), throwIfNoEntry: false });
+    if (res !== undefined) return res;
+    return zeroedStats(Boolean(bigint));
+  }
+
+  function statsChanged(a, b) {
+    return (
+      a.mtimeMs !== b.mtimeMs ||
+      a.ctimeMs !== b.ctimeMs ||
+      a.size !== b.size ||
+      a.ino !== b.ino ||
+      a.mode !== b.mode ||
+      a.nlink !== b.nlink
+    );
+  }
+
+  function watchFile(filename, options, listener) {
+    if (typeof options === "function") {
+      listener = options;
+      options = {};
+    } else if (options == null) {
+      options = {};
+    } else if (typeof options !== "object") {
+      throw new TypeError('The "options" argument must be of type object');
+    }
+
+    if (typeof listener !== "function") {
+      const err = new TypeError('The "listener" argument must be of type function');
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
+
+    const persistent = options.persistent === undefined ? true : Boolean(options.persistent);
+    const interval = typeof options.interval === "number" ? options.interval : 5007;
+    const bigint = Boolean(options.bigint);
+    const resolved = typeof filename === "string" ? pathMod.resolve(filename) : String(filename);
+
+    let watcher = statWatchers.get(resolved);
+    if (!watcher) {
+      watcher = new StatWatcher(bigint);
+      watcher._prev = safeStat(resolved, bigint);
+      watcher._timer = setInterval(() => {
+        if (watcher._stopped) return;
+        const curr = safeStat(resolved, watcher._bigint);
+        const prev = watcher._prev;
+        if (statsChanged(curr, prev)) {
+          watcher._prev = curr;
+          watcher.emit("change", curr, prev);
+        }
+      }, interval);
+      if (!persistent && watcher._timer && typeof watcher._timer.unref === "function") {
+        watcher._timer.unref();
+      }
+      statWatchers.set(resolved, watcher);
+    }
+
+    watcher.on("change", listener);
+    return watcher;
+  }
+
+  function unwatchFile(filename, listener) {
+    const resolved = typeof filename === "string" ? pathMod.resolve(filename) : String(filename);
+    const watcher = statWatchers.get(resolved);
+    if (!watcher) return;
+
+    if (typeof listener === "function") {
+      watcher.removeListener("change", listener);
+    } else {
+      watcher.removeAllListeners("change");
+    }
+
+    if (watcher.listenerCount("change") === 0) {
+      watcher._stopped = true;
+      if (watcher._timer) {
+        clearInterval(watcher._timer);
+        watcher._timer = null;
+      }
+      statWatchers.delete(resolved);
+      watcher.emit("stop");
+    }
+  }
+
+  return { StatWatcher, watchFile, unwatchFile };
+})"#;
+
+fn ensure_fs_base_classes_registered<'js>(ctx: &Ctx<'js>) -> Result<()> {
+    let globals = ctx.globals();
+
+    Class::<Dirent>::define(&globals)?;
+    Class::<FileHandle>::define(&globals)?;
+    Class::<Stats>::define(&globals)?;
+    Class::<BigIntStats>::define(&globals)?;
+
+    if !globals.contains_key("FSWatcher")? {
+        let fs_watcher_ctor = Class::<FSWatcher>::create_constructor(ctx)?
+            .expect("Can't create FSWatcher constructor");
+        globals.set("FSWatcher", fs_watcher_ctor)?;
+        FSWatcher::add_event_emitter_prototype(ctx)?;
+    }
+
+    if !globals.contains_key("__lexeFsDirClass")? {
+        let base_classes: Object = ctx.eval(FS_BASE_CLASSES_JS)?;
+        let dir_ctor: Function = base_classes.get("Dir")?;
+        globals.set("__lexeFsDirClass", dir_ctor)?;
+    }
+
+    if let Some(fh_proto) = Class::<FileHandle>::prototype(ctx)? {
+        if !fh_proto.contains_key("createReadStream")? {
+            let attach: Function = ctx.eval(
+                r#"(function(proto) {
+  proto.createReadStream = function(options) {
+    return require("node:fs").createReadStream(null, Object.assign({}, options, { fd: this }));
+  };
+  proto.createWriteStream = function(options) {
+    return require("node:fs").createWriteStream(null, Object.assign({}, options, { fd: this }));
+  };
+})"#,
+            )?;
+            attach.call::<_, ()>((fh_proto,))?;
+        }
+    }
+
+    Ok(())
+}
+
+pub struct FsPromisesModule;
+
+impl ModuleDef for FsPromisesModule {
+    fn declare(declare: &Declarations) -> Result<()> {
+        declare.declare("access")?;
+        declare.declare("appendFile")?;
+        declare.declare("chmod")?;
+        declare.declare("chown")?;
+        declare.declare("constants")?;
+        declare.declare("copyFile")?;
+        declare.declare("cp")?;
+        declare.declare("glob")?;
+        declare.declare("lchmod")?;
+        declare.declare("lchown")?;
+        declare.declare("link")?;
+        declare.declare("lstat")?;
+        declare.declare("lutimes")?;
+        declare.declare("mkdir")?;
+        declare.declare("mkdtemp")?;
+        declare.declare("open")?;
+        declare.declare("opendir")?;
+        declare.declare("readFile")?;
+        declare.declare("readdir")?;
+        declare.declare("readlink")?;
+        declare.declare("realpath")?;
+        declare.declare("rename")?;
+        declare.declare("rm")?;
+        declare.declare("rmdir")?;
+        declare.declare("stat")?;
+        declare.declare("statfs")?;
+        declare.declare("symlink")?;
+        declare.declare("truncate")?;
+        declare.declare("unlink")?;
+        declare.declare("utimes")?;
+        declare.declare("watch")?;
+        declare.declare("writeFile")?;
+
+        declare.declare("default")?;
+
+        Ok(())
+    }
+
+    fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
+        ensure_fs_base_classes_registered(ctx)?;
+
+        export_default(ctx, exports, |default| {
+            export_promises(ctx, default)?;
+            Ok(())
+        })
+    }
+}
+
+impl From<FsPromisesModule> for ModuleInfo<FsPromisesModule> {
+    fn from(val: FsPromisesModule) -> Self {
+        ModuleInfo {
+            name: "fs/promises",
+            module: val,
+        }
+    }
+}
 
 pub struct FsModule;
 
@@ -288,82 +805,109 @@ impl ModuleDef for FsModule {
         declare.declare("promises")?;
         declare.declare("access")?;
         declare.declare("accessSync")?;
-        declare.declare("open")?;
-        declare.declare("openSync")?;
-        declare.declare("close")?;
-        declare.declare("closeSync")?;
-        declare.declare("writeSync")?;
-        declare.declare("readSync")?;
-        declare.declare("fstatSync")?;
-        declare.declare("fstat")?;
-        declare.declare("ftruncate")?;
-        declare.declare("fchmod")?;
-        declare.declare("fsync")?;
-        declare.declare("fdatasync")?;
-        declare.declare("futimes")?;
-        declare.declare("readv")?;
-        declare.declare("writev")?;
-        declare.declare("mkdirSync")?;
-        declare.declare("mkdtempSync")?;
-        declare.declare("readdir")?;
-        declare.declare("readdirSync")?;
-        declare.declare("readFile")?;
-        declare.declare("readFileSync")?;
-        declare.declare("writeFile")?;
         declare.declare("appendFile")?;
         declare.declare("appendFileSync")?;
-        declare.declare("rmdirSync")?;
-        declare.declare("rmSync")?;
-        declare.declare("unlinkSync")?;
-        declare.declare("stat")?;
-        declare.declare("statSync")?;
-        declare.declare("lstat")?;
-        declare.declare("lstatSync")?;
-        declare.declare("writeFileSync")?;
-        declare.declare("watch")?;
-        declare.declare("FSWatcher")?;
-        declare.declare("constants")?;
+        declare.declare("chmod")?;
         declare.declare("chmodSync")?;
-        declare.declare("renameSync")?;
-        declare.declare("symlinkSync")?;
-        declare.declare("realpathSync")?;
-        declare.declare("realpath")?;
-        declare.declare("existsSync")?;
+        declare.declare("chown")?;
+        declare.declare("chownSync")?;
+        declare.declare("close")?;
+        declare.declare("closeSync")?;
+        declare.declare("constants")?;
+        declare.declare("copyFile")?;
+        declare.declare("copyFileSync")?;
+        declare.declare("cp")?;
+        declare.declare("cpSync")?;
         declare.declare("createReadStream")?;
         declare.declare("createWriteStream")?;
+        declare.declare("exists")?;
+        declare.declare("existsSync")?;
+        declare.declare("fchmod")?;
+        declare.declare("fchmodSync")?;
+        declare.declare("fchown")?;
+        declare.declare("fchownSync")?;
+        declare.declare("fdatasync")?;
+        declare.declare("fdatasyncSync")?;
+        declare.declare("fstat")?;
+        declare.declare("fstatSync")?;
+        declare.declare("fsync")?;
+        declare.declare("fsyncSync")?;
+        declare.declare("ftruncate")?;
+        declare.declare("ftruncateSync")?;
+        declare.declare("futimes")?;
+        declare.declare("futimesSync")?;
+        declare.declare("glob")?;
+        declare.declare("globSync")?;
+        declare.declare("lchmod")?;
+        declare.declare("lchmodSync")?;
+        declare.declare("lchown")?;
+        declare.declare("lchownSync")?;
+        declare.declare("link")?;
+        declare.declare("linkSync")?;
+        declare.declare("lstat")?;
+        declare.declare("lstatSync")?;
+        declare.declare("lutimes")?;
+        declare.declare("lutimesSync")?;
+        declare.declare("mkdir")?;
+        declare.declare("mkdirSync")?;
+        declare.declare("mkdtemp")?;
+        declare.declare("mkdtempSync")?;
+        declare.declare("open")?;
+        declare.declare("openAsBlob")?;
+        declare.declare("openSync")?;
+        declare.declare("opendir")?;
+        declare.declare("opendirSync")?;
+        declare.declare("read")?;
+        declare.declare("readFile")?;
+        declare.declare("readFileSync")?;
+        declare.declare("readSync")?;
+        declare.declare("readdir")?;
+        declare.declare("readdirSync")?;
+        declare.declare("readlink")?;
+        declare.declare("readlinkSync")?;
+        declare.declare("readv")?;
+        declare.declare("readvSync")?;
+        declare.declare("realpath")?;
+        declare.declare("realpathSync")?;
+        declare.declare("rename")?;
+        declare.declare("renameSync")?;
+        declare.declare("rm")?;
+        declare.declare("rmSync")?;
+        declare.declare("rmdir")?;
+        declare.declare("rmdirSync")?;
+        declare.declare("stat")?;
+        declare.declare("statSync")?;
+        declare.declare("statfs")?;
+        declare.declare("statfsSync")?;
+        declare.declare("symlink")?;
+        declare.declare("symlinkSync")?;
+        declare.declare("truncate")?;
+        declare.declare("truncateSync")?;
+        declare.declare("unlink")?;
+        declare.declare("unlinkSync")?;
+        declare.declare("unwatchFile")?;
+        declare.declare("utimes")?;
+        declare.declare("utimesSync")?;
+        declare.declare("watch")?;
+        declare.declare("watchFile")?;
+        declare.declare("write")?;
+        declare.declare("writeFile")?;
+        declare.declare("writeFileSync")?;
+        declare.declare("writeSync")?;
+        declare.declare("writev")?;
+        declare.declare("writevSync")?;
+
         declare.declare("Stats")?;
+        declare.declare("BigIntStats")?;
         declare.declare("Dirent")?;
         declare.declare("FileHandle")?;
+        declare.declare("FSWatcher")?;
         declare.declare("ReadStream")?;
         declare.declare("WriteStream")?;
+        declare.declare("FileReadStream")?;
+        declare.declare("FileWriteStream")?;
         declare.declare("Dir")?;
-        declare.declare("linkSync")?;
-        declare.declare("readlinkSync")?;
-        declare.declare("truncateSync")?;
-        declare.declare("chownSync")?;
-        declare.declare("lchownSync")?;
-        declare.declare("utimesSync")?;
-        declare.declare("lutimesSync")?;
-
-        // `fs.promises` is exported as a nested object, and every key on it is
-        // re-exported on the namespace, so each one has to be declared here too.
-        declare.declare("link")?;
-        declare.declare("readlink")?;
-        declare.declare("truncate")?;
-        declare.declare("chown")?;
-        declare.declare("lchown")?;
-        declare.declare("utimes")?;
-        declare.declare("lutimes")?;
-        declare.declare("opendir")?;
-        declare.declare("cp")?;
-        declare.declare("glob")?;
-        declare.declare("statfs")?;
-        declare.declare("mkdir")?;
-        declare.declare("mkdtemp")?;
-        declare.declare("rename")?;
-        declare.declare("rm")?;
-        declare.declare("rmdir")?;
-        declare.declare("symlink")?;
+        declare.declare("_toUnixTimestamp")?;
 
         declare.declare("default")?;
 
@@ -371,19 +915,14 @@ impl ModuleDef for FsModule {
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
+        ensure_fs_base_classes_registered(ctx)?;
         let globals = ctx.globals();
 
-        Class::<Dirent>::define(&globals)?;
-        Class::<FileHandle>::define(&globals)?;
-        Class::<Stats>::define(&globals)?;
-        let fs_watcher_ctor = Class::<FSWatcher>::create_constructor(ctx)?
-            .expect("Can't create FSWatcher constructor");
-        globals.set("FSWatcher", fs_watcher_ctor.clone())?;
-        // `create_constructor` returns None for classes whose constructor is
-        // skipped (Stats/Dirent are built in Rust, not from JS), so recover the
-        // constructor from a prototype instead. That is the same function
-        // `instanceof` compares against, which is all callers need.
+        let fs_watcher_ctor: Function = globals.get("FSWatcher")?;
         let stats_ctor = Class::<Stats>::prototype(ctx)?
+            .and_then(|p| p.get::<_, Value>("constructor").ok())
+            .and_then(|c| c.as_function().cloned());
+        let bigint_stats_ctor = Class::<BigIntStats>::prototype(ctx)?
             .and_then(|p| p.get::<_, Value>("constructor").ok())
             .and_then(|c| c.as_function().cloned());
         let dirent_ctor = Class::<Dirent>::prototype(ctx)?
@@ -392,27 +931,142 @@ impl ModuleDef for FsModule {
         let file_handle_ctor = Class::<FileHandle>::prototype(ctx)?
             .and_then(|p| p.get::<_, Value>("constructor").ok())
             .and_then(|c| c.as_function().cloned());
-        FSWatcher::add_event_emitter_prototype(ctx)?;
 
         export_default(ctx, exports, |default| {
             let promises = Object::new(ctx.clone())?;
             export_promises(ctx, &promises)?;
             export_constants(ctx, default)?;
 
-            default.set("promises", promises)?;
+            default.set("promises", promises.clone())?;
 
-            let access_fn = Function::new(ctx.clone(), access_callback)?;
-            default.set("access", access_fn)?;
+            default.set("access", Function::new(ctx.clone(), access_callback)?)?;
             default.set("accessSync", Func::from(access_sync))?;
             default.set("mkdirSync", Func::from(mkdir_sync))?;
             default.set("mkdtempSync", Func::from(mkdtemp_sync))?;
-            let readdir_fn = Function::new(ctx.clone(), readdir_callback)?;
-            default.set("readdir", readdir_fn)?;
+            default.set("readdir", Function::new(ctx.clone(), readdir_callback)?)?;
             default.set("readdirSync", Func::from(read_dir_sync))?;
-            // Callback-style open/close/readFile/writeFile with real handle tracking.
-            let cb_helpers: Object = ctx.eval(
-                r#"(function(){
-  const fsp = require("fs/promises");
+
+            default.set("openSync", Func::from(open_sync))?;
+            default.set("closeSync", Func::from(close_sync))?;
+            default.set("writeSync", Func::from(write_sync))?;
+            default.set("readSync", Func::from(read_sync))?;
+            default.set("fstatSync", Func::from(fstat_sync))?;
+            default.set("fchmodSync", Func::from(fchmod_sync))?;
+            default.set("fchownSync", Func::from(fchown_sync))?;
+            default.set("fdatasyncSync", Func::from(fdatasync_sync))?;
+            default.set("fsyncSync", Func::from(fsync_sync))?;
+            default.set("ftruncateSync", Func::from(ftruncate_sync))?;
+            default.set("futimesSync", Func::from(futimes_sync))?;
+            default.set("readvSync", Func::from(readv_sync))?;
+            default.set("writevSync", Func::from(writev_sync))?;
+
+            default.set("read", Function::new(ctx.clone(), read_callback)?)?;
+            default.set("write", Function::new(ctx.clone(), write_callback)?)?;
+            default.set("fstat", Func::from(fstat_callback))?;
+            default.set("ftruncate", Func::from(ftruncate_callback))?;
+            default.set("fchmod", Func::from(fchmod_callback))?;
+            default.set("fchown", Func::from(fchown_callback))?;
+            default.set("fsync", Func::from(fsync_callback))?;
+            default.set("fdatasync", Func::from(fdatasync_callback))?;
+            default.set("futimes", Func::from(futimes_callback))?;
+            default.set("readv", Func::from(readv_callback))?;
+            default.set("writev", Func::from(writev_callback))?;
+
+            default.set("readFileSync", Func::from(read_file_sync))?;
+            default.set("writeFileSync", Func::from(write_file_sync))?;
+            default.set("appendFileSync", Func::from(append_file_sync))?;
+            default.set("rmdirSync", Func::from(rmdir_sync))?;
+            default.set("rmSync", Func::from(rmfile_sync))?;
+            default.set("unlinkSync", Func::from(unlink_sync))?;
+            default.set("copyFileSync", Func::from(fs_extra::copy_file_sync))?;
+            default.set("opendirSync", Func::from(opendir_sync))?;
+            default.set("statfsSync", Func::from(statfs_sync))?;
+            default.set("globSync", Func::from(glob_sync))?;
+
+            default.set("stat", Function::new(ctx.clone(), stat_callback)?)?;
+            default.set("statSync", Func::from(stat_fn_sync))?;
+            default.set("lstat", Function::new(ctx.clone(), lstat_callback)?)?;
+            default.set("lstatSync", Func::from(lstat_fn_sync))?;
+            default.set("watch", Function::new(ctx.clone(), watch)?)?;
+            default.set("FSWatcher", fs_watcher_ctor)?;
+            default.set("chmodSync", Func::from(chmod_sync))?;
+            default.set("lchmodSync", Func::from(lchmod_sync))?;
+            default.set("renameSync", Func::from(rename_sync))?;
+            default.set("symlinkSync", Func::from(symlink_sync))?;
+            default.set("existsSync", Func::from(exists_sync))?;
+            default.set("openAsBlob", Func::from(Async(open_as_blob)))?;
+
+            default.set("linkSync", Func::from(fs_extra::link_sync))?;
+            default.set("readlinkSync", Func::from(readlink_sync_call))?;
+            default.set("truncateSync", Func::from(fs_extra::truncate_sync))?;
+            default.set("chownSync", Func::from(fs_extra::chown_sync))?;
+            default.set("lchownSync", Func::from(fs_extra::lchown_sync))?;
+            default.set("utimesSync", Func::from(utimes_sync))?;
+            default.set("lutimesSync", Func::from(lutimes_sync))?;
+
+            let realpath_sync_fn = Function::new(ctx.clone(), realpath_sync)?;
+            let realpath_sync_native = Function::new(ctx.clone(), realpath_sync)?;
+            realpath_sync_fn.set("native", realpath_sync_native)?;
+            default.set("realpathSync", realpath_sync_fn)?;
+
+            let realpath_fn = Function::new(ctx.clone(), realpath)?;
+            let realpath_native = Function::new(ctx.clone(), realpath)?;
+            realpath_fn.set("native", realpath_native)?;
+            default.set("realpath", realpath_fn)?;
+
+            if let Some(ctor) = stats_ctor {
+                default.set("Stats", ctor)?;
+            }
+            if let Some(ctor) = bigint_stats_ctor {
+                default.set("BigIntStats", ctor)?;
+            }
+            if let Some(ctor) = dirent_ctor {
+                default.set("Dirent", ctor)?;
+            }
+            if let Some(ctor) = file_handle_ctor {
+                default.set("FileHandle", ctor)?;
+            }
+
+            let dir_ctor: Function = globals.get("__lexeFsDirClass")?;
+            default.set("Dir", dir_ctor)?;
+
+            default.set("createReadStream", create_create_read_stream(ctx)?)?;
+            default.set("createWriteStream", create_create_write_stream(ctx)?)?;
+            globals.set("__lexeFsCreateReadStream", create_create_read_stream(ctx)?)?;
+            globals.set(
+                "__lexeFsCreateWriteStream",
+                create_create_write_stream(ctx)?,
+            )?;
+
+            let fs_stream_classes: Object = ctx.eval(FS_STREAM_CLASSES_JS)?;
+            let read_stream_ctor: Function = fs_stream_classes.get("ReadStream")?;
+            let write_stream_ctor: Function = fs_stream_classes.get("WriteStream")?;
+            default.set("ReadStream", read_stream_ctor.clone())?;
+            default.set("WriteStream", write_stream_ctor.clone())?;
+            default.set("FileReadStream", read_stream_ctor.clone())?;
+            default.set("FileWriteStream", write_stream_ctor.clone())?;
+            globals.set("__lexeFsReadStreamClass", read_stream_ctor)?;
+            globals.set("__lexeFsWriteStreamClass", write_stream_ctor)?;
+
+            let cp_factory: Function = ctx.eval(FS_CP_HELPER_JS)?;
+            let cp_fns: Object = cp_factory.call((default.clone(),))?;
+            let cp_sync_fn: Value = cp_fns.get("copySync")?;
+            default.set("cpSync", cp_sync_fn)?;
+
+            let zeroed_fn = Function::new(ctx.clone(), zeroed_stats_js)?;
+            let stat_sync_val: Value = default.get("statSync")?;
+            let watch_file_factory: Function = ctx.eval(FS_WATCH_FILE_JS)?;
+            let watch_file_fns: Object = watch_file_factory.call((stat_sync_val, zeroed_fn))?;
+            default.set("watchFile", watch_file_fns.get::<_, Value>("watchFile")?)?;
+            default.set(
+                "unwatchFile",
+                watch_file_fns.get::<_, Value>("unwatchFile")?,
+            )?;
+
+            // Callback helpers (open, close, readFile, writeFile, appendFile, exists,
+            // glob, and wrappers around all `promises.*` operations).
+            let cb_factory: Function = ctx.eval(
+                r#"(function(fsp, closeSyncFn, existsSyncFn, globSyncFn){
   const handles = new Map();
 
   function validateCallback(callback) {
@@ -453,8 +1107,6 @@ impl ModuleDef for FsModule {
     const cb = onceCallback(callback);
     fsp.open(path, flags, mode).then(
       (handle) => {
-        // Use the real OS fd from FileHandle.fd (sync getter). Registry keeps
-        // the handle alive so the fd is not closed until fs.close(fd).
         const fd = handle.fd;
         if (typeof fd !== "number" || !Number.isFinite(fd)) {
           const err = new Error("internal error: FileHandle.fd is not a number");
@@ -462,8 +1114,6 @@ impl ModuleDef for FsModule {
           return;
         }
         if (handles.has(fd)) {
-          // Collision on a live registry entry is an internal error — never
-          // allocate synthetic fds that could mask the real descriptor.
           const err = new Error("internal error: fd collision in fs.open registry");
           handle.close().then(() => cb(err), () => cb(err));
           return;
@@ -478,11 +1128,16 @@ impl ModuleDef for FsModule {
   function close(fd, callback) {
     validateCallback(callback);
     const cb = onceCallback(callback);
-    // Only registry-owned handles may be closed via fs.close(fd).
     const handle = handles.get(fd);
     if (!handle) {
-      // Double close / unknown fd → Node EBADF (error-first callback).
-      queueMicrotask(() => cb(createEBADF(fd)));
+      queueMicrotask(() => {
+        try {
+          closeSyncFn(fd);
+          cb(null);
+        } catch (err) {
+          cb(err && err.code ? err : createEBADF(fd));
+        }
+      });
       return;
     }
     handles.delete(fd);
@@ -496,128 +1151,130 @@ impl ModuleDef for FsModule {
       args.pop();
       const cb = onceCallback(callback);
       promiseFn(...args).then(
-        (v) => cb(null, v),
+        (v) => v === undefined ? cb(null) : cb(null, v),
         (e) => cb(e)
       );
     };
   }
 
+  function exists(path, callback) {
+    validateCallback(callback);
+    queueMicrotask(() => callback(existsSyncFn(path)));
+  }
+
+  function glob(pattern, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+    validateCallback(callback);
+    const cb = onceCallback(callback);
+    queueMicrotask(() => {
+      try {
+        const result = options === undefined ? globSyncFn(pattern) : globSyncFn(pattern, options);
+        cb(null, result);
+      } catch (err) {
+        cb(err);
+      }
+    });
+  }
+
+  function _toUnixTimestamp(time) {
+    if (typeof time === "number") return time;
+    if (time instanceof Date) return time.getTime() / 1000;
+    if (typeof time === "string" && isFinite(Number(time))) return Number(time);
+    throw new TypeError("Cannot parse time: " + time);
+  }
+
   return {
     open,
     close,
+    exists,
+    glob,
+    _toUnixTimestamp,
     readFile: wrap((path, opts) => fsp.readFile(path, opts)),
     writeFile: wrap((path, data, opts) => fsp.writeFile(path, data, opts)),
     appendFile: wrap((path, data, opts) => fsp.appendFile(path, data, opts)),
+    unlink: wrap((path) => fsp.unlink(path)),
+    chmod: wrap((path, mode) => fsp.chmod(path, mode)),
+    lchmod: wrap((path, mode) => fsp.lchmod(path, mode)),
+    chown: wrap((path, uid, gid) => fsp.chown(path, uid, gid)),
+    lchown: wrap((path, uid, gid) => fsp.lchown(path, uid, gid)),
+    copyFile: wrap((src, dest, mode) => fsp.copyFile(src, dest, mode)),
+    cp: wrap((src, dest, opts) => fsp.cp(src, dest, opts)),
+    link: wrap((existing, target) => fsp.link(existing, target)),
+    lutimes: wrap((path, a, m) => fsp.lutimes(path, a, m)),
+    mkdir: wrap((path, opts) => fsp.mkdir(path, opts)),
+    mkdtemp: wrap((prefix, opts) => fsp.mkdtemp(prefix, opts)),
+    opendir: wrap((path, opts) => fsp.opendir(path, opts)),
+    readlink: wrap((path, opts) => fsp.readlink(path, opts)),
+    rename: wrap((oldPath, newPath) => fsp.rename(oldPath, newPath)),
+    rm: wrap((path, opts) => fsp.rm(path, opts)),
+    rmdir: wrap((path, opts) => fsp.rmdir(path, opts)),
+    statfs: wrap((path, opts) => fsp.statfs(path, opts)),
+    symlink: wrap((target, path, type) => fsp.symlink(target, path, type)),
+    truncate: wrap((path, len) => fsp.truncate(path, len)),
+    utimes: wrap((path, a, m) => fsp.utimes(path, a, m)),
   };
-})()"#,
+})"#,
             )?;
-            default.set("open", cb_helpers.get::<_, Value>("open")?)?;
-            default.set("openSync", Func::from(open_sync))?;
-            default.set("close", cb_helpers.get::<_, Value>("close")?)?;
-            default.set("closeSync", Func::from(close_sync))?;
-            default.set("writeSync", Func::from(write_sync))?;
-            default.set("readSync", Func::from(read_sync))?;
-            default.set("fstatSync", Func::from(fstat_sync))?;
-            default.set("fstat", Func::from(fstat_callback))?;
-            default.set("ftruncate", Func::from(ftruncate_callback))?;
-            default.set("fchmod", Func::from(fchmod_callback))?;
-            default.set("fsync", Func::from(fsync_callback))?;
-            default.set("fdatasync", Func::from(fdatasync_callback))?;
-            default.set("futimes", Func::from(futimes_callback))?;
-            default.set("readv", Func::from(readv_callback))?;
-            default.set("writev", Func::from(writev_callback))?;
-            default.set("readFile", cb_helpers.get::<_, Value>("readFile")?)?;
-            default.set("writeFile", cb_helpers.get::<_, Value>("writeFile")?)?;
-            default.set("appendFile", cb_helpers.get::<_, Value>("appendFile")?)?;
-            default.set("readFileSync", Func::from(read_file_sync))?;
-            default.set("rmdirSync", Func::from(rmdir_sync))?;
-            default.set("rmSync", Func::from(rmfile_sync))?;
-            default.set("unlinkSync", Func::from(rmfile_sync))?;
+            let close_sync_val: Value = default.get("closeSync")?;
+            let exists_sync_val: Value = default.get("existsSync")?;
+            let glob_sync_val: Value = default.get("globSync")?;
+            let cb_helpers: Object = cb_factory.call((
+                promises.clone(),
+                close_sync_val,
+                exists_sync_val,
+                glob_sync_val,
+            ))?;
 
-            let stat_fn_export = Function::new(ctx.clone(), stat_callback)?;
-            let lstat_fn_export = Function::new(ctx.clone(), lstat_callback)?;
-            default.set("stat", stat_fn_export)?;
-            default.set("statSync", Func::from(stat_fn_sync))?;
-            default.set("lstat", lstat_fn_export)?;
-            default.set("lstatSync", Func::from(lstat_fn_sync))?;
-            default.set("writeFileSync", Func::from(write_file_sync))?;
-            default.set("appendFileSync", Func::from(append_file_sync))?;
-            default.set("watch", Func::from(watch))?;
-            default.set("FSWatcher", fs_watcher_ctor)?;
-            default.set("chmodSync", Func::from(chmod_sync))?;
-            default.set("renameSync", Func::from(rename_sync))?;
-            default.set("symlinkSync", Func::from(symlink_sync))?;
-            default.set("existsSync", Func::from(exists_sync))?;
-            default.set("createReadStream", create_create_read_stream(ctx)?)?;
-            default.set("createWriteStream", create_create_write_stream(ctx)?)?;
-            // The `ReadStream`/`WriteStream` classes delegate to these so there
-            // is exactly one stream implementation.
-            ctx.globals()
-                .set("__lexeFsCreateReadStream", create_create_read_stream(ctx)?)?;
-            ctx.globals().set(
-                "__lexeFsCreateWriteStream",
-                create_create_write_stream(ctx)?,
-            )?;
-
-            // Expose the classes so `instanceof fs.Stats` / `import { Stats }`
-            // work. Node refuses direct construction of these, so the
-            // constructors are identity checks first and foremost.
-            if let Some(ctor) = stats_ctor.clone() {
-                default.set("Stats", ctor)?;
+            for key in [
+                "open",
+                "close",
+                "exists",
+                "glob",
+                "_toUnixTimestamp",
+                "readFile",
+                "writeFile",
+                "appendFile",
+                "unlink",
+                "chmod",
+                "lchmod",
+                "chown",
+                "lchown",
+                "copyFile",
+                "cp",
+                "link",
+                "lutimes",
+                "mkdir",
+                "mkdtemp",
+                "opendir",
+                "readlink",
+                "rename",
+                "rm",
+                "rmdir",
+                "statfs",
+                "symlink",
+                "truncate",
+                "utimes",
+            ] {
+                default.set(key, cb_helpers.get::<_, Value>(key)?)?;
             }
-            if let Some(ctor) = dirent_ctor.clone() {
-                default.set("Dirent", ctor)?;
-            }
-            if let Some(ctor) = file_handle_ctor.clone() {
-                default.set("FileHandle", ctor)?;
-            }
-
-            // `fs.ReadStream` / `fs.WriteStream` / `fs.Dir` for `instanceof`
-            // branches (send, serve-static, multer, formidable). The base
-            // classes come from the stream implementation already in use;
-            // `createReadStream`/`createWriteStream` re-parent their results
-            // onto these prototypes, and `opendir` builds real `Dir` objects.
-            let fs_stream_classes: Object = ctx.eval(FS_STREAM_CLASSES_JS)?;
-            let read_stream_ctor: Function = fs_stream_classes.get("ReadStream")?;
-            let write_stream_ctor: Function = fs_stream_classes.get("WriteStream")?;
-            let dir_ctor: Function = fs_stream_classes.get("Dir")?;
-            default.set("ReadStream", read_stream_ctor.clone())?;
-            default.set("WriteStream", write_stream_ctor.clone())?;
-            default.set("Dir", dir_ctor.clone())?;
-            // `createReadStream`/`createWriteStream` look these up while building
-            // their result.
-            ctx.globals()
-                .set("__lexeFsReadStreamClass", read_stream_ctor)?;
-            ctx.globals()
-                .set("__lexeFsWriteStreamClass", write_stream_ctor)?;
-            ctx.globals().set("__lexeFsDirClass", dir_ctor)?;
-
-            let realpath_sync_fn = Function::new(ctx.clone(), realpath_sync)?;
-            let realpath_sync_native = Function::new(ctx.clone(), realpath_sync)?;
-            realpath_sync_fn.set("native", realpath_sync_native)?;
-            default.set("realpathSync", realpath_sync_fn)?;
-
-            let realpath_fn = Function::new(ctx.clone(), realpath)?;
-            let realpath_native = Function::new(ctx.clone(), realpath)?;
-            realpath_fn.set("native", realpath_native)?;
-            default.set("realpath", realpath_fn)?;
-
-            // Sync twins for the `fs/promises` entries added above.
-            default.set("linkSync", Func::from(fs_extra::link_sync))?;
-            default.set("readlinkSync", Func::from(readlink_sync_call))?;
-            default.set("truncateSync", Func::from(fs_extra::truncate_sync))?;
-            default.set("chownSync", Func::from(fs_extra::chown_sync))?;
-            default.set("lchownSync", Func::from(fs_extra::lchown_sync))?;
-            default.set("utimesSync", Func::from(utimes_sync))?;
-            default.set("lutimesSync", Func::from(lutimes_sync))?;
 
             Ok(())
         })
     }
 }
 
-fn exists_sync(path: String) -> bool {
-    std::fs::metadata(path).is_ok()
+fn zeroed_stats_js<'js>(ctx: Ctx<'js>, bigint: Opt<bool>) -> Result<Value<'js>> {
+    zeroed_stats(&ctx, bigint.0.unwrap_or(false))
+}
+
+fn exists_sync<'js>(ctx: Ctx<'js>, path: Value<'js>) -> bool {
+    let Ok(resolved) = path_from_value(&ctx, path) else {
+        return false;
+    };
+    std::fs::metadata(resolved).is_ok()
 }
 
 fn export_promises<'js>(ctx: &Ctx<'js>, exports: &Object<'js>) -> Result<()> {
@@ -634,66 +1291,240 @@ fn export_promises<'js>(ctx: &Ctx<'js>, exports: &Object<'js>) -> Result<()> {
     exports.set("mkdtemp", Func::from(Async(mkdtemp)))?;
     exports.set("rm", Func::from(Async(rmfile)))?;
     exports.set("rmdir", Func::from(Async(rmdir)))?;
+    exports.set("unlink", Func::from(Async(unlink)))?;
     exports.set("stat", Func::from(Async(stat_fn)))?;
     exports.set("lstat", Func::from(Async(lstat_fn)))?;
     exports.set("chmod", Func::from(Async(chmod)))?;
+    exports.set("lchmod", Func::from(Async(lchmod)))?;
     exports.set("symlink", Func::from(Async(symlink)))?;
     exports.set("realpath", Func::from(Async(realpath_promises)))?;
 
-    // Entries that were missing from `fs/promises`.
     exports.set("link", Func::from(Async(fs_extra::link)))?;
     exports.set("readlink", Func::from(Async(readlink_async)))?;
     exports.set("truncate", Func::from(Async(fs_extra::truncate)))?;
     exports.set("chown", Func::from(Async(fs_extra::chown)))?;
     exports.set("lchown", Func::from(Async(fs_extra::lchown)))?;
+    exports.set("copyFile", Func::from(Async(fs_extra::copy_file)))?;
     exports.set("utimes", Func::from(Async(utimes_async)))?;
     exports.set("lutimes", Func::from(Async(lutimes_async)))?;
     exports.set("opendir", Func::from(Async(opendir)))?;
-    exports.set("cp", Func::from(Async(copy_tree)))?;
     exports.set("glob", glob_entries(ctx)?)?;
     exports.set("statfs", Func::from(Async(statfs)))?;
+
+    let watch_fn = Function::new(ctx.clone(), watch)?;
+    let watch_factory: Function = ctx.eval(FS_PROMISES_WATCH_JS)?;
+    let fsp_watch: Value = watch_factory.call((watch_fn,))?;
+    exports.set("watch", fsp_watch)?;
+
+    // Build `cp` with sync + async helpers using this promises object + sync primitives.
+    let cp_api = Object::new(ctx.clone())?;
+    for key in [
+        "stat", "lstat", "mkdir", "readdir", "copyFile", "readlink", "symlink", "utimes",
+        "lutimes", "rm", "unlink",
+    ] {
+        cp_api.set(key, exports.get::<_, Value>(key)?)?;
+    }
+    let cp_factory: Function = ctx.eval(FS_CP_HELPER_JS)?;
+    let cp_fns: Object = cp_factory.call((cp_api,))?;
+    exports.set("cp", cp_fns.get::<_, Value>("copyAsync")?)?;
 
     Ok(())
 }
 
+/// `fs.openAsBlob(path[, options])` -> `Promise<Blob>`.
+async fn open_as_blob<'js>(
+    ctx: Ctx<'js>,
+    path: Value<'js>,
+    options: Opt<Object<'js>>,
+) -> Result<Value<'js>> {
+    let resolved = path_from_value(&ctx, path)?;
+    lexe_utils::permissions::ensure_fs_read(&ctx, &resolved)?;
+    let bytes = tokio::fs::read(&resolved)
+        .await
+        .map_err(|err| crate::errors::throw_fs_error(&ctx, err, "open", &resolved))?;
+    let mime_type = options
+        .0
+        .and_then(|o| o.get::<_, Option<String>>("type").ok().flatten())
+        .unwrap_or_default();
+
+    let blob_ctor_val: Value = ctx.globals().get("Blob")?;
+    let Some(blob_ctor) = blob_ctor_val.as_constructor().cloned() else {
+        return Err(Exception::throw_message(&ctx, "Blob is not registered"));
+    };
+    let buf = lexe_buffer::Buffer(bytes).into_js(&ctx)?;
+    let parts = Array::new(ctx.clone())?;
+    parts.set(0, buf)?;
+    let blob_opts = Object::new(ctx.clone())?;
+    if !mime_type.is_empty() {
+        blob_opts.set("type", mime_type)?;
+    }
+    blob_ctor.construct((parts, blob_opts))
+}
+
 /// `fs.promises.glob(pattern[, options])` — an async iterator over matches.
-///
-/// Node returns a `Glob` object that is async-iterable; the pattern is walked
-/// here and matches are yielded with `cwd`-relative paths.
 fn glob_entries<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
     Function::new(
         ctx.clone(),
-        |ctx: Ctx<'js>, pattern: String, options: Opt<Value<'js>>| -> Result<Value<'js>> {
+        |ctx: Ctx<'js>, pattern: Value<'js>, options: Opt<Value<'js>>| -> Result<Value<'js>> {
             glob_run(&ctx, pattern, options)
         },
     )
 }
 
-fn glob_run<'js>(ctx: &Ctx<'js>, pattern: String, options: Opt<Value<'js>>) -> Result<Value<'js>> {
-    let cwd = options
-        .0
-        .as_ref()
-        .and_then(|v| v.as_object())
-        .and_then(|o| o.get::<_, Option<String>>("cwd").ok().flatten())
+fn parse_glob_patterns<'js>(ctx: &Ctx<'js>, pattern: Value<'js>) -> Result<Vec<String>> {
+    if let Some(s) = pattern.as_string() {
+        return Ok(vec![s.to_string()?]);
+    }
+    if let Some(arr) = pattern.as_array() {
+        let mut out = Vec::with_capacity(arr.len());
+        for item in arr.iter::<String>() {
+            out.push(item?);
+        }
+        return Ok(out);
+    }
+    Err(Exception::throw_type(
+        ctx,
+        "The \"pattern\" argument must be a string or string[]",
+    ))
+}
+
+enum GlobExclude<'js> {
+    None,
+    Patterns(Vec<fs_extra::GlobMatcher>),
+    Func(Function<'js>),
+}
+
+fn glob_collect<'js>(
+    ctx: &Ctx<'js>,
+    pattern: Value<'js>,
+    options: Opt<Value<'js>>,
+) -> Result<Array<'js>> {
+    let patterns = parse_glob_patterns(ctx, pattern)?;
+    let mut cwd_explicit = false;
+    let mut cwd = None;
+    let mut with_file_types = false;
+    let mut exclude = GlobExclude::None;
+
+    if let Some(opts) = options.0.as_ref().and_then(|v| v.as_object()) {
+        if let Ok(Some(cwd_val)) = opts.get::<_, Option<Value>>("cwd") {
+            if !cwd_val.is_null() && !cwd_val.is_undefined() {
+                cwd = Some(path_from_value(ctx, cwd_val)?);
+                cwd_explicit = true;
+            }
+        }
+        if let Ok(Some(wft)) = opts.get::<_, Option<bool>>("withFileTypes") {
+            with_file_types = wft;
+        }
+        if let Ok(Some(excl)) = opts.get::<_, Option<Value>>("exclude") {
+            if let Some(f) = excl.as_function() {
+                exclude = GlobExclude::Func(f.clone());
+            } else if let Some(arr) = excl.as_array() {
+                let mut matchers = Vec::with_capacity(arr.len());
+                for item in arr.iter::<String>() {
+                    matchers.push(fs_extra::glob_pattern_to_matcher(&item?));
+                }
+                exclude = GlobExclude::Patterns(matchers);
+            } else if !excl.is_null() && !excl.is_undefined() {
+                return Err(Exception::throw_type(
+                    ctx,
+                    "The \"options.exclude\" property must be a function or string[]",
+                ));
+            }
+        }
+    }
+
+    let root_str = cwd
         .or_else(|| {
             std::env::current_dir()
                 .ok()
                 .map(|p| p.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| ".".to_string());
-    let matcher = fs_extra::glob_pattern_to_matcher(&pattern);
-    let mut matches = Vec::new();
+    let root_path = std::path::PathBuf::from(&root_str);
+    let display_root = if cwd_explicit {
+        root_str.clone()
+    } else {
+        ".".to_string()
+    };
+
+    let matchers: Vec<fs_extra::GlobMatcher> = patterns
+        .iter()
+        .map(|p| fs_extra::glob_pattern_to_matcher(p))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut matches: Vec<(String, std::path::PathBuf)> = Vec::new();
     collect_glob_matches(
-        &std::path::PathBuf::from(&cwd),
-        &std::path::PathBuf::from(&cwd),
-        &matcher,
+        ctx,
+        &root_path,
+        &root_path,
+        &display_root,
+        &matchers,
+        &exclude,
+        with_file_types,
+        &mut seen,
         &mut matches,
-    );
-    matches.sort();
-    let array = rquickjs::Array::new(ctx.clone())?;
-    for (index, path) in matches.into_iter().enumerate() {
-        array.set(index, path)?;
+    )?;
+    matches.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let array = Array::new(ctx.clone())?;
+    for (index, (rel, full_path)) in matches.into_iter().enumerate() {
+        if with_file_types {
+            let meta = std::fs::symlink_metadata(&full_path)
+                .map_err(|err| crate::errors::throw_fs_error(ctx, err, "lstat", &rel))?;
+            let dirent = build_glob_dirent(ctx, meta, &rel, &display_root)?;
+            array.set(index, dirent)?;
+        } else {
+            array.set(index, rel)?;
+        }
     }
+    Ok(array)
+}
+
+fn build_glob_dirent<'js>(
+    ctx: &Ctx<'js>,
+    metadata: std::fs::Metadata,
+    relative: &str,
+    display_root: &str,
+) -> Result<Value<'js>> {
+    let p = std::path::Path::new(relative);
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| relative.to_string());
+    let parent_rel = p
+        .parent()
+        .map(|par| par.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default();
+    let parent_path = if parent_rel.is_empty() {
+        display_root.to_string()
+    } else if display_root == "." {
+        parent_rel
+    } else if display_root.ends_with('/') {
+        format!("{display_root}{parent_rel}")
+    } else {
+        format!("{display_root}/{parent_rel}")
+    };
+
+    let dirent = Class::instance(ctx.clone(), Dirent::new(metadata))?;
+    dirent.set(PredefinedAtom::Name, name)?;
+    dirent.set("parentPath", parent_path)?;
+    dirent.into_js(ctx)
+}
+
+fn glob_sync<'js>(
+    ctx: Ctx<'js>,
+    pattern: Value<'js>,
+    options: Opt<Value<'js>>,
+) -> Result<Array<'js>> {
+    glob_collect(&ctx, pattern, options)
+}
+
+fn glob_run<'js>(
+    ctx: &Ctx<'js>,
+    pattern: Value<'js>,
+    options: Opt<Value<'js>>,
+) -> Result<Value<'js>> {
+    let array = glob_collect(ctx, pattern, options)?;
     // Node's `glob` returns an async-iterable `Glob`, so wrap the matches.
     let make: Function = ctx.eval(
         r#"(function (paths) {
@@ -715,14 +1546,20 @@ fn glob_run<'js>(ctx: &Ctx<'js>, pattern: String, options: Opt<Value<'js>>) -> R
     Ok(out)
 }
 
-fn collect_glob_matches(
+#[allow(clippy::too_many_arguments)]
+fn collect_glob_matches<'js>(
+    ctx: &Ctx<'js>,
     root: &std::path::Path,
     dir: &std::path::Path,
-    matcher: &fs_extra::GlobMatcher,
-    out: &mut Vec<String>,
-) {
+    display_root: &str,
+    matchers: &[fs_extra::GlobMatcher],
+    exclude: &GlobExclude<'js>,
+    with_file_types: bool,
+    seen: &mut HashSet<String>,
+    out: &mut Vec<(String, std::path::PathBuf)>,
+) -> Result<()> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+        return Ok(());
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -731,55 +1568,122 @@ fn collect_glob_matches(
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        if matcher.is_match(&relative) {
-            out.push(relative.clone());
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+
+        let excluded = match exclude {
+            GlobExclude::None => false,
+            GlobExclude::Patterns(pats) => pats.iter().any(|m| m.is_match(&relative)),
+            GlobExclude::Func(f) => {
+                if with_file_types {
+                    let meta = entry
+                        .metadata()
+                        .or_else(|_| std::fs::symlink_metadata(&path));
+                    if let Ok(m) = meta {
+                        let dirent = build_glob_dirent(ctx, m, &relative, display_root)?;
+                        f.call::<_, Value>((dirent,))?.as_bool().unwrap_or(false)
+                    } else {
+                        false
+                    }
+                } else {
+                    f.call::<_, Value>((relative.clone(),))?
+                        .as_bool()
+                        .unwrap_or(false)
+                }
+            },
+        };
+        if excluded {
+            continue;
         }
-        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            collect_glob_matches(root, &path, matcher, out);
+
+        if matchers.iter().any(|m| m.is_match(&relative)) && seen.insert(relative.clone()) {
+            out.push((relative, path.clone()));
+        }
+        if is_dir {
+            collect_glob_matches(
+                ctx,
+                root,
+                &path,
+                display_root,
+                matchers,
+                exclude,
+                with_file_types,
+                seen,
+                out,
+            )?;
         }
     }
+    Ok(())
 }
 
-/// `fs.promises.statfs(path)` — filesystem statistics.
-async fn statfs<'js>(ctx: Ctx<'js>, path: String) -> Result<Object<'js>> {
+fn statfs_impl<'js>(ctx: &Ctx<'js>, path: &str, bigint: bool) -> Result<Object<'js>> {
     #[cfg(unix)]
     {
-        let c_path = std::ffi::CString::new(path.as_str())
-            .or_throw_msg(&ctx, "statfs: path contains a NUL byte")?;
+        let c_path =
+            std::ffi::CString::new(path).or_throw_msg(ctx, "statfs: path contains a NUL byte")?;
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
         // SAFETY: `c_path` is valid and `stat` is a correctly sized out-buffer.
         let rc = unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) };
         if rc != 0 {
-            return Err::<Object<'js>, _>(std::io::Error::last_os_error())
-                .or_throw_msg(&ctx, &format!("statfs {path}"));
+            return Err(crate::errors::throw_fs_error(
+                ctx,
+                std::io::Error::last_os_error(),
+                "statfs",
+                path,
+            ));
         }
         let obj = Object::new(ctx.clone())?;
-        let bsize = stat.f_frsize.max(1) as f64;
-        // `statvfs` has no filesystem-type field; Node's `type` is 0 here.
-        obj.set("type", 0.0)?;
-        obj.set("bsize", stat.f_bsize as f64)?;
-        obj.set("blocks", stat.f_blocks as f64)?;
-        obj.set("bfree", stat.f_bfree as f64)?;
-        obj.set("bavail", stat.f_bavail as f64)?;
-        obj.set("files", stat.f_files as f64)?;
-        obj.set("ffree", stat.f_ffree as f64)?;
-        obj.set("fsize", stat.f_frsize as f64)?;
-        // BigInt-valued fields Node also exposes.
-        obj.set("bavailBigInt", stat.f_bavail as i64)?;
-        obj.set("bfreeBigInt", stat.f_bfree as i64)?;
-        obj.set("blocksBigInt", stat.f_blocks as i64)?;
-        obj.set("ffreeBigInt", stat.f_ffree as i64)?;
-        obj.set("filesBigInt", stat.f_files as i64)?;
-        let _ = bsize;
+        #[allow(clippy::unnecessary_cast)]
+        if bigint {
+            obj.set("type", BigInt::from_u64(ctx.clone(), 0)?)?;
+            obj.set("bsize", BigInt::from_u64(ctx.clone(), stat.f_bsize as u64)?)?;
+            obj.set(
+                "blocks",
+                BigInt::from_u64(ctx.clone(), stat.f_blocks as u64)?,
+            )?;
+            obj.set("bfree", BigInt::from_u64(ctx.clone(), stat.f_bfree as u64)?)?;
+            obj.set(
+                "bavail",
+                BigInt::from_u64(ctx.clone(), stat.f_bavail as u64)?,
+            )?;
+            obj.set("files", BigInt::from_u64(ctx.clone(), stat.f_files as u64)?)?;
+            obj.set("ffree", BigInt::from_u64(ctx.clone(), stat.f_ffree as u64)?)?;
+        } else {
+            obj.set("type", 0.0)?;
+            obj.set("bsize", stat.f_bsize as f64)?;
+            obj.set("blocks", stat.f_blocks as f64)?;
+            obj.set("bfree", stat.f_bfree as f64)?;
+            obj.set("bavail", stat.f_bavail as f64)?;
+            obj.set("files", stat.f_files as f64)?;
+            obj.set("ffree", stat.f_ffree as f64)?;
+        }
         Ok(obj)
     }
     #[cfg(not(unix))]
     {
+        let _ = (bigint, BigInt::from_u64);
         Err(Exception::throw_message(
-            &ctx,
+            ctx,
             &format!("statfs {path}: ENOSYS"),
         ))
     }
+}
+
+fn parse_statfs_bigint(options: Option<Value<'_>>) -> bool {
+    options
+        .as_ref()
+        .and_then(|v| v.as_object())
+        .and_then(|o| o.get::<_, Option<bool>>("bigint").ok().flatten())
+        .unwrap_or(false)
+}
+
+/// `fs.promises.statfs(path[, options])` — filesystem statistics.
+async fn statfs<'js>(ctx: Ctx<'js>, path: String, options: Opt<Value<'js>>) -> Result<Object<'js>> {
+    statfs_impl(&ctx, &path, parse_statfs_bigint(options.0))
+}
+
+/// `fs.statfsSync(path[, options])`.
+fn statfs_sync<'js>(ctx: Ctx<'js>, path: String, options: Opt<Value<'js>>) -> Result<Object<'js>> {
+    statfs_impl(&ctx, &path, parse_statfs_bigint(options.0))
 }
 
 /// `readlink` takes `options.encoding === "buffer"` to return a Buffer.
@@ -835,27 +1739,9 @@ fn lutimes_sync<'js>(
     fs_extra::lutimes_sync(ctx, path, a, m)
 }
 
-/// `utimes`/`lutimes` accept numbers (seconds) or `Date` for each time.
+/// `utimes`/`lutimes` accept numbers (seconds), strings, or `Date` for each time.
 fn utimes_pair<'js>(ctx: &Ctx<'js>, t: Value<'js>) -> Result<f64> {
-    if let Some(n) = t.as_number() {
-        return Ok(n);
-    }
-    if let Some(obj) = t.as_object() {
-        if let Ok(get_time) = obj.get::<_, Function>("getTime") {
-            if let Ok(ms) = get_time.call::<_, f64>((rquickjs::prelude::This(obj.clone()),)) {
-                return Ok(ms / 1000.0);
-            }
-        }
-    }
-    if let Some(s) = t.as_string() {
-        // Node parses date strings; accept them through the platform parser.
-        if let Ok(text) = s.to_string() {
-            if let Ok(ms) = text.parse::<f64>() {
-                return Ok(ms / 1000.0);
-            }
-        }
-    }
-    Err(Exception::throw_type(ctx, "time must be a number or Date"))
+    fd_sync::utimes_value_to_secs(ctx, t)
 }
 
 fn utimes_async<'js>(
@@ -886,8 +1772,6 @@ fn lutimes_async<'js>(
 
 /// `fs.promises.opendir(path)` — a `Dir` over the directory's entries.
 async fn opendir<'js>(ctx: Ctx<'js>, path: String) -> Result<Value<'js>> {
-    // `readdir(..., { withFileTypes: true })` already yields Dirents, so the
-    // entries come from one implementation rather than a second walker.
     let opts = Object::new(ctx.clone())?;
     opts.set("withFileTypes", true)?;
     let entries: Value = read_dir(ctx.clone(), path.clone(), Opt(Some(opts)))
@@ -897,103 +1781,20 @@ async fn opendir<'js>(ctx: Ctx<'js>, path: String) -> Result<Value<'js>> {
     let Some(ctor) = ctor.as_constructor().cloned() else {
         return Err(Exception::throw_message(&ctx, "fs.Dir is not registered"));
     };
-    let dir: Value = ctor.construct((path, entries))?;
-    Ok(dir)
+    ctor.construct((path, entries))
 }
 
-/// `fs.promises.cp(src, dest[, options])` — recursive copy.
-///
-/// Node's `cp` is a full recursive copier with filter/verbatimSymlinks
-/// options; this covers the common `recursive: true` form plus `force`, and
-/// reports a clear error for the options it does not implement rather than
-/// silently ignoring them.
-async fn copy_tree<'js>(
-    ctx: Ctx<'js>,
-    src: String,
-    dest: String,
-    options: Opt<Value<'js>>,
-) -> Result<()> {
-    let recursive = options
-        .0
-        .as_ref()
-        .and_then(|v| v.as_object())
-        .and_then(|o| o.get::<_, Option<bool>>("recursive").ok().flatten())
-        .unwrap_or(false);
-    let force = options
-        .0
-        .as_ref()
-        .and_then(|v| v.as_object())
-        .and_then(|o| o.get::<_, Option<bool>>("force").ok().flatten())
-        .unwrap_or(true);
-    if options
-        .0
-        .as_ref()
-        .and_then(|v| v.as_object())
-        .and_then(|o| o.get::<_, Option<Value>>("filter").ok().flatten())
-        .is_some()
-    {
-        return Err(Exception::throw_message(
-            &ctx,
-            "fs.cp: the `filter` option is not supported",
-        ));
-    }
-
-    let src_path = std::path::PathBuf::from(&src);
-    let meta = tokio::fs::metadata(&src_path)
-        .await
-        .or_throw_msg(&ctx, &format!("cp {src}"))?;
-
-    if meta.is_dir() {
-        if !recursive {
-            return Err(Exception::throw_message(
-                &ctx,
-                &format!("cp {src}: is a directory (use recursive: true)"),
-            ));
-        }
-        copy_dir_recursive(ctx, src_path, std::path::PathBuf::from(&dest), force).await
-    } else {
-        if force || !std::path::Path::new(&dest).exists() {
-            tokio::fs::copy(&src, &dest)
-                .await
-                .or_throw_msg(&ctx, &format!("cp {src} -> {dest}"))?;
-        }
-        Ok(())
-    }
-}
-
-async fn copy_dir_recursive<'js>(
-    ctx: Ctx<'js>,
-    src: std::path::PathBuf,
-    dest: std::path::PathBuf,
-    force: bool,
-) -> Result<()> {
-    tokio::fs::create_dir_all(&dest)
-        .await
-        .or_throw_msg(&ctx, &format!("cp: mkdir {}", dest.display()))?;
-    let mut rd = tokio::fs::read_dir(&src)
-        .await
-        .or_throw_msg(&ctx, &format!("cp: readdir {}", src.display()))?;
-    while let Some(entry) = rd
-        .next_entry()
-        .await
-        .or_throw_msg(&ctx, &format!("cp: readdir {}", src.display()))?
-    {
-        let name = entry.file_name();
-        let from = entry.path();
-        let to = dest.join(&name);
-        let file_type = entry
-            .file_type()
-            .await
-            .or_throw_msg(&ctx, &format!("cp: stat {}", from.display()))?;
-        if file_type.is_dir() {
-            Box::pin(copy_dir_recursive(ctx.clone(), from, to, force)).await?;
-        } else if force || !to.exists() {
-            tokio::fs::copy(&from, &to)
-                .await
-                .or_throw_msg(&ctx, &format!("cp {} -> {}", from.display(), to.display()))?;
-        }
-    }
-    Ok(())
+/// `fs.opendirSync(path)`.
+fn opendir_sync<'js>(ctx: Ctx<'js>, path: String) -> Result<Value<'js>> {
+    let opts = Object::new(ctx.clone())?;
+    opts.set("withFileTypes", true)?;
+    let entries: Value =
+        read_dir_sync(ctx.clone(), path.clone(), Opt(Some(opts)))?.into_js(&ctx)?;
+    let ctor: Value = ctx.globals().get("__lexeFsDirClass")?;
+    let Some(ctor) = ctor.as_constructor().cloned() else {
+        return Err(Exception::throw_message(&ctx, "fs.Dir is not registered"));
+    };
+    ctor.construct((path, entries))
 }
 
 pub use self::constants::{create_constants, visit_fs_constants};

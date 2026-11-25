@@ -18,8 +18,8 @@
 | node:dns | ✔︎ | ✔︎⚠️ | Exports `lookup` and `promises.lookup` only; missing `Resolver`, `resolve*`, `reverse`, `lookupService`, and server/order settings ([details](#nodedns-and-nodednspromises)) |
 | node:dns/promises | ✔︎ | ✔︎⚠️ | Exports `lookup` only; missing `Resolver` and `resolve*`/`reverse`/`lookupService` ([details](#nodedns-and-nodednspromises)) |
 | node:events | ✔︎ | ✔︎ | — |
-| node:fs | ✔︎ | ✔︎⚠️ | Missing callback `unlink`/`chmod`/`read`/`write`, `copyFile*`, `cpSync`, `globSync`, `opendirSync`, `statfsSync`, `watchFile`, `openAsBlob`, and `BigIntStats` ([details](#nodefs-and-nodefspromises)) |
-| node:fs/promises | ✔︎ | ✔︎⚠️ | Missing `unlink`, `copyFile`, `watch`, `lchmod`, `openAsBlob`, and `BigIntStats` ([details](#nodefs-and-nodefspromises)) |
+| node:fs | ✔︎ | ✔︎ | — |
+| node:fs/promises | ✔︎ | ✔︎ | — |
 | node:http | ✔︎ | ✔︎⚠️ | Minimal `ClientRequest` (no header/timeout/socket setters); `Server` rejects `insecureHTTPParser` and lacks some HTTP/1.1 lifecycle APIs ([details](#nodehttp-and-nodehttps)) |
 | node:http2 | ✔︎ | ✔︎ | Native HTTP/2 ([notes](#nodehttp2)) |
 | node:https | ✔︎ | ✔︎⚠️ | Exports `Agent`, `createServer`, `get`, `request` only (no `Server`/`globalAgent`); inherits `node:http` and `node:tls` limits; requires TLS feature build ([details](#nodehttp-and-nodehttps)) |
@@ -131,16 +131,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Only `dns.lookup()` and `dns.promises.lookup()` (exposed by `node:dns/promises`) are implemented.
 - Missing `Resolver`, `lookupService()`, `reverse()`, all `resolve*()` record methods (`resolve`, `resolve4`, `resolve6`, `resolveAny`, `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNaptr`, `resolveNs`, `resolvePtr`, `resolveSoa`, `resolveSrv`, `resolveTxt`), `getServers()`/`setServers()`, `getDefaultResultOrder()`/`setDefaultResultOrder()`, and lookup flag constants (`ADDRCONFIG`, `V4MAPPED`, `ALL`).
-
-#### `node:fs` and `node:fs/promises`
-
-- Missing in `node:fs`: callback `unlink` (only `unlinkSync` exists), callback `chmod` (only `chmodSync` and `fs/promises.chmod` exist), `copyFile`/`copyFileSync`, `cpSync`, `globSync`, `opendirSync`, `statfsSync`, callback `read`/`write` (only `readSync`/`writeSync` and `readv`/`writev` exist), `fchown`/`fchownSync`, `lchmod`/`lchmodSync`, sync fd variants (`fchmodSync`, `fdatasyncSync`, `fsyncSync`, `ftruncateSync`, `futimesSync`, `readvSync`, `writevSync`), `watchFile`/`unwatchFile`, and `openAsBlob`.
-- Missing in `node:fs/promises`: `unlink`, `copyFile`, `watch`, `lchmod`, and `openAsBlob`.
-- `{ bigint: true }` (`BigIntStats`) on `stat`/`lstat`/`fstat` is not supported and throws `TypeError`.
-- `fs.cp` does not support the `{ filter }` option.
-- `createReadStream`/`createWriteStream` do not support `fd`, `signal` (`AbortSignal`), custom `fs` providers, or `autoClose: false`.
-- `FileHandle` does not support `position: -1`, and `FileHandle.utimes()` is unsupported.
-- On Windows, `access`/`accessSync` approximate permissions from file metadata rather than ACLs, and `existsSync()` returns `false` on any metadata error (including permission errors).
 
 #### `node:http` and `node:https`
 

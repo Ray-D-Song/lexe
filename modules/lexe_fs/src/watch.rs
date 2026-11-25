@@ -125,7 +125,11 @@ impl<'js> FSWatcher<'js> {
 
         let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
         let rt_key = event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
-        let loop_ref = EventLoopRef::new_referenced(rt_key);
+        let loop_ref = EventLoopRef::new_referenced_named(rt_key, "FSWatcher");
+        if !options.persistent {
+            loop_ref.unreference();
+        }
+        let encoding_is_buffer = options.encoding.as_deref() == Some("buffer");
 
         let instance = Class::instance(
             ctx.clone(),
@@ -169,7 +173,12 @@ impl<'js> FSWatcher<'js> {
                                 filename,
                             } => {
                                 let event_type = event_type.into_js(&ctx_for_task)?;
-                                let filename = filename.into_js(&ctx_for_task)?;
+                                let filename = match (encoding_is_buffer, filename) {
+                                    (true, Some(name)) => {
+                                        lexe_buffer::Buffer(name.into_bytes()).into_js(&ctx_for_task)?
+                                    },
+                                    (_, other) => other.into_js(&ctx_for_task)?,
+                                };
                                 Self::emit_str(
                                     instance_for_task.clone(),
                                     &ctx_for_task,
@@ -204,30 +213,55 @@ impl<'js> FSWatcher<'js> {
             return false;
         }
         borrow.watcher.take();
+        borrow.loop_ref.unreference();
         true
     }
 }
 
-#[derive(Default)]
 struct WatchOptions {
     recursive: bool,
+    persistent: bool,
+    encoding: Option<String>,
+}
+
+impl Default for WatchOptions {
+    fn default() -> Self {
+        Self {
+            recursive: false,
+            persistent: true,
+            encoding: None,
+        }
+    }
 }
 
 pub fn watch<'js>(
     ctx: Ctx<'js>,
-    path: String,
+    path: Value<'js>,
     options_or_listener: Opt<Value<'js>>,
     listener: Opt<Function<'js>>,
 ) -> Result<Class<'js, FSWatcher<'js>>> {
+    let path = crate::realpath::path_from_value(&ctx, path)?;
     let mut options = WatchOptions::default();
     let mut listener = listener.0;
+    let mut signal: Option<rquickjs::Object<'js>> = None;
 
     if let Some(value) = options_or_listener.0 {
         if let Some(function) = value.as_function() {
             listener = Some(function.clone());
+        } else if let Some(s) = value.as_string() {
+            options.encoding = Some(s.to_string()?);
         } else if let Some(object) = value.as_object() {
             options.recursive = object.get("recursive").unwrap_or_default();
-        } else if !value.is_undefined() && !value.is_null() && !value.is_string() {
+            if let Ok(Some(persistent)) = object.get::<_, Option<bool>>("persistent") {
+                options.persistent = persistent;
+            }
+            if let Ok(Some(enc)) = object.get::<_, Option<String>>("encoding") {
+                options.encoding = Some(enc);
+            }
+            if let Ok(Some(sig)) = object.get::<_, Option<rquickjs::Object>>("signal") {
+                signal = Some(sig);
+            }
+        } else if !value.is_undefined() && !value.is_null() {
             return Err(Exception::throw_type(
                 &ctx,
                 "The \"options\" argument must be an object, string, or function.",
@@ -235,7 +269,40 @@ pub fn watch<'js>(
         }
     }
 
-    FSWatcher::new(ctx, path, options, listener)
+    let watcher = FSWatcher::new(ctx.clone(), path, options, listener)?;
+    if let Some(sig) = signal {
+        let wire: Function<'js> = ctx.eval(
+            r#"(function(watcher, signal) {
+  function abortErr() {
+    const err = new Error("The operation was aborted", { cause: signal.reason });
+    err.name = "AbortError";
+    err.code = "ABORT_ERR";
+    return err;
+  }
+  if (signal.aborted) {
+    queueMicrotask(() => {
+      watcher.emit("error", abortErr());
+      watcher.close();
+    });
+    return;
+  }
+  const onAbort = () => {
+    watcher.emit("error", abortErr());
+    watcher.close();
+  };
+  if (typeof signal.addEventListener === "function") {
+    signal.addEventListener("abort", onAbort, { once: true });
+    watcher.once("close", () => {
+      if (typeof signal.removeEventListener === "function") {
+        signal.removeEventListener("abort", onAbort);
+      }
+    });
+  }
+})"#,
+        )?;
+        wire.call::<_, ()>((watcher.clone(), sig))?;
+    }
+    Ok(watcher)
 }
 
 fn base_path(path: &Path) -> PathBuf {

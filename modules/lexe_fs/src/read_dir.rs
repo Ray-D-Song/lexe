@@ -21,6 +21,13 @@ pub struct Dirent {
     metadata: Metadata,
 }
 
+impl Dirent {
+    #[allow(dead_code)]
+    pub(crate) fn new(metadata: Metadata) -> Self {
+        Self { metadata }
+    }
+}
+
 #[rquickjs::methods(rename_all = "camelCase")]
 impl Dirent {
     pub fn is_file(&self) -> bool {

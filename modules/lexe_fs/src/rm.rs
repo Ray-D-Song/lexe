@@ -1,8 +1,25 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+use crate::errors::throw_fs_error;
 use lexe_utils::result::ResultExt;
 use rquickjs::{function::Opt, Ctx, Object, Result};
 use tokio::fs;
+
+/// `fs.promises.unlink(path)`.
+pub async fn unlink(ctx: Ctx<'_>, path: String) -> Result<()> {
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
+    fs::remove_file(&path)
+        .await
+        .map_err(|err| throw_fs_error(&ctx, err, "unlink", &path))?;
+    Ok(())
+}
+
+/// `fs.unlinkSync(path)`.
+pub fn unlink_sync(ctx: Ctx<'_>, path: String) -> Result<()> {
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
+    std::fs::remove_file(&path).map_err(|err| throw_fs_error(&ctx, err, "unlink", &path))?;
+    Ok(())
+}
 
 #[allow(clippy::manual_async_fn)]
 pub async fn rmdir<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<()> {

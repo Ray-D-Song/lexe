@@ -509,85 +509,15 @@ Lightweight and fast hash classes for lexe.
 
 ## fs
 
-[access](https://nodejs.org/api/fs.html#fsaccesspath-mode-callback)
-
-[accessSync](https://nodejs.org/api/fs.html#fsaccesssyncpath-mode)
-
-[constants](https://nodejs.org/api/fs.html#file-access-constants)
-
-[existsSync](https://nodejs.org/api/fs.html#fsexistssyncpath)
-
-[lstat](https://nodejs.org/api/fs.html#fslstatpath-options-callback)
-
-[lstatSync](https://nodejs.org/api/fs.html#fslstatsyncpath-options)
-
-[mkdirSync](https://nodejs.org/api/fs.html#fsmkdirsyncpath-options)
-
-[mkdtempSync](https://nodejs.org/api/fs.html#fsmkdtempsyncprefix-options)
-
-[readdirSync](https://nodejs.org/api/fs.html#fsreaddirsyncpath-options)
-
-[readFileSync](https://nodejs.org/api/fs.html#fsreadfilesyncpath-options)
-
-[rmdirSync](https://nodejs.org/api/fs.html#fsrmdirsyncpath-options)
-
-[rmSync](https://nodejs.org/api/fs.html#fsrmsyncpath-options)
-
-[stat](https://nodejs.org/api/fs.html#fsstatpath-options-callback)
-
-[statSync](https://nodejs.org/api/fs.html#fsstatsyncpath-options)
-
-[writeFileSync](https://nodejs.org/api/fs.html#fswritefilesyncfile-data-options)
-
-[chmodSync](https://nodejs.org/api/fs.html#fschmodsyncpath-mode)
-
-[renameSync](https://nodejs.org/api/fs.html#fsrenamesyncoldpath-newpath)
-
-[symlinkSync](https://nodejs.org/api/fs.html#fssymlinksynctarget-path-type)
-
-[realpathSync](https://nodejs.org/api/fs.html#fsrealpathsyncpath-options)
-
-[realpath](https://nodejs.org/api/fs.html#fsrealpathpath-options-callback)
+Supports the full Node.js `node:fs` synchronous, callback, stream, directory, and watcher APIs: `access`/`accessSync`, `appendFile`/`appendFileSync`, `chmod`/`chmodSync`, `chown`/`chownSync`, `close`/`closeSync`, `constants`, `copyFile`/`copyFileSync`, `cp`/`cpSync` (including `filter`, `errorOnExist`, `preserveTimestamps`, `dereference`, `verbatimSymlinks`), `createReadStream`/`createWriteStream` (including `fd`, `FileHandle`, `signal`, custom `fs`, `autoClose`, `emitClose`), `exists`/`existsSync`, `fchmod`/`fchmodSync`, `fchown`/`fchownSync`, `fdatasync`/`fdatasyncSync`, `fstat`/`fstatSync`, `fsync`/`fsyncSync`, `ftruncate`/`ftruncateSync`, `futimes`/`futimesSync`, `glob`/`globSync`, `lchmod`/`lchmodSync`, `lchown`/`lchownSync`, `link`/`linkSync`, `lstat`/`lstatSync`, `lutimes`/`lutimesSync`, `mkdir`/`mkdirSync`, `mkdtemp`/`mkdtempSync`, `open`/`openAsBlob`/`openSync`, `opendir`/`opendirSync`, `read`/`readSync`, `readFile`/`readFileSync`, `readdir`/`readdirSync`, `readlink`/`readlinkSync`, `readv`/`readvSync`, `realpath`/`realpathSync` (and `.native`), `rename`/`renameSync`, `rm`/`rmSync`, `rmdir`/`rmdirSync`, `stat`/`statSync` (including `{ bigint: true }` `BigIntStats` and `{ throwIfNoEntry: false }`), `statfs`/`statfsSync`, `symlink`/`symlinkSync`, `truncate`/`truncateSync`, `unlink`/`unlinkSync`, `utimes`/`utimesSync`, `watch`, `watchFile`/`unwatchFile`, `write`/`writeSync`, `writeFile`/`writeFileSync`, `writev`/`writevSync`, plus classes `Stats`, `BigIntStats`, `Dirent`, `Dir`, `FileHandle`, `FSWatcher`, `ReadStream`/`FileReadStream`, `WriteStream`/`FileWriteStream`.
 
 > [!NOTE]
-> Callback `stat`/`lstat` reject `{ bigint: true }` with a clear error (BigIntStats is not supported).
-> `existsSync` returns `false` for any `metadata` failure, including permission errors.
 > On Unix, `access` / `accessSync` / `fs.promises.access` use the OS `access(2)` syscall.
-> On Windows, checks are metadata-based approximations (existence + readonly for `W_OK`).
+> On Windows, permission checks are metadata-based approximations matching libuv behavior.
 
 ## fs/promises
 
-[access](https://nodejs.org/api/fs.html#fspromisesaccesspath-mode)
-
-[constants](https://nodejs.org/api/fs.html#file-access-constants)
-
-[lstat](https://nodejs.org/api/fs.html#fspromiseslstatpath-options)
-
-[mkdir](https://nodejs.org/api/fs.html#fsmkdirpath-options-callback)
-
-[mkdtemp](https://nodejs.org/api/fs.html#fsmkdtempprefix-options-callback)
-
-[open](https://nodejs.org/api/fs.html#fspromisesopenpath-flags-mode)
-
-[readdir](https://nodejs.org/api/fs.html#fspromisesreaddirpath-options)
-
-[readFile](https://nodejs.org/api/fs.html#filehandlereadfileoptions)
-
-[rm](https://nodejs.org/api/fs.html#fsrmpath-options-callback)
-
-[rmdir](https://nodejs.org/api/fs.html#fsrmdirpath-options-callback)
-
-[stat](https://nodejs.org/api/fs.html#fsstatpath-options-callback)
-
-[writeFile](https://nodejs.org/api/fs.html#fspromiseswritefilefile-data-options)
-
-[chmod](https://nodejs.org/api/fs.html#fspromiseschmodpath-mode)
-
-[rename](https://nodejs.org/api/fs.html#fspromisesrenameoldpath-newpath)
-
-[symlink](https://nodejs.org/api/fs.html#fspromisessymlinktarget-path-type)
-
-[realpath](https://nodejs.org/api/fs.html#fspromisesrealpathpath-options)
+Supports all Node.js `node:fs/promises` APIs: `access`, `appendFile`, `chmod`, `chown`, `constants`, `copyFile`, `cp`, `glob`, `lchmod`, `lchown`, `link`, `lstat`, `lutimes`, `mkdir`, `mkdtemp`, `open`, `opendir`, `readFile`, `readdir`, `readlink`, `realpath`, `rename`, `rm`, `rmdir`, `stat`, `statfs`, `symlink`, `truncate`, `unlink`, `utimes`, `watch` (`AsyncIterable`), `writeFile`, and `FileHandle` (`appendFile`, `chmod`, `chown`, `close`, `createReadStream`, `createWriteStream`, `datasync`, `fd`, `read`, `readFile`, `readv`, `stat`, `sync`, `truncate`, `utimes`, `write`, `writeFile`, `writev`, including `{ bigint: true }` and `position: -1`).
 
 ## http
 
