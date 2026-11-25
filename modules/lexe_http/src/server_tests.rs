@@ -35,8 +35,12 @@ async fn exposes_http_and_node_http() {
                     && STATUS_CODES[200] === 'OK'
                     && STATUS_CODES[418] === "I'm a teapot"
                     && !('Socket' in http)
-                    && (() => { const s = http.createServer({ maxHeadersCount: 12, headersTimeout: 34, requestTimeout: 56, keepAliveTimeout: 78 }); return s.maxHeadersCount === 12 && s.headersTimeout === 34 && s.requestTimeout === 56 && s.keepAliveTimeout === 78; })()
-                    && (() => { try { http.createServer({ insecureHTTPParser: true }); return false; } catch { return true; } })();
+                    && (() => { const s = http.createServer({ maxHeadersCount: 12, headersTimeout: 34, requestTimeout: 56, keepAliveTimeout: 78, maxRequestsPerSocket: 4, insecureHTTPParser: true }); return s.maxHeadersCount === 12 && s.headersTimeout === 34 && s.requestTimeout === 56 && s.keepAliveTimeout === 78 && s.maxRequestsPerSocket === 4 && s.insecureHTTPParser === true; })()
+                    && METHODS.length === 35
+                    && METHODS.includes('MKCALENDAR')
+                    && http.maxHeaderSize === 16384
+                    && typeof http.OutgoingMessage === 'function'
+                    && typeof http.setMaxIdleHTTPParsers === 'function';
                 }
             "#).await.unwrap();
             let ok: bool = call_test(&ctx, &module, ()).await;
@@ -1021,6 +1025,219 @@ async fn https_create_server_serves_over_tls() {
             tls.read_to_end(&mut response).await.unwrap();
             let response = String::from_utf8_lossy(&response);
             assert!(response.contains("tls-ok"), "{response}");
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn lenient_parser_accepts_bare_lf_multi_space_ctl_headers_and_obs_fold() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    test_async_with(|ctx| {
+        Box::pin(async move {
+            eval_http_module(ctx.clone()).await;
+            let module = ModuleEvaluator::eval_js(
+                ctx.clone(),
+                "test",
+                r#"
+                import { createServer } from 'http';
+                export function test() {
+                  const server = createServer({ insecureHTTPParser: true }, (req, res) => {
+                    const out = JSON.stringify({
+                      method: req.method,
+                      url: req.url,
+                      ctl: req.headers['x-ctl'],
+                      fold: req.headers['x-fold'],
+                      rawLen: req.rawHeaders.length,
+                    });
+                    res.end(out);
+                  });
+                  server.listen(0, '127.0.0.1');
+                  return new Promise(resolve => server.once('listening', () => resolve(server.address().port)));
+                }
+            "#,
+            )
+            .await
+            .unwrap();
+            let port: u16 = call_test(&ctx, &module, ()).await;
+            let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            socket
+                .write_all(
+                    b"GET  /lenient  HTTP/1.1\nHost: localhost\nX-Ctl: a\x01b\nX-Fold: one\n two\nConnection: close\n\n",
+                )
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            socket.read_to_end(&mut response).await.unwrap();
+            let response = String::from_utf8(response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+            assert!(response.contains("\"url\":\"/lenient\""), "{response}");
+            assert!(response.contains("\"ctl\":\"a\\u0001b\""), "{response}");
+            assert!(response.contains("\"fold\":\"one two\""), "{response}");
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn lenient_parser_rejects_space_before_colon_with_invalid_header_token() {
+    use tokio::io::AsyncWriteExt;
+
+    test_async_with(|ctx| {
+        Box::pin(async move {
+            eval_http_module(ctx.clone()).await;
+            let module = ModuleEvaluator::eval_js(
+                ctx.clone(),
+                "test",
+                r#"
+                import { createServer } from 'http';
+                export function test() {
+                  const server = createServer({ insecureHTTPParser: true }, () => {});
+                  server.on('clientError', error => { globalThis.lenientErrCode = error.code; });
+                  server.listen(0, '127.0.0.1');
+                  return new Promise(resolve => server.once('listening', () => resolve(server.address().port)));
+                }
+                export function errorCode() { return globalThis.lenientErrCode; }
+            "#,
+            )
+            .await
+            .unwrap();
+            let port: u16 = call_test(&ctx, &module, ()).await;
+            let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            socket
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nX-Bad : val\r\n\r\n")
+                .await
+                .unwrap();
+            drop(socket);
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let error_code: Function = module.get("errorCode").unwrap();
+            let code: String = error_code.call(()).unwrap();
+            assert_eq!(code, "HPE_INVALID_HEADER_TOKEN");
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn server_response_write_early_hints_and_processing() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    test_async_with(|ctx| {
+        Box::pin(async move {
+            eval_http_module(ctx.clone()).await;
+            let module = ModuleEvaluator::eval_js(
+                ctx.clone(),
+                "test",
+                r#"
+                import { createServer } from 'http';
+                export function test() {
+                  const server = createServer((_req, res) => {
+                    res.writeEarlyHints(
+                      { link: ['</a.css>; rel=preload; as=style', '</b.js>; rel=preload; as=script'], 'x-hint': 'yes' },
+                      () => {
+                        res.writeProcessing(() => {
+                          res.writeHead(200, { 'content-type': 'text/plain' });
+                          res.end('final');
+                        });
+                      }
+                    );
+                  });
+                  server.listen(0, '127.0.0.1');
+                  return new Promise(resolve => server.once('listening', () => resolve(server.address().port)));
+                }
+            "#,
+            )
+            .await
+            .unwrap();
+            let port: u16 = call_test(&ctx, &module, ()).await;
+            let mut socket = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            socket
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut response = Vec::new();
+            socket.read_to_end(&mut response).await.unwrap();
+            let response = String::from_utf8(response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 103 Early Hints\r\n"), "{response}");
+            assert!(response.contains("Link: </a.css>; rel=preload; as=style, </b.js>; rel=preload; as=script"), "{response}");
+            assert!(response.contains("x-hint: yes"), "{response}");
+            assert!(response.contains("HTTP/1.1 102 Processing\r\n\r\n"), "{response}");
+            assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
+            assert!(response.contains("final"), "{response}");
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn server_check_expectation_and_max_requests_per_socket() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    test_async_with(|ctx| {
+        Box::pin(async move {
+            eval_http_module(ctx.clone()).await;
+            let module = ModuleEvaluator::eval_js(
+                ctx.clone(),
+                "test",
+                r#"
+                import { createServer } from 'http';
+                export function test() {
+                  globalThis.droppedUrls = [];
+                  const sExpectDefault = createServer((_req, res) => res.end('wrong'));
+                  sExpectDefault.listen(0, '127.0.0.1');
+
+                  const sMax = createServer({ maxRequestsPerSocket: 1 }, (req, res) => res.end('ok:' + req.url));
+                  sMax.on('dropRequest', (req) => globalThis.droppedUrls.push(req.url));
+                  sMax.listen(0, '127.0.0.1');
+
+                  return new Promise(resolve => {
+                    sExpectDefault.once('listening', () => {
+                      sMax.once('listening', () => resolve([sExpectDefault.address().port, sMax.address().port]));
+                    });
+                  });
+                }
+                export function getDropped() { return globalThis.droppedUrls; }
+            "#,
+            )
+            .await
+            .unwrap();
+            let ports: Vec<u16> = call_test(&ctx, &module, ()).await;
+
+            // Default Expect -> 417
+            let mut s1 = tokio::net::TcpStream::connect(("127.0.0.1", ports[0]))
+                .await
+                .unwrap();
+            s1.write_all(b"POST / HTTP/1.1\r\nHost: localhost\r\nExpect: custom\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let mut r1 = Vec::new();
+            s1.read_to_end(&mut r1).await.unwrap();
+            let r1 = String::from_utf8(r1).unwrap();
+            assert!(r1.starts_with("HTTP/1.1 417"), "{r1}");
+
+            // maxRequestsPerSocket = 1 -> first 200 with Connection: close, second -> 503 + dropRequest
+            let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", ports[1]))
+                .await
+                .unwrap();
+            s2.write_all(b"GET /one HTTP/1.1\r\nHost: localhost\r\n\r\nGET /two HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .await
+                .unwrap();
+            let mut r2 = Vec::new();
+            s2.read_to_end(&mut r2).await.unwrap();
+            let r2 = String::from_utf8(r2).unwrap();
+            assert!(r2.contains("ok:/one"), "{r2}");
+            assert!(r2.to_ascii_lowercase().contains("connection: close"), "{r2}");
+            assert!(r2.contains("HTTP/1.1 503"), "{r2}");
+            let get_dropped: Function = module.get("getDropped").unwrap();
+            let dropped: Vec<String> = get_dropped.call(()).unwrap();
+            assert_eq!(dropped, vec!["/two".to_string()]);
         })
     })
     .await;

@@ -75,6 +75,7 @@ hyper-openssl = { version = "0.10", features = [
 openssl = { version = "0.10", optional = true }
 lexe_async_hooks = { version = "0.1.1", path = "../lexe_async_hooks" }
 lexe_dns_cache = { version = "0.1.1", path = "../../libs/lexe_dns_cache" }
+lexe_encoding = { version = "0.1.1", path = "../../libs/lexe_encoding" }
 lexe_tls = { version = "0.1.1", default-features = false, path = "../lexe_tls" }
 lexe_timers = { version = "0.1.1", path = "../lexe_timers" }
 lexe_utils = { version = "0.1.1", path = "../../libs/lexe_utils", default-features = false }

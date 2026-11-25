@@ -62,6 +62,9 @@ impl<'js> Trace<'js> for Server<'js> {
         for socket_ref in self.sockets.iter() {
             socket_ref.trace(tracer);
         }
+        if let Some(http_server) = self.http_handoff_http_server.borrow().as_ref() {
+            http_server.trace(tracer);
+        }
     }
 }
 
@@ -159,6 +162,11 @@ impl<'js> Server<'js> {
 
     pub fn address(&self) -> Value<'js> {
         self.address.clone()
+    }
+
+    #[qjs(get, enumerable)]
+    pub fn listening(&self) -> bool {
+        self.already_listen.load(Ordering::Relaxed)
     }
 
     pub fn get_connections(&self, cb: Opt<Function<'js>>) -> Result<()> {
@@ -355,6 +363,10 @@ impl<'js> Server<'js> {
 impl<'js> Server<'js> {
     pub fn set_http_handoff_target(this: Class<'js, Self>, http_server: Value<'js>) {
         *this.borrow().http_handoff_http_server.borrow_mut() = Some(http_server);
+    }
+
+    pub fn is_listening(&self) -> bool {
+        self.already_listen.load(Ordering::Relaxed)
     }
 
     async fn bind(

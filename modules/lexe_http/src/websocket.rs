@@ -380,7 +380,7 @@ impl<'js> WebSocket<'js> {
     }
 
     /// Convert a binary payload according to the socket's `binaryType`.
-    fn binary_payload<'a>(
+    fn binary_payload(
         this: &Class<'js, Self>,
         ctx: &Ctx<'js>,
         bytes: Vec<u8>,
@@ -564,15 +564,16 @@ enum Ended {
         code: u16,
         reason: String,
     },
+    #[allow(clippy::enum_variant_names)]
     TransportEnded,
 }
 
 fn is_clean_disconnect(err: &fastwebsockets::WebSocketError) -> bool {
-    match err {
-        fastwebsockets::WebSocketError::ConnectionClosed => true,
-        fastwebsockets::WebSocketError::UnexpectedEOF => true,
-        _ => false,
-    }
+    matches!(
+        err,
+        fastwebsockets::WebSocketError::ConnectionClosed
+            | fastwebsockets::WebSocketError::UnexpectedEOF
+    )
 }
 
 fn header_contains(headers: &header::HeaderMap, name: header::HeaderName, value: &str) -> bool {

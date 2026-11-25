@@ -523,11 +523,15 @@ Supports all Node.js `node:fs/promises` APIs: `access`, `appendFile`, `chmod`, `
 
 ## http
 
-> `http.Server` supports Node-compatible `ref()` / `unref()` on the listen handle (same event-loop semantics as `net.Server`). `https.createServer` wraps `tls.createServer` and hands decrypted sockets to an internal `http.Server` (Node-style).
+Supports Node.js-compatible `node:http` APIs:
+
+- Server & Lifecycle: [Server](https://nodejs.org/api/http.html#class-httpserver), [createServer](https://nodejs.org/api/http.html#httpcreateserveroptions-requestlistener) (TCP, Unix domain sockets, and Windows named pipes), [IncomingMessage](https://nodejs.org/api/http.html#class-httpincomingmessage), [OutgoingMessage](https://nodejs.org/api/http.html#class-httpoutgoingmessage), [ServerResponse](https://nodejs.org/api/http.html#class-httpserverresponse) (`writeHead`, `writeEarlyHints`, `writeProcessing`, `writeContinue`, `strictContentLength`, `setHeader`/`appendHeader`/`getHeader`/`getHeaderNames`/`getRawHeaderNames`/`getHeaders`/`hasHeader`/`removeHeader`/`setHeaders`, `addTrailers`, `flushHeaders`, `req`, `socket`, `connection`, `setTimeout`), `checkContinue`, `checkExpectation`, `clientError`, `upgrade`, `connect`, `drop`, `dropRequest`, `maxRequestsPerSocket`, `maxConnections`, `maxHeadersCount`, `headersTimeout`, `requestTimeout`, `keepAliveTimeout`, `timeout`, `setTimeout`, `closeAllConnections`, `closeIdleConnections`, `ref`/`unref`, and `insecureHTTPParser`.
+- Client & WebSocket: [request](https://nodejs.org/api/http.html#httprequesturl-options-callback), [get](https://nodejs.org/api/http.html#httpgeturl-options-callback), [ClientRequest](https://nodejs.org/api/http.html#class-httpclientrequest) (header manipulation, `flushHeaders` streaming, `setTimeout`/`clearTimeout`, `setNoDelay`, `setSocketKeepAlive`, `socket`/`connection`/`reusedSocket`/`path`/`method`/`host`/`protocol`/`maxHeadersCount`, `URL` objects, `auth`, `agent`, `signal`, and Unix `socketPath`), [Agent](https://nodejs.org/api/http.html#class-httpagent), `globalAgent`, and Node 22+ client [WebSocket](https://nodejs.org/api/http.html#class-websocket).
+- Module Constants & Helpers: all 35 `METHODS`, `STATUS_CODES`, `maxHeaderSize`, `setMaxIdleHTTPParsers`, `validateHeaderName`, and `validateHeaderValue`.
 
 ## https
 
-[Agent](https://nodejs.org/api/https.html#class-httpsagent)
+Supports [Agent](https://nodejs.org/api/https.html#class-httpsagent), `globalAgent`, [Server](https://nodejs.org/api/https.html#class-httpsserver), [createServer](https://nodejs.org/api/https.html#httpscreateserveroptions-requestlistener), [request](https://nodejs.org/api/https.html#httpsrequesturl-options-callback), and [get](https://nodejs.org/api/https.html#httpsgeturl-options-callback) (built atop `node:tls` and `node:http`).
 
 ## http2
 

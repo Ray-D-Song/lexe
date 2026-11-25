@@ -2209,6 +2209,7 @@ dependencies = [
  "lexe_buffer",
  "lexe_context",
  "lexe_dns_cache",
+ "lexe_encoding",
  "lexe_events",
  "lexe_net",
  "lexe_test",

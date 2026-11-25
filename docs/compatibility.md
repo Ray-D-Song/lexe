@@ -20,9 +20,9 @@
 | node:events | ✔︎ | ✔︎ | — |
 | node:fs | ✔︎ | ✔︎ | — |
 | node:fs/promises | ✔︎ | ✔︎ | — |
-| node:http | ✔︎ | ✔︎⚠️ | Minimal `ClientRequest` (no header/timeout/socket setters); `Server` rejects `insecureHTTPParser` and lacks some HTTP/1.1 lifecycle APIs ([details](#nodehttp-and-nodehttps)) |
+| node:http | ✔︎ | ✔︎ | — |
 | node:http2 | ✔︎ | ✔︎ | Native HTTP/2 ([notes](#nodehttp2)) |
-| node:https | ✔︎ | ✔︎⚠️ | Exports `Agent`, `createServer`, `get`, `request` only (no `Server`/`globalAgent`); inherits `node:http` and `node:tls` limits; requires TLS feature build ([details](#nodehttp-and-nodehttps)) |
+| node:https | ✔︎ | ✔︎⚠️ | Inherits `node:tls` limitations; requires TLS feature build ([details](#nodehttps)) |
 | node:inspector | ✔︎ | ✔︎⚠️ | Stub exporting `url()` (`undefined`) only; no Inspector protocol or `Session` ([details](#nodeinspector)) |
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
 | node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
@@ -127,12 +127,10 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Missing classic Node.js crypto APIs: `createCipheriv`/`createDecipheriv`, `createSign`/`createVerify`, top-level `sign`/`verify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `hkdf`/`hkdfSync`, `timingSafeEqual`, `KeyObject`, `createPrivateKey`/`createPublicKey`/`createSecretKey`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `X509Certificate`, `DiffieHellman`/`createDiffieHellman`, `ECDH`/`createECDH`, `getCiphers`, `getHashes`, and `crypto.hash()`. (Symmetric/asymmetric cipher, signature, and KDF operations are primarily provided through WebCrypto `subtle`.)
 - `publicEncrypt` / RSA-OAEP rejects `MD5`, and algorithm availability depends on the compiled TLS/crypto backend (for example, `graviola` lacks most operations).
 
-#### `node:http` and `node:https`
+#### `node:https`
 
-- `ClientRequest` only exposes `write()`, `end()`, `destroy()`, `abort()`, `aborted`, `destroyed`, and `EventEmitter` methods; missing `setHeader()`, `getHeader()`, `getHeaderNames()`, `getHeaders()`, `hasHeader()`, `removeHeader()`, `flushHeaders()`, `setTimeout()`, `setNoDelay()`, `setSocketKeepAlive()`, `socket`, `reusedSocket`, `path`, `method`, `host`, `protocol`, and `maxHeadersCount`.
-- `http.Server` rejects `insecureHTTPParser: true`, lacks `maxRequestsPerSocket`, `checkExpectation`, and `dropRequest` events, and does not support Unix domain sockets on Windows.
-- `ServerResponse` lacks `writeEarlyHints()` and `strictContentLength`.
-- `node:https` exports only `Agent`, `createServer`, `get`, and `request` (missing `Server` and `globalAgent`); `https.createServer()` throws unless built with a TLS feature (`tls-ring`, `tls-aws-lc`, `tls-graviola`, or `tls-openssl`), and inherits `node:http` and `node:tls` limitations.
+- `https.Server` wraps `tls.Server` and delegates HTTP lifecycle handling to `node:http`, so it inherits all `node:tls` limitations (missing `pfx`/custom `ciphers`/`crl`/PSK/OCSP/session reuse/async SNI/soft mTLS, TLS < 1.2 unsupported, no `renegotiate()`).
+- Requires building with a TLS feature (`tls-ring`, `tls-aws-lc`, `tls-graviola`, or `tls-openssl`); non-TLS builds stub out `createServer`/`get`/`request` and leave `Agent`/`Server`/`globalAgent` as `undefined`.
 
 #### `node:inspector`
 
