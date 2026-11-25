@@ -347,7 +347,7 @@ fn run_sync<'js>(
                     code.into_js(ctx)?,
                     Null.into_value(ctx.clone()),
                     Some(code),
-                    None,
+                    None::<String>,
                 )
             }
         },
