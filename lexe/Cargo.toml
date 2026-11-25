@@ -1,6 +1,6 @@
 [package]
 name = "lexe"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license-file = "LICENSE"
 build = "build.rs"
@@ -84,7 +84,7 @@ snmalloc-rs = { version = "0.7", features = [
 libc = "0.2"
 
 [dev-dependencies]
-lexe_test = { version = "0.1.1", path = "../libs/lexe_test" }
+lexe_test = { version = "0.1.2", path = "../libs/lexe_test" }
 
 [build-dependencies]
 cc = "1"

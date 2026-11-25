@@ -1,7 +1,7 @@
 [package]
 name = "lexe_os"
 description = "lexe Module OS"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -16,7 +16,7 @@ system = ["sysinfo/system"]
 
 [dependencies]
 home = { version = "0.5", default-features = false }
-lexe_utils = { version = "0.1.1", path = "../../libs/lexe_utils", default-features = false }
+lexe_utils = { version = "0.1.2", path = "../../libs/lexe_utils", default-features = false }
 num_cpus = { version = "1", default-features = false }
 once_cell = { version = "1", features = ["std"], default-features = false }
 rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
