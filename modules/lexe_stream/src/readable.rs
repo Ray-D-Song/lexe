@@ -78,6 +78,7 @@ pub struct ReadableStreamInner<'js> {
     high_water_mark: AtomicUsize,
     listener: Option<&'static str>,
     data_listener_attached_tx: Sender<()>,
+    paused: Arc<AtomicBool>,
     handoff_waiter: Arc<Mutex<Option<Box<dyn Any + Send>>>>,
     handoff_notify: Sender<()>,
 }
@@ -136,6 +137,7 @@ impl<'js> ReadableStreamInner<'js> {
             is_destroyed: false,
             emit_close,
             errored: false,
+            paused: Arc::new(AtomicBool::new(false)),
             handoff_waiter: Arc::new(Mutex::new(None)),
             handoff_notify,
         }
@@ -160,6 +162,11 @@ impl<'js> ReadableStreamInner<'js> {
         self.listener.is_some() || self.state == ReadableState::Flowing
     }
 
+    /// Park [`ReadableStream::process_callback_loop_duplex`] before reading more bytes.
+    pub fn pause_reading(&self) {
+        self.paused.store(true, Ordering::Release);
+    }
+
     /// Wake a parked [`ReadableStream::process_callback_loop_duplex`] reader.
     ///
     /// On the duplex path the JS `Duplex` owns buffering and backpressure, so
@@ -169,6 +176,7 @@ impl<'js> ReadableStreamInner<'js> {
     /// reads it only to clear its byte array, so sending here cannot change its
     /// behaviour.
     pub fn resume_reading(&self) {
+        self.paused.store(false, Ordering::Release);
         let _ = self.data_listener_attached_tx.send(());
     }
 }
@@ -350,6 +358,7 @@ where
             let is_ended = inner.is_ended;
             let mut is_destroyed = inner.is_destroyed;
             let mut resume_rx = inner.data_listener_attached_tx.subscribe();
+            let paused = inner.paused.clone();
             let ba_buffer = inner.buffer.clone();
             let handoff_waiter = inner.handoff_waiter.clone();
             let mut handoff_rx = inner.handoff_notify.subscribe();
@@ -376,6 +385,27 @@ where
                     'read: loop {
                         if !event_loop::keeps_event_loop_alive(&io_loop_ref) {
                             break;
+                        }
+
+                        while paused.load(Ordering::Acquire) {
+                            tokio::select! {
+                                error = destroy_rx.recv() => {
+                                    set_destroyed_and_error(&mut is_destroyed, &mut error_value, error);
+                                    break 'read;
+                                }
+                                _ = resume_rx.recv() => {},
+                                _ = handoff_rx.recv() => {
+                                    if complete_readable_handoff(
+                                        &mut reader,
+                                        &ba_buffer,
+                                        &mut buffer,
+                                        &handoff_waiter,
+                                    )? {
+                                        handoff_completed2.store(true, Ordering::SeqCst);
+                                        return Ok(());
+                                    }
+                                }
+                            }
                         }
 
                         tokio::select! {

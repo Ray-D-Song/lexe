@@ -7,15 +7,18 @@ use std::{
 };
 
 use lexe_events::Emitter;
+use lexe_stream::{readable::ReadableStream, writable::WritableStream};
 use lexe_utils::{
     module::{export_default, ModuleInfo},
     result::ResultExt,
 };
 use rquickjs::{
     module::{Declarations, Exports, ModuleDef},
-    prelude::{Func, Rest, This},
+    prelude::{Func, Opt, Rest, This},
     Class, Ctx, Exception, Function, IntoJs, Object, Result, Value,
 };
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions as NamedPipeServerOptions};
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::{
@@ -67,9 +70,29 @@ enum NetStream {
     Tcp((TcpStream, SocketAddr)),
     #[cfg(unix)]
     Unix((UnixStream, tokio::net::unix::SocketAddr)),
+    #[cfg(windows)]
+    NamedPipe(NamedPipeServer),
 }
 
 impl NetStream {
+    pub(crate) fn drop_info<'js>(&self, ctx: &Ctx<'js>) -> Result<Object<'js>> {
+        let obj = Object::new(ctx.clone())?;
+        if let NetStream::Tcp((stream, remote)) = self {
+            if let Ok(local) = stream.local_addr() {
+                obj.set("localAddress", local.ip().to_string())?;
+                obj.set("localPort", local.port())?;
+                obj.set("localFamily", if local.is_ipv4() { "IPv4" } else { "IPv6" })?;
+            }
+            obj.set("remoteAddress", remote.ip().to_string())?;
+            obj.set("remotePort", remote.port())?;
+            obj.set(
+                "remoteFamily",
+                if remote.is_ipv4() { "IPv4" } else { "IPv6" },
+            )?;
+        }
+        Ok(obj)
+    }
+
     async fn process<'js>(
         self,
         socket: &Class<'js, Socket<'js>>,
@@ -84,8 +107,13 @@ impl NetStream {
             NetStream::Unix((stream, _)) => {
                 Socket::process_unix_stream(socket, ctx, stream, allow_half_open)
             },
+            #[cfg(windows)]
+            NetStream::NamedPipe(pipe) => {
+                Socket::mark_connected(socket);
+                Socket::process_io(socket, ctx, pipe, allow_half_open)
+            },
         }?;
-        let join_result = rw_join(ctx, readable_done, writable_done).await;
+        let join_result = rw_join(ctx, socket, readable_done, writable_done).await;
         // Always release the control clone, including when join fails.
         socket.borrow_mut().tcp_control = None;
         let had_error = join_result?;
@@ -97,10 +125,15 @@ enum Listener {
     Tcp(TcpListener),
     #[cfg(unix)]
     Unix(UnixListener),
+    #[cfg(windows)]
+    NamedPipe {
+        path: String,
+        server: NamedPipeServer,
+    },
 }
 
 impl Listener {
-    async fn accept(&self, ctx: &Ctx<'_>) -> Result<NetStream> {
+    async fn accept(&mut self, ctx: &Ctx<'_>) -> Result<NetStream> {
         match self {
             Listener::Tcp(tcp) => tcp
                 .accept()
@@ -113,6 +146,15 @@ impl Listener {
                 .await
                 .map(|(stream, addr)| NetStream::Unix((stream, addr)))
                 .or_throw(ctx),
+            #[cfg(windows)]
+            Listener::NamedPipe { path, server } => {
+                server.connect().await.or_throw(ctx)?;
+                let next = NamedPipeServerOptions::new()
+                    .create(path.as_str())
+                    .or_throw(ctx)?;
+                let connected = std::mem::replace(server, next);
+                Ok(NetStream::NamedPipe(connected))
+            },
         }
     }
 }
@@ -133,12 +175,28 @@ pub fn get_address_parts(
     ))
 }
 
-async fn rw_join(
-    ctx: &Ctx<'_>,
-    readable_done: Receiver<bool>,
-    writable_done: Receiver<bool>,
+async fn rw_join<'js>(
+    ctx: &Ctx<'js>,
+    socket: &Class<'js, Socket<'js>>,
+    mut readable_done: Receiver<bool>,
+    mut writable_done: Receiver<bool>,
 ) -> Result<bool> {
-    let (readable_res, writable_res) = tokio::join!(readable_done, writable_done);
+    let (readable_res, writable_res) = tokio::select! {
+        r = &mut readable_done => {
+            if matches!(r, Ok(true)) && !socket.borrow().is_detached() {
+                WritableStream::destroy(This(socket.clone()), Opt(None));
+            }
+            let w = writable_done.await;
+            (r, w)
+        },
+        w = &mut writable_done => {
+            if matches!(w, Ok(true)) && !socket.borrow().is_detached() {
+                ReadableStream::destroy(This(socket.clone()), Opt(None));
+            }
+            let r = readable_done.await;
+            (r, w)
+        },
+    };
     let had_error = readable_res.or_throw_msg(ctx, "Readable sender dropped")?
         || writable_res.or_throw_msg(ctx, "Writable sender dropped")?;
     Ok(had_error)
@@ -328,7 +386,7 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
     class Socket extends Duplex {
       constructor(options) {
         const opts = options || {};
-        super({
+        const superOpts = {
           allowHalfOpen: opts.allowHalfOpen === true,
           readable: true,
           writable: true,
@@ -336,7 +394,17 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
           emitClose: false,
           autoDestroy: true,
           decodeStrings: false,
-        });
+        };
+        if (typeof opts.highWaterMark === "number") {
+          superOpts.highWaterMark = opts.highWaterMark;
+        }
+        if (typeof opts.readableHighWaterMark === "number") {
+          superOpts.readableHighWaterMark = opts.readableHighWaterMark;
+        }
+        if (typeof opts.writableHighWaterMark === "number") {
+          superOpts.writableHighWaterMark = opts.writableHighWaterMark;
+        }
+        super(superOpts);
 
         // A subclass (`tls.TLSSocket`) supplies its own backend through the
         // static `_createHandle`, so one glue class serves both. An explicit
@@ -351,8 +419,20 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
         // The native driver emits its own `close` when the transport ends.
         // Remember that so `_destroy` does not emit a second one.
         this._closeEmitted = false;
-        this.on("close", () => {
+        this.timeout = undefined;
+        this._timeoutTimer = null;
+        this.on("close", (hadError) => {
           this._closeEmitted = true;
+          this.connecting = false;
+          this._clearTimeout();
+          if (hadError && !this.destroyed) {
+            this.destroy();
+          }
+        });
+        this.on("connect", () => {
+          this.connecting = false;
+          this.pending = false;
+          this._resetTimeout();
         });
 
         this.connecting = false;
@@ -360,16 +440,51 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
         this.allowHalfOpen = opts.allowHalfOpen === true;
         this.bytesRead = 0;
         this.bytesWritten = 0;
-        this.timeout = 0;
 
         // `pause()` stops the native loop; `resume()` must restart it. Node only
         // calls `_read` when it wants data, which never happens if the loop is
         // parked, so wake it explicitly on resume.
+        this.on("pause", () => {
+          if (this._handle && typeof this._handle.pauseReading === "function") {
+            this._handle.pauseReading();
+          }
+        });
         this.on("resume", () => {
           if (this._handle && typeof this._handle.resumeReading === "function") {
             this._handle.resumeReading();
           }
         });
+      }
+
+      _clearTimeout() {
+        if (this._timeoutTimer !== null) {
+          globalThis.clearTimeout(this._timeoutTimer);
+          this._timeoutTimer = null;
+        }
+      }
+
+      _resetTimeout() {
+        this._clearTimeout();
+        if (this.timeout > 0 && !this.destroyed) {
+          const delay = Math.min(Math.trunc(this.timeout), 2147483647);
+          this._timeoutTimer = globalThis.setTimeout(() => {
+            this._timeoutTimer = null;
+            if (!this.destroyed) this.emit("timeout");
+          }, delay);
+          if (this._timeoutTimer && typeof this._timeoutTimer.unref === "function") {
+            this._timeoutTimer.unref();
+          }
+        }
+      }
+
+      push(chunk, encoding) {
+        if (chunk !== null && chunk !== undefined && chunk.length > 0) {
+          if (this.secureConnecting === undefined) {
+            this.bytesRead += chunk.length;
+          }
+          this._resetTimeout();
+        }
+        return super.push(chunk, encoding);
       }
 
       // --- Duplex read hooks ------------------------------------------------
@@ -403,8 +518,13 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
           return;
         }
         this.bytesWritten += chunk.length;
+        this._resetTimeout();
+        const onWriteDone = (err) => {
+          this._resetTimeout();
+          callback(err);
+        };
         try {
-          handle.write(chunk, callback);
+          handle.write(chunk, onWriteDone);
         } catch (err) {
           callback(err || new Error("Socket write failed"));
         }
@@ -425,6 +545,8 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
       }
 
       _destroy(err, callback) {
+        this._clearTimeout();
+        this.connecting = false;
         // A write still held back because the transport never attached can
         // never complete: fail it the way Node does instead of dropping it.
         const pending = this._pendingWrite;
@@ -468,6 +590,7 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
         let cb;
         if (typeof args[args.length - 1] === "function") cb = args.pop();
         if (cb) this.once("connect", cb);
+        this.connecting = true;
         const dc = globalThis.__diagnosticsChannelState;
         if (dc && dc.hasSubscribers("net.client.socket")) {
           dc.publish("net.client.socket", { socket: this });
@@ -488,8 +611,48 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
       }
 
       setTimeout(msecs, callback) {
+        if (typeof msecs !== "number") {
+          const err = new TypeError(
+            `The "msecs" argument must be of type number. Received ${msecs === null ? "null" : typeof msecs}`
+          );
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        if (!Number.isFinite(msecs) || msecs < 0) {
+          const err = new RangeError(
+            `The value of "msecs" is out of range. It must be a non-negative finite number. Received ${msecs}`
+          );
+          err.code = "ERR_OUT_OF_RANGE";
+          throw err;
+        }
         this.timeout = msecs;
         if (typeof callback === "function") this.once("timeout", callback);
+        this._resetTimeout();
+        return this;
+      }
+
+      destroySoon() {
+        if (this.writable) {
+          this.end();
+        }
+        if (this.writableFinished || (this._writableState && this._writableState.finished)) {
+          this.destroy();
+        } else {
+          this.once("finish", () => this.destroy());
+        }
+      }
+
+      resetAndDestroy() {
+        if (!this._handle || (!this._handle.transportAttached && !this.connecting)) {
+          const err = new Error("Socket is closed");
+          err.code = "ERR_SOCKET_CLOSED";
+          this.destroy(err);
+          return this;
+        }
+        if (typeof this._handle.resetAndDestroy === "function") {
+          this._handle.resetAndDestroy();
+        }
+        this.destroy();
         return this;
       }
 
@@ -546,6 +709,9 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
       }
       get remoteFamily() {
         return this._handle ? this._handle.remoteFamily : undefined;
+      }
+      get autoSelectFamilyAttemptedAddresses() {
+        return this._handle ? this._handle.autoSelectFamilyAttemptedAddresses : [];
       }
       get destroyed() {
         return this._handle ? this._handle.destroyed : true;
@@ -634,7 +800,7 @@ impl ModuleDef for NetModule {
             default.set("createConnection", connect.clone())?;
             default.set("connect", connect)?;
             default.set("isIP", Func::from(is_ip))?;
-            blocklist::export(ctx, &default)?;
+            blocklist::export(ctx, default)?;
             default.set("isIPv4", Func::from(is_ipv4))?;
             default.set("isIPv6", Func::from(is_ipv6))?;
             default.set(

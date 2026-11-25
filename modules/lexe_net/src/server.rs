@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #![allow(clippy::uninlined_format_args)]
 
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, RwLock,
@@ -20,10 +22,13 @@ use rquickjs::{
     prelude::{Opt, Rest, This},
     Class, Ctx, Exception, Function, JsLifetime, Null, Object, Result, Undefined, Value,
 };
+use socket2::{Domain, Protocol, SockAddr, Type};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ServerOptions as NamedPipeServerOptions;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio::{
-    net::TcpListener,
+    net::{lookup_host, TcpListener},
     select,
     sync::{
         broadcast::{self, Sender},
@@ -36,13 +41,25 @@ use super::{get_address_parts, get_hostname, socket::Socket, Listener, NetStream
 
 impl_stream_events!(Server);
 
+#[derive(Clone, Copy, Default)]
+struct ServerOptions {
+    allow_half_open: bool,
+    pause_on_connect: bool,
+    no_delay: bool,
+    keep_alive: bool,
+    keep_alive_initial_delay: u64,
+    high_water_mark: Option<usize>,
+}
+
 #[rquickjs::class]
 pub struct Server<'js> {
     emitter: EventEmitter<'js>,
     address: Value<'js>,
     close_tx: Sender<()>,
-    allow_half_open: bool,
+    options: ServerOptions,
     already_listen: Arc<AtomicBool>,
+    listening: Arc<AtomicBool>,
+    max_connections: Value<'js>,
     sockets: ReuseList<Class<'js, Socket<'js>>>,
     should_close: Arc<AtomicBool>,
     loop_ref: Arc<EventLoopRef>,
@@ -52,6 +69,7 @@ impl<'js> Trace<'js> for Server<'js> {
     fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
         self.emitter.trace(tracer);
         self.address.trace(tracer);
+        self.max_connections.trace(tracer);
         for socket_ref in self.sockets.iter() {
             socket_ref.trace(tracer);
         }
@@ -75,14 +93,40 @@ impl<'js> Server<'js> {
         let mut args_iter = args.0.into_iter();
 
         let mut connection_listener = None;
-        let mut allow_half_open = false;
+        let mut options = ServerOptions::default();
 
         if let Some(first) = args_iter.next() {
             if let Some(connection_listener_arg) = first.as_function() {
                 connection_listener = Some(connection_listener_arg.clone());
-            }
-            if let Some(opts_arg) = first.as_object() {
-                allow_half_open = opts_arg.get_optional("allowHalfOpen")?.unwrap_or_default();
+            } else if let Some(opts_arg) = first.as_object() {
+                options.allow_half_open =
+                    opts_arg.get_optional("allowHalfOpen")?.unwrap_or_default();
+                options.pause_on_connect =
+                    opts_arg.get_optional("pauseOnConnect")?.unwrap_or_default();
+                options.no_delay = opts_arg.get_optional("noDelay")?.unwrap_or_default();
+                options.keep_alive = opts_arg.get_optional("keepAlive")?.unwrap_or_default();
+                if let Some(delay) = opts_arg.get_optional::<_, f64>("keepAliveInitialDelay")? {
+                    if !delay.is_finite() || delay < 0.0 {
+                        return Err(super::blocklist::throw_coded(
+                            &ctx,
+                            super::blocklist::CodedError::Range,
+                            "ERR_OUT_OF_RANGE",
+                            "The value of \"options.keepAliveInitialDelay\" is out of range.",
+                        ));
+                    }
+                    options.keep_alive_initial_delay = delay as u64;
+                }
+                if let Some(hwm) = opts_arg.get_optional::<_, f64>("highWaterMark")? {
+                    if !hwm.is_finite() || hwm < 0.0 {
+                        return Err(super::blocklist::throw_coded(
+                            &ctx,
+                            super::blocklist::CodedError::Range,
+                            "ERR_OUT_OF_RANGE",
+                            "The value of \"options.highWaterMark\" is out of range.",
+                        ));
+                    }
+                    options.high_water_mark = Some(hwm as usize);
+                }
             }
         }
         if let Some(next) = args_iter.next() {
@@ -101,8 +145,10 @@ impl<'js> Server<'js> {
                 emitter,
                 address: Null.into_value(ctx.clone()),
                 close_tx,
-                allow_half_open,
+                options,
                 already_listen: Arc::new(AtomicBool::new(false)),
+                listening: Arc::new(AtomicBool::new(false)),
+                max_connections: Undefined.into_value(ctx.clone()),
                 sockets: ReuseList::with_capacity(8),
                 should_close: Arc::new(AtomicBool::new(false)),
                 loop_ref,
@@ -127,9 +173,33 @@ impl<'js> Server<'js> {
         self.address.clone()
     }
 
-    pub fn get_connections(&self, cb: Opt<Function<'js>>) -> Result<()> {
+    #[qjs(get, enumerable)]
+    pub fn listening(&self) -> bool {
+        self.listening.load(Ordering::Relaxed)
+    }
+
+    #[qjs(get, enumerable)]
+    pub fn max_connections(&self) -> Value<'js> {
+        self.max_connections.clone()
+    }
+
+    #[qjs(set, rename = "maxConnections")]
+    pub fn set_max_connections(&mut self, ctx: Ctx<'js>, value: Value<'js>) -> Result<()> {
+        if value.is_null() || value.is_undefined() || value.is_number() {
+            self.max_connections = value;
+            return Ok(());
+        }
+        Err(super::blocklist::throw_coded(
+            &ctx,
+            super::blocklist::CodedError::Type,
+            "ERR_INVALID_ARG_TYPE",
+            "The \"value\" argument must be of type number",
+        ))
+    }
+
+    pub fn get_connections(&self, ctx: Ctx<'js>, cb: Opt<Function<'js>>) -> Result<()> {
         if let Some(cb) = cb.0 {
-            cb.call::<_, ()>((Undefined, self.sockets.len()))?;
+            cb.call::<_, ()>((Null.into_value(ctx), self.sockets.len()))?;
         }
         Ok(())
     }
@@ -147,24 +217,23 @@ impl<'js> Server<'js> {
     }
 
     #[allow(unused_assignments)]
-    ///TODO add backlog support
     pub fn listen(
         this: This<Class<'js, Self>>,
         ctx: Ctx<'js>,
         args: Rest<Value<'js>>,
-    ) -> Result<()> {
+    ) -> Result<Class<'js, Self>> {
         let mut args_iter = args.0.into_iter();
         let mut port = None;
         let mut path = None;
         let mut host = None;
-        #[allow(unused_variables)] //TODO add backlog support
         let mut backlog = None;
         let mut callback = None;
 
         let borrow = this.borrow();
         let mut close_rx = borrow.close_tx.subscribe();
-        let allow_half_open = borrow.allow_half_open;
+        let options = borrow.options;
         let already_running = borrow.already_listen.clone();
+        let listening = borrow.listening.clone();
         let should_close = borrow.should_close.clone();
         drop(borrow);
 
@@ -177,7 +246,7 @@ impl<'js> Server<'js> {
                 callback = Some(callback_arg.clone());
             } else {
                 if let Some(port_arg) = first.as_int() {
-                    if port_arg > 0xFFFF {
+                    if !(0..=0xFFFF).contains(&port_arg) {
                         return Err(Exception::throw_range(
                             &ctx,
                             "port should be between 0 and 65535",
@@ -236,17 +305,22 @@ impl<'js> Server<'js> {
             port = Some(0)
         }
 
+        let ret_this = this.0.clone();
+
         ctx.spawn_exit(async move {
             already_running.store(true, Ordering::Relaxed);
-            let listener = match Self::bind(this.clone(), ctx2.clone(), port, host, path).await {
-                Ok(listener) => listener,
-                Err(e) => {
-                    already_running.store(false, Ordering::Relaxed);
-                    Err::<(), _>(e).emit_error("listen", &ctx2, this.clone())?;
-                    return Ok(()); // Don't stop the VM if failed to bind
-                },
-            };
+            let mut listener =
+                match Self::bind(this.clone(), ctx2.clone(), port, host, path, backlog).await {
+                    Ok(listener) => listener,
+                    Err(e) => {
+                        already_running.store(false, Ordering::Relaxed);
+                        listening.store(false, Ordering::Relaxed);
+                        Err::<(), _>(e).emit_error("listen", &ctx2, this.clone())?;
+                        return Ok(()); // Don't stop the VM if failed to bind
+                    },
+                };
 
+            listening.store(true, Ordering::Relaxed);
             Self::emit_str(this.clone(), &ctx2, "listening", vec![], false)?;
 
             let notify = Arc::new(Notify::new());
@@ -270,7 +344,7 @@ impl<'js> Server<'js> {
                             ctx3.clone(),
                             socket,
                             notify.clone(),
-                            allow_half_open,
+                            options,
                         ).emit_error("handle_socket_connection",&ctx3, this2)?;
                     },
                     _ = close_rx.recv() => {
@@ -288,6 +362,7 @@ impl<'js> Server<'js> {
             }
 
             already_running.store(false, Ordering::Relaxed);
+            listening.store(false, Ordering::Relaxed);
             should_close.store(false, Ordering::Relaxed);
 
             // Node resets `server.address()` to null once the listener is gone,
@@ -303,10 +378,14 @@ impl<'js> Server<'js> {
             Ok(())
         })?;
 
-        Ok(())
+        Ok(ret_this)
     }
 
-    fn close(this: This<Class<'js, Self>>, ctx: Ctx<'js>, cb: Opt<Function<'js>>) -> Result<()> {
+    fn close(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        cb: Opt<Function<'js>>,
+    ) -> Result<Class<'js, Self>> {
         trace!("Closing server");
         if let Some(cb) = cb.0 {
             Self::add_event_listener_str(this.clone(), &ctx, "close", cb, true, true)?;
@@ -314,7 +393,8 @@ impl<'js> Server<'js> {
         let borrow = this.borrow_mut();
         borrow.should_close.store(true, Ordering::Relaxed);
         let _ = borrow.close_tx.send(());
-        Ok(())
+        drop(borrow);
+        Ok(this.0)
     }
 }
 
@@ -325,14 +405,35 @@ impl<'js> Server<'js> {
         port: Option<i32>,
         host: Option<String>,
         path: Option<String>,
+        backlog: Option<i32>,
     ) -> Result<Listener> {
+        let backlog = backlog.unwrap_or(511).max(1);
         let listener = if let Some(port) = port {
-            let listener = TcpListener::bind(get_hostname(
-                &host.unwrap_or_else(|| String::from("0.0.0.0")),
-                port as u16,
-            ))
-            .await
-            .or_throw(&ctx)?;
+            let port_u16 = u16::try_from(port)
+                .map_err(|_| Exception::throw_range(&ctx, "port should be between 0 and 65535"))?;
+            let host_str = host.unwrap_or_else(|| String::from("0.0.0.0"));
+            let addr = if let Ok(ip) = IpAddr::from_str(&host_str) {
+                SocketAddr::new(ip, port_u16)
+            } else {
+                lookup_host(get_hostname(&host_str, port_u16))
+                    .await
+                    .or_throw(&ctx)?
+                    .next()
+                    .ok_or_else(|| {
+                        Exception::throw_message(&ctx, &format!("Failed to resolve {host_str}"))
+                    })?
+            };
+
+            let sock =
+                socket2::Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))
+                    .or_throw(&ctx)?;
+            #[cfg(unix)]
+            sock.set_reuse_address(true).or_throw(&ctx)?;
+            sock.set_nonblocking(true).or_throw(&ctx)?;
+            sock.bind(&SockAddr::from(addr)).or_throw(&ctx)?;
+            sock.listen(backlog).or_throw(&ctx)?;
+            let std_listener: std::net::TcpListener = sock.into();
+            let listener = TcpListener::from_std(std_listener).or_throw(&ctx)?;
 
             let address_object = Object::new(ctx.clone())?;
 
@@ -347,13 +448,29 @@ impl<'js> Server<'js> {
         } else if let Some(path) = path {
             #[cfg(unix)]
             {
-                let listener: UnixListener = UnixListener::bind(&path).or_throw(&ctx)?;
+                let sock = socket2::Socket::new(Domain::UNIX, Type::STREAM, None).or_throw(&ctx)?;
+                sock.set_nonblocking(true).or_throw(&ctx)?;
+                sock.bind(&SockAddr::unix(&path).or_throw(&ctx)?)
+                    .or_throw(&ctx)?;
+                sock.listen(backlog).or_throw(&ctx)?;
+                let std_listener: std::os::unix::net::UnixListener = sock.into();
+                let listener = UnixListener::from_std(std_listener).or_throw(&ctx)?;
                 this.borrow_mut().address = path.into_js(&ctx)?;
                 Listener::Unix(listener)
             }
-            #[cfg(not(unix))]
+            #[cfg(windows)]
+            {
+                let server = NamedPipeServerOptions::new()
+                    .first_pipe_instance(true)
+                    .create(&path)
+                    .or_throw(&ctx)?;
+                this.borrow_mut().address = path.clone().into_js(&ctx)?;
+                Listener::NamedPipe { path, server }
+            }
+            #[cfg(all(not(unix), not(windows)))]
             {
                 _ = path;
+                _ = backlog;
                 return Err(Exception::throw_type(
                     &ctx,
                     "Unix domain sockets are not supported on this platform",
@@ -370,20 +487,61 @@ impl<'js> Server<'js> {
         ctx: Ctx<'js>,
         stream_result: Result<NetStream>,
         notify_close: Arc<Notify>,
-        allow_half_open: bool,
+        options: ServerOptions,
     ) -> Result<()> {
         let net_stream = stream_result.or_throw(&ctx)?;
+
+        let drop_exceeded = {
+            let borrow = this.borrow();
+            if let Some(max) = borrow.max_connections.as_number() {
+                (borrow.sockets.len() as f64) >= max
+            } else {
+                false
+            }
+        };
+        if drop_exceeded {
+            let drop_info = net_stream.drop_info(&ctx)?;
+            drop(net_stream);
+            Self::emit_str(this, &ctx, "drop", vec![drop_info.into_value()], false)?;
+            return Ok(());
+        }
 
         ctx.clone().spawn_exit(async move {
             // The listener must receive the JS `net.Socket` (a Duplex), and the
             // native read/write loops must run on *that same object's* handle.
             // Building a bare handle here would give the two sides different
             // objects and the pushed bytes would never reach the stream.
-            let (js_socket, socket_instance) = build_accepted_socket(&ctx, allow_half_open)?;
+            let (js_socket, socket_instance) = build_accepted_socket(&ctx, options)?;
             let socket_index;
             {
-                let mut sever_borrow = this.borrow_mut();
-                socket_index = sever_borrow.sockets.append(socket_instance.clone());
+                let mut server_borrow = this.borrow_mut();
+                socket_index = server_borrow.sockets.append(socket_instance.clone());
+            }
+
+            if options.no_delay {
+                let _ = Socket::set_no_delay(
+                    This(socket_instance.clone()),
+                    ctx.clone(),
+                    Opt(Some(true)),
+                );
+            }
+            if options.keep_alive {
+                let enable = Value::new_bool(ctx.clone(), true);
+                let delay = Value::new_float(ctx.clone(), options.keep_alive_initial_delay as f64);
+                let _ = Socket::set_keep_alive(
+                    This(socket_instance.clone()),
+                    ctx.clone(),
+                    Opt(Some(enable)),
+                    Opt(Some(delay)),
+                );
+            }
+            if options.pause_on_connect {
+                Socket::pause_reading(This(socket_instance.clone()));
+                if let Some(js_obj) = js_socket.as_object() {
+                    if let Ok(pause_fn) = js_obj.get::<_, Function>("pause") {
+                        let _ = pause_fn.call::<_, Value>((This(js_obj.clone()),));
+                    }
+                }
             }
 
             let _ = lexe_utils::diagnostics::publish(&ctx, "net.server.socket", |ctx| {
@@ -395,16 +553,16 @@ impl<'js> Server<'js> {
             Self::emit_str(this.clone(), &ctx, "connection", vec![js_socket], false)?;
 
             let had_error = net_stream
-                .process(&socket_instance, &ctx, allow_half_open)
+                .process(&socket_instance, &ctx, options.allow_half_open)
                 .await?;
 
             Socket::emit_close(socket_instance, &ctx, had_error)?;
             {
-                let mut sever_borrow = this.borrow_mut();
-                sever_borrow.sockets.remove(socket_index);
+                let mut server_borrow = this.borrow_mut();
+                server_borrow.sockets.remove(socket_index);
 
-                if sever_borrow.sockets.is_empty()
-                    && sever_borrow.should_close.load(Ordering::Relaxed)
+                if server_borrow.sockets.is_empty()
+                    && server_borrow.should_close.load(Ordering::Relaxed)
                 {
                     trace!("Sockets empty, notify close");
                     notify_close.notify_one();
@@ -507,13 +665,16 @@ mod tests {
 /// bare handle when the JS class is not registered yet (module still loading).
 fn build_accepted_socket<'js>(
     ctx: &Ctx<'js>,
-    allow_half_open: bool,
+    options: ServerOptions,
 ) -> Result<(Value<'js>, Class<'js, Socket<'js>>)> {
     let ctor: Value = ctx.globals().get("__lexeNetSocketClass")?;
     let ctor = ctor.as_constructor().cloned();
     if let Some(ctor) = ctor {
         let opts = Object::new(ctx.clone())?;
-        opts.set("allowHalfOpen", allow_half_open)?;
+        opts.set("allowHalfOpen", options.allow_half_open)?;
+        if let Some(hwm) = options.high_water_mark {
+            opts.set("highWaterMark", hwm)?;
+        }
         let instance: Value = ctor.construct((opts,))?;
         let handle = instance
             .as_object()
@@ -524,6 +685,6 @@ fn build_accepted_socket<'js>(
             return Ok((instance, handle));
         }
     }
-    let handle = Socket::new(ctx.clone(), allow_half_open)?;
+    let handle = Socket::new(ctx.clone(), options.allow_half_open)?;
     Ok((handle.clone().into_value(), handle))
 }

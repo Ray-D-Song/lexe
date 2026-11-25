@@ -26,7 +26,7 @@
 | node:inspector | ✔︎ | ✔︎⚠️ | Stub exporting `url()` (`undefined`) only; no Inspector protocol or `Session` ([details](#nodeinspector)) |
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
 | node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
-| node:net | ✔︎ | ✔︎⚠️ | `Socket.setTimeout` does not fire idle timeouts; `autoSelectFamily` flag is not wired to Happy-Eyeballs; several `Server` options and `maxConnections` ignored ([details](#nodenet)) |
+| node:net | ✔︎ | ✔︎ | — |
 | node:os | ✔︎ | ✔︎ | — |
 | node:path | ✔︎ | ✔︎ | — |
 | node:perf_hooks | ✔︎ | ✔︎⚠️ | Static `nodeTiming` stub; no automatic GC/resource entries; timer-based ms `monitorEventLoopDelay`; fallback `eventLoopUtilization` ([details](#nodeperf_hooks)) |
@@ -176,14 +176,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Not implemented: `module.register`, `stripTypeScriptTypes`, and `Module._load`.
 - Extension hooks apply to the CommonJS loader only; they do not change static ESM import semantics.
 - Native `.node` addon loading requires building with `--features napi` or `--features v8-compat` (see [Native addons](#native-addons)).
-
-#### `node:net`
-
-- `Socket.prototype.setTimeout(msecs, cb)` sets `this.timeout` and registers a `once("timeout")` listener, but does not schedule an idle timer or emit `"timeout"`.
-- `Socket` lacks `resetAndDestroy()` and `destroySoon()`.
-- `setDefaultAutoSelectFamily()` and `setDefaultAutoSelectFamilyAttemptTimeout()` persist the process-wide configuration flags, but Happy-Eyeballs multi-family dialing (`autoSelectFamily`) is not implemented.
-- `net.Server` constructor honors `allowHalfOpen` only (ignoring `pauseOnConnect`, `noDelay`, `keepAlive`, `keepAliveInitialDelay`, `highWaterMark`); `server.listen()` ignores `backlog`, and `Server.maxConnections` is not implemented.
-- Unix domain sockets are not supported on Windows.
 
 #### `node:perf_hooks`
 

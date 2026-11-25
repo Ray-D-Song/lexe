@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{
     io,
-    net::Shutdown,
+    net::{IpAddr, Shutdown, SocketAddr},
+    str::FromStr,
     sync::{Arc, Mutex, RwLock},
     time::Duration,
 };
@@ -11,7 +12,6 @@ use lexe_buffer::Buffer;
 use lexe_context::CtxExtension;
 use lexe_events::{EmitError, Emitter, EventEmitter, EventKey, EventList};
 use lexe_stream::{
-    impl_stream_events,
     readable::{ReadableStream, ReadableStreamInner},
     writable::{WritableStream, WritableStreamInner},
     SteamEvents,
@@ -19,20 +19,27 @@ use lexe_stream::{
 use lexe_utils::{event_loop::EventLoopRef, object::ObjectExt, result::ResultExt};
 use rquickjs::{
     class::{Trace, Tracer},
+    function::Constructor,
     prelude::{Opt, Rest, This},
-    Class, Ctx, Error, Exception, Function, IntoJs, JsLifetime, Object, Result, Value,
+    Array, Class, Ctx, Error, Exception, Function, IntoJs, JsLifetime, Object, Result, Value,
 };
 use socket2::{SockRef, TcpKeepalive};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ClientOptions as NamedPipeClientOptions;
 #[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    net::{tcp::OwnedReadHalf, tcp::OwnedWriteHalf, TcpStream},
+    net::{lookup_host, tcp::OwnedReadHalf, tcp::OwnedWriteHalf, TcpStream},
     sync::{mpsc::UnboundedSender, oneshot::Receiver},
+    task::JoinSet,
 };
 use tracing::trace;
 
-use super::{ensure_access, get_address_parts, get_hostname, rw_join, ReadyState, LOCALHOST};
+use super::{
+    ensure_access, get_address_parts, get_default_auto_select_family,
+    get_default_auto_select_family_attempt_timeout, get_hostname, rw_join, ReadyState, LOCALHOST,
+};
 
 impl<'js> SteamEvents<'js> for Socket<'js> {
     fn emit_close(this: Class<'js, Self>, ctx: &Ctx<'js>, had_error: bool) -> Result<()> {
@@ -104,6 +111,7 @@ pub struct Socket<'js> {
     tcp_write_half: Option<OwnedWriteHalf>,
     handoff_prefix: Option<Vec<u8>>,
     tcp_options: TcpSocketOptions,
+    auto_select_family_attempted_addresses: Vec<String>,
     /// Control handle for TCP socket options / force-close. Not shared with
     /// the raw HTTP shutdown handle (`raw_shutdown`).
     pub(crate) tcp_control: Option<Arc<std::net::TcpStream>>,
@@ -215,6 +223,19 @@ impl<'js> Socket<'js> {
     pub fn resume_reading(this: This<Class<'js, Self>>) -> Class<'js, Self> {
         this.borrow().readable_stream_inner.resume_reading();
         this.0
+    }
+
+    /// `pause()` told us to back off: park the native read loop.
+    pub fn pause_reading(this: This<Class<'js, Self>>) -> Class<'js, Self> {
+        this.borrow().readable_stream_inner.pause_reading();
+        this.0
+    }
+
+    pub fn reset_and_destroy(this: This<Class<'js, Self>>) -> Class<'js, Self> {
+        if let Some(control) = this.borrow().tcp_control.as_ref() {
+            let _ = SockRef::from(control.as_ref()).set_linger(Some(Duration::ZERO));
+        }
+        Self::destroy_inner(this, Opt(None), false)
     }
 
     #[qjs(constructor)]
@@ -341,6 +362,14 @@ impl<'js> Socket<'js> {
     }
 
     pub fn destroy(this: This<Class<'js, Self>>, error: Opt<Value<'js>>) -> Class<'js, Self> {
+        Self::destroy_inner(this, error, true)
+    }
+
+    fn destroy_inner(
+        this: This<Class<'js, Self>>,
+        error: Opt<Value<'js>>,
+        shutdown: bool,
+    ) -> Class<'js, Self> {
         // Drop the JS owner eagerly: holding it past close leaves an
         // uncollectable `this <-> _handle` cycle that aborts teardown with
         // QuickJS's `gc_obj_list` assertion.
@@ -348,17 +377,21 @@ impl<'js> Socket<'js> {
         {
             let mut borrow = this.borrow_mut();
             if let Some(control) = borrow.tcp_control.take() {
-                let _ = control.shutdown(Shutdown::Both);
+                if shutdown {
+                    let _ = control.shutdown(Shutdown::Both);
+                }
             }
-            if let Some(stream) = &borrow.raw_shutdown {
-                match stream {
-                    RawShutdown::Tcp(stream) => {
-                        let _ = stream.shutdown(Shutdown::Both);
-                    },
-                    #[cfg(unix)]
-                    RawShutdown::Unix(stream) => {
-                        let _ = stream.shutdown(Shutdown::Both);
-                    },
+            if shutdown {
+                if let Some(stream) = &borrow.raw_shutdown {
+                    match stream {
+                        RawShutdown::Tcp(stream) => {
+                            let _ = stream.shutdown(Shutdown::Both);
+                        },
+                        #[cfg(unix)]
+                        RawShutdown::Unix(stream) => {
+                            let _ = stream.shutdown(Shutdown::Both);
+                        },
+                    }
                 }
             }
         }
@@ -523,6 +556,11 @@ impl<'js> Socket<'js> {
     }
 
     #[qjs(get, enumerable)]
+    pub fn auto_select_family_attempted_addresses(&self) -> Vec<String> {
+        self.auto_select_family_attempted_addresses.clone()
+    }
+
+    #[qjs(get, enumerable)]
     pub fn ready_state(&self) -> String {
         self.ready_state.to_string()
     }
@@ -546,7 +584,13 @@ impl<'js> Socket<'js> {
         let mut path = None;
         let mut listener = None;
         let mut last = None;
-        let mut addr = None;
+        let mut family: u8 = 0;
+        let mut auto_select_family = get_default_auto_select_family();
+        let mut auto_select_family_attempt_timeout =
+            get_default_auto_select_family_attempt_timeout();
+        let mut connect_no_delay: Option<bool> = None;
+        let mut connect_keep_alive: Option<bool> = None;
+        let mut connect_keep_alive_initial_delay: Option<Value<'js>> = None;
 
         let mut args = args.into_iter();
 
@@ -557,6 +601,35 @@ impl<'js> Socket<'js> {
                 if let Some(host_arg) = opts.get_optional("host")? {
                     host = host_arg
                 }
+                if let Some(fam) = opts.get_optional::<_, i32>("family")? {
+                    if !matches!(fam, 0 | 4 | 6) {
+                        return Err(super::blocklist::throw_coded(
+                            &ctx,
+                            super::blocklist::CodedError::Type,
+                            "ERR_INVALID_ARG_VALUE",
+                            "The property 'options.family' must be one of: 0, 4, 6",
+                        ));
+                    }
+                    family = fam as u8;
+                }
+                if let Some(asf) = opts.get_optional::<_, bool>("autoSelectFamily")? {
+                    auto_select_family = asf;
+                }
+                if let Some(t) = opts.get_optional::<_, f64>("autoSelectFamilyAttemptTimeout")? {
+                    let t = t.trunc();
+                    if !(1.0..=2147483647.0).contains(&t) {
+                        return Err(super::blocklist::throw_coded(
+                            &ctx,
+                            super::blocklist::CodedError::Range,
+                            "ERR_OUT_OF_RANGE",
+                            "The value of \"options.autoSelectFamilyAttemptTimeout\" is out of range",
+                        ));
+                    }
+                    auto_select_family_attempt_timeout = t as u32;
+                }
+                connect_no_delay = opts.get_optional("noDelay")?;
+                connect_keep_alive = opts.get_optional("keepAlive")?;
+                connect_keep_alive_initial_delay = opts.get_optional("keepAliveInitialDelay")?;
             } else if let Some(path_arg) = first.as_string() {
                 path = Some(path_arg.to_string()?);
             } else if let Some(port_arg) = first.as_int() {
@@ -587,10 +660,28 @@ impl<'js> Socket<'js> {
         if let Some(port) = port {
             let hostname = get_hostname(&host, port);
             ensure_access(&ctx, &hostname)?;
-            addr = Some(hostname);
         }
 
         let this = this.0;
+
+        if let Some(nd) = connect_no_delay {
+            let _ = Self::set_no_delay(This(this.clone()), ctx.clone(), Opt(Some(nd)))?;
+        }
+        if connect_keep_alive.is_some() || connect_keep_alive_initial_delay.is_some() {
+            let enable = Value::new_bool(ctx.clone(), connect_keep_alive.unwrap_or(false));
+            let _ = Self::set_keep_alive(
+                This(this.clone()),
+                ctx.clone(),
+                Opt(Some(enable)),
+                Opt(connect_keep_alive_initial_delay),
+            )?;
+        }
+
+        {
+            let mut borrow = this.borrow_mut();
+            borrow.connecting = true;
+            borrow.auto_select_family_attempted_addresses.clear();
+        }
 
         let this2 = this.clone();
 
@@ -613,7 +704,21 @@ impl<'js> Socket<'js> {
                         let stream = UnixStream::connect(path).await.or_throw(&ctx3)?;
                         Self::process_unix_stream(&this2, &ctx3, stream, allow_half_open)
                     }
-                    #[cfg(not(unix))]
+                    #[cfg(windows)]
+                    {
+                        let client = loop {
+                            match NamedPipeClientOptions::new().open(&path) {
+                                Ok(client) => break client,
+                                Err(err) if err.raw_os_error() == Some(231) => {
+                                    tokio::time::sleep(Duration::from_millis(5)).await;
+                                },
+                                Err(err) => return Err(err).or_throw(&ctx3),
+                            }
+                        };
+                        Self::mark_connected(&this2);
+                        Self::process_io(&this2, &ctx3, client, allow_half_open)
+                    }
+                    #[cfg(all(not(unix), not(windows)))]
                     {
                         _ = path;
                         return Err(Exception::throw_type(
@@ -621,8 +726,17 @@ impl<'js> Socket<'js> {
                             "Unix domain sockets are not supported on this platform",
                         ));
                     }
-                } else if let Some(addr) = addr {
-                    let stream = TcpStream::connect(addr).await.or_throw(&ctx3)?;
+                } else if let Some(port) = port {
+                    let stream = Self::connect_tcp(
+                        &this2,
+                        &ctx3,
+                        host,
+                        port,
+                        family,
+                        auto_select_family,
+                        auto_select_family_attempt_timeout,
+                    )
+                    .await?;
                     Self::process_tcp_stream(&this2, &ctx3, stream, allow_half_open)
                 } else {
                     unreachable!()
@@ -634,7 +748,8 @@ impl<'js> Socket<'js> {
                 let ctx4 = ctx3.clone();
                 ctx3.spawn_exit_simple(async move {
                     let _ = async {
-                        let join_result = rw_join(&ctx4, readable_done, writable_done).await;
+                        let join_result =
+                            rw_join(&ctx4, &this4, readable_done, writable_done).await;
                         // Drop the option-control clone after drivers finish, even on error.
                         // This must not affect a normally closed primary stream.
                         this4.borrow_mut().tcp_control = None;
@@ -659,6 +774,9 @@ impl<'js> Socket<'js> {
             }
             .await;
 
+            if connect.is_err() {
+                this3.borrow_mut().connecting = false;
+            }
             connect.emit_error("connect", &ctx2, this3)?;
             Ok(())
         })?;
@@ -703,6 +821,7 @@ impl<'js> Socket<'js> {
                 tcp_write_half: None,
                 handoff_prefix: None,
                 tcp_options: TcpSocketOptions::default(),
+                auto_select_family_attempted_addresses: Vec::new(),
                 tcp_control: None,
                 loop_ref,
                 js_owner: None,
@@ -713,6 +832,160 @@ impl<'js> Socket<'js> {
 
     pub fn is_detached(&self) -> bool {
         self.transport_state == TransportState::Detached
+    }
+
+    async fn connect_tcp(
+        this: &Class<'js, Self>,
+        ctx: &Ctx<'js>,
+        host: String,
+        port: u16,
+        family: u8,
+        auto_select_family: bool,
+        attempt_timeout_ms: u32,
+    ) -> Result<TcpStream> {
+        if let Ok(ip) = IpAddr::from_str(&host) {
+            if (family == 4 && ip.is_ipv6()) || (family == 6 && ip.is_ipv4()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Address {host} does not match family {family}"),
+                ))
+                .or_throw(ctx);
+            }
+            let addr = SocketAddr::new(ip, port);
+            if auto_select_family {
+                this.borrow_mut()
+                    .auto_select_family_attempted_addresses
+                    .push(addr.to_string());
+            }
+            return TcpStream::connect(addr).await.or_throw(ctx);
+        }
+
+        let resolved: Vec<SocketAddr> = lookup_host((host.as_str(), port))
+            .await
+            .or_throw(ctx)?
+            .filter(|a| match family {
+                4 => a.is_ipv4(),
+                6 => a.is_ipv6(),
+                _ => true,
+            })
+            .collect();
+
+        if resolved.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                format!("No addresses resolved for {host}:{port}"),
+            ))
+            .or_throw(ctx);
+        }
+
+        let (ordered, use_happy_eyeballs) = if auto_select_family && family == 0 {
+            let mut v4 = Vec::new();
+            let mut v6 = Vec::new();
+            for addr in &resolved {
+                if addr.is_ipv6() {
+                    v6.push(*addr);
+                } else {
+                    v4.push(*addr);
+                }
+            }
+            if !v4.is_empty() && !v6.is_empty() {
+                let first_is_v6 = resolved[0].is_ipv6();
+                let mut interleaved = Vec::with_capacity(resolved.len());
+                let (mut i4, mut i6) = (0usize, 0usize);
+                let mut turn_v6 = first_is_v6;
+                while i4 < v4.len() || i6 < v6.len() {
+                    if turn_v6 {
+                        if i6 < v6.len() {
+                            interleaved.push(v6[i6]);
+                            i6 += 1;
+                        } else if i4 < v4.len() {
+                            interleaved.push(v4[i4]);
+                            i4 += 1;
+                        }
+                    } else if i4 < v4.len() {
+                        interleaved.push(v4[i4]);
+                        i4 += 1;
+                    } else if i6 < v6.len() {
+                        interleaved.push(v6[i6]);
+                        i6 += 1;
+                    }
+                    turn_v6 = !turn_v6;
+                }
+                (interleaved, true)
+            } else {
+                (resolved, false)
+            }
+        } else {
+            (resolved, false)
+        };
+
+        if !use_happy_eyeballs {
+            let mut errors: Vec<(SocketAddr, io::Error)> = Vec::new();
+            for addr in ordered {
+                if auto_select_family {
+                    this.borrow_mut()
+                        .auto_select_family_attempted_addresses
+                        .push(addr.to_string());
+                }
+                match TcpStream::connect(addr).await {
+                    Ok(stream) => return Ok(stream),
+                    Err(err) => errors.push((addr, err)),
+                }
+            }
+            return Err(build_connect_error(ctx, errors));
+        }
+
+        let timeout_dur = Duration::from_millis(attempt_timeout_ms.max(10) as u64);
+        let mut join_set: JoinSet<(SocketAddr, io::Result<TcpStream>)> = JoinSet::new();
+        let mut errors: Vec<(SocketAddr, io::Error)> = Vec::new();
+        let mut idx = 0usize;
+
+        while idx < ordered.len() || !join_set.is_empty() {
+            if idx < ordered.len() {
+                let addr = ordered[idx];
+                idx += 1;
+                this.borrow_mut()
+                    .auto_select_family_attempted_addresses
+                    .push(addr.to_string());
+                join_set.spawn(async move { (addr, TcpStream::connect(addr).await) });
+            }
+
+            if idx < ordered.len() {
+                let timer = tokio::time::sleep(timeout_dur);
+                tokio::pin!(timer);
+                loop {
+                    tokio::select! {
+                        _ = &mut timer => break,
+                        res = join_set.join_next() => {
+                            match res {
+                                Some(Ok((_addr, Ok(stream)))) => {
+                                    join_set.abort_all();
+                                    return Ok(stream);
+                                },
+                                Some(Ok((addr, Err(err)))) => {
+                                    errors.push((addr, err));
+                                    if join_set.is_empty() {
+                                        break;
+                                    }
+                                },
+                                Some(Err(_)) | None => break,
+                            }
+                        }
+                    }
+                }
+            } else if let Some(res) = join_set.join_next().await {
+                match res {
+                    Ok((_addr, Ok(stream))) => {
+                        join_set.abort_all();
+                        return Ok(stream);
+                    },
+                    Ok((addr, Err(err))) => errors.push((addr, err)),
+                    Err(_) => {},
+                }
+            }
+        }
+
+        Err(build_connect_error(ctx, errors))
     }
 
     fn blocks_transport_writes(socket: &Socket<'_>) -> bool {
@@ -993,6 +1266,32 @@ impl<'js> Socket<'js> {
         drop(borrow);
         Ok(())
     }
+}
+
+fn build_connect_error(ctx: &Ctx<'_>, errors: Vec<(SocketAddr, io::Error)>) -> Error {
+    if errors.len() <= 1 {
+        let err = errors
+            .into_iter()
+            .next()
+            .map(|(_, e)| e)
+            .unwrap_or_else(|| io::Error::other("Connection failed"));
+        return Err::<(), _>(err).or_throw(ctx).unwrap_err();
+    }
+
+    if let Ok(ctor) = ctx.globals().get::<_, Constructor>("AggregateError") {
+        if let Ok(arr) = Array::new(ctx.clone()) {
+            for (i, (addr, err)) in errors.iter().enumerate() {
+                let msg = format!("connect {} {addr}", err);
+                let _ = arr.set(i, Exception::from_message(ctx.clone(), &msg).ok());
+            }
+            if let Ok(agg) = ctor.construct::<_, Value>((arr, "")) {
+                return ctx.throw(agg);
+            }
+        }
+    }
+
+    let (_, first) = errors.into_iter().next().unwrap();
+    Err::<(), _>(first).or_throw(ctx).unwrap_err()
 }
 
 fn value_to_bool(value: &Value<'_>) -> bool {

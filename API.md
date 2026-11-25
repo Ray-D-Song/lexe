@@ -626,17 +626,14 @@ CommonJS loader facade (also on the default `Module` export):
 
 ## net
 
-> [!WARNING]
-> These APIs uses native streams that is not 100% compatible with the Node.js Streams API. Server APIs like `createSever` provides limited functionality useful for testing purposes. Some server options are not supported:
-> `highWaterMark`, `pauseOnConnect`, `keepAlive`, `noDelay`, `keepAliveInitialDelay`
-
 [connect](https://nodejs.org/api/net.html#netconnect)
 
 [createConnection](https://nodejs.org/api/net.html#netcreateconnection)
 
 [createServer](https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener)
 
-> `net.Server` (and sockets) expose Node-compatible `ref()` / `unref()`. An unref'd listening server stops blocking `process` exit while still accepting until the listen task is torn down.
+- `net.Socket` is a `Duplex` stream supporting TCP, Unix domain sockets, and Windows named pipes (`\\.\pipe\...`), with `setTimeout()`, `destroySoon()`, `resetAndDestroy()`, `setNoDelay()`, `setKeepAlive()`, `ref()`/`unref()`, Happy-Eyeballs (`autoSelectFamily`, `autoSelectFamilyAttemptTimeout`, `autoSelectFamilyAttemptedAddresses`), `BlockList`, and `SocketAddress`.
+- `net.Server` supports `{ allowHalfOpen, pauseOnConnect, noDelay, keepAlive, keepAliveInitialDelay, highWaterMark }`, `listen({ port, host, path, backlog })`, `listening`, `maxConnections` with `"drop"` events, `getConnections()`, and `ref()` / `unref()`.
 
 ## os
 
