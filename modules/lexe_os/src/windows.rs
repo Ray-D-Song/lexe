@@ -57,14 +57,20 @@ pub fn get_priority(ctx: Ctx<'_>, who: Opt<u32>) -> rquickjs::Result<i32> {
     let pid = who.0.unwrap_or(0);
     let Some((handle, should_close)) = open_priority_handle(pid, PROCESS_QUERY_LIMITED_INFORMATION)
     else {
-        return Err(Exception::throw_message(&ctx, "Failed to get process priority"));
+        return Err(Exception::throw_message(
+            &ctx,
+            "Failed to get process priority",
+        ));
     };
     let class = unsafe { GetPriorityClass(handle) };
     if should_close {
         unsafe { CloseHandle(handle) };
     }
     if class == 0 {
-        return Err(Exception::throw_message(&ctx, "Failed to get process priority"));
+        return Err(Exception::throw_message(
+            &ctx,
+            "Failed to get process priority",
+        ));
     }
     let prio = match class {
         IDLE_PRIORITY_CLASS => 19,
@@ -110,14 +116,20 @@ pub fn set_priority(ctx: Ctx<'_>, args: Rest<rquickjs::Value>) -> rquickjs::Resu
     };
 
     let Some((handle, should_close)) = open_priority_handle(pid, PROCESS_SET_INFORMATION) else {
-        return Err(Exception::throw_message(&ctx, "Failed to set process priority"));
+        return Err(Exception::throw_message(
+            &ctx,
+            "Failed to set process priority",
+        ));
     };
     let ok = unsafe { SetPriorityClass(handle, class) };
     if should_close {
         unsafe { CloseHandle(handle) };
     }
     if ok == 0 {
-        return Err(Exception::throw_message(&ctx, "Failed to set process priority"));
+        return Err(Exception::throw_message(
+            &ctx,
+            "Failed to set process priority",
+        ));
     }
     Ok(())
 }

@@ -107,11 +107,7 @@ pub fn throw_buffer_size_error<'js>(ctx: &Ctx<'js>, err: &io::Error) -> Error {
 }
 
 /// Resolve host and port, fast-pathing IP literals and filtering DNS results by IP family.
-pub async fn resolve_socket_addr(
-    host: &str,
-    port: u16,
-    is_ipv6: bool,
-) -> io::Result<SocketAddr> {
+pub async fn resolve_socket_addr(host: &str, port: u16, is_ipv6: bool) -> io::Result<SocketAddr> {
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(SocketAddr::new(ip, port));
     }
@@ -126,7 +122,8 @@ pub async fn resolve_socket_addr(
             first = Some(addr);
         }
     }
-    first.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "address resolution returned empty"))
+    first
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "address resolution returned empty"))
 }
 
 pub fn configure_and_bind_socket(
@@ -210,7 +207,12 @@ pub fn sock_set_broadcast(socket: Option<&UdpSocket>, ctx: &Ctx<'_>, flag: bool)
         .map_err(|e| throw_syscall_error(ctx, "setBroadcast", &e))
 }
 
-pub fn sock_set_ttl(socket: Option<&UdpSocket>, ctx: &Ctx<'_>, is_ipv6: bool, ttl: i32) -> Result<i32> {
+pub fn sock_set_ttl(
+    socket: Option<&UdpSocket>,
+    ctx: &Ctx<'_>,
+    is_ipv6: bool,
+    ttl: i32,
+) -> Result<i32> {
     if !(1..=255).contains(&ttl) {
         return Err(throw_coded(ctx, "Error", "EINVAL", "setTTL EINVAL"));
     }
@@ -233,7 +235,12 @@ pub fn sock_set_multicast_ttl(
     ttl: i32,
 ) -> Result<i32> {
     if !(0..=255).contains(&ttl) {
-        return Err(throw_coded(ctx, "Error", "EINVAL", "setMulticastTTL EINVAL"));
+        return Err(throw_coded(
+            ctx,
+            "Error",
+            "EINVAL",
+            "setMulticastTTL EINVAL",
+        ));
     }
     let Some(sock) = socket else {
         return Err(throw_coded(ctx, "Error", "EBADF", "setMulticastTTL EBADF"));
@@ -272,8 +279,7 @@ pub fn sock_set_multicast_loopback(
 
 #[cfg(unix)]
 fn resolve_iface_name(name: &str) -> io::Result<u32> {
-    let c_name =
-        CString::new(name).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+    let c_name = CString::new(name).map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
     let idx = unsafe { libc::if_nametoindex(c_name.as_ptr()) };
     if idx == 0 {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
@@ -355,7 +361,12 @@ pub fn sock_membership(
         "dropMembership"
     };
     let Some(sock) = socket else {
-        return Err(throw_coded(ctx, "Error", "EBADF", format!("{syscall} EBADF")));
+        return Err(throw_coded(
+            ctx,
+            "Error",
+            "EBADF",
+            format!("{syscall} EBADF"),
+        ));
     };
     let sock_ref = SockRef::from(sock);
 
@@ -365,7 +376,9 @@ pub fn sock_membership(
             .map_err(|_| throw_coded(ctx, "Error", "EINVAL", format!("{syscall} EINVAL")))?;
         let idx = match multicast_iface {
             None | Some("") => 0,
-            Some(s) => parse_ipv6_interface(s).map_err(|e| throw_syscall_error(ctx, syscall, &e))?,
+            Some(s) => {
+                parse_ipv6_interface(s).map_err(|e| throw_syscall_error(ctx, syscall, &e))?
+            },
         };
         let res = if join {
             sock_ref.join_multicast_v6(&group, idx)
@@ -548,7 +561,12 @@ pub fn sock_source_membership(
         "dropSourceSpecificMembership"
     };
     let Some(sock) = socket else {
-        return Err(throw_coded(ctx, "Error", "EBADF", format!("{syscall} EBADF")));
+        return Err(throw_coded(
+            ctx,
+            "Error",
+            "EBADF",
+            format!("{syscall} EBADF"),
+        ));
     };
 
     if is_ipv6 {
@@ -560,7 +578,9 @@ pub fn sock_source_membership(
             .map_err(|_| throw_coded(ctx, "Error", "EINVAL", format!("{syscall} EINVAL")))?;
         let idx = match multicast_iface {
             None | Some("") => 0,
-            Some(s) => parse_ipv6_interface(s).map_err(|e| throw_syscall_error(ctx, syscall, &e))?,
+            Some(s) => {
+                parse_ipv6_interface(s).map_err(|e| throw_syscall_error(ctx, syscall, &e))?
+            },
         };
         ipv6_ssm_setsockopt(sock, join, source, group, idx)
             .map_err(|e| throw_syscall_error(ctx, syscall, &e))
@@ -587,9 +607,9 @@ pub fn sock_source_membership(
                 .map_err(|_| throw_coded(ctx, "Error", "EINVAL", format!("{syscall} EINVAL")))?;
             let iface_ip = match multicast_iface {
                 None | Some("") => Ipv4Addr::UNSPECIFIED,
-                Some(s) => s
-                    .parse::<Ipv4Addr>()
-                    .map_err(|_| throw_coded(ctx, "Error", "EINVAL", format!("{syscall} EINVAL")))?,
+                Some(s) => s.parse::<Ipv4Addr>().map_err(|_| {
+                    throw_coded(ctx, "Error", "EINVAL", format!("{syscall} EINVAL"))
+                })?,
             };
             let sock_ref = SockRef::from(sock);
             let res = if join {
@@ -614,7 +634,12 @@ pub fn sock_source_membership(
         ))]
         {
             let _ = (sock, source_addr, group_addr, multicast_iface);
-            Err(throw_coded(ctx, "Error", "ENOTSUP", format!("{syscall} ENOTSUP")))
+            Err(throw_coded(
+                ctx,
+                "Error",
+                "ENOTSUP",
+                format!("{syscall} ENOTSUP"),
+            ))
         }
     }
 }

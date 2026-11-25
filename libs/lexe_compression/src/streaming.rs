@@ -8,9 +8,9 @@ use std::io::{self, Write};
 #[cfg(all(not(feature = "brotli-c"), feature = "brotli-rust"))]
 use brotli as brotlic;
 
-use crate::raw_zlib::{ZlibMode, ZlibOptions};
 #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
 use crate::raw_zlib::{RawZlibDecoder, RawZlibEncoder};
+use crate::raw_zlib::{ZlibMode, ZlibOptions};
 
 pub enum StreamingDecoderInner {
     #[cfg(any(feature = "flate2-c", feature = "flate2-rust"))]
@@ -47,10 +47,9 @@ impl StreamingDecoder {
             #[cfg(feature = "brotli-c")]
             "br" => StreamingDecoderInner::Brotli(brotlic::DecompressorWriter::new(Vec::new())),
             #[cfg(all(not(feature = "brotli-c"), feature = "brotli-rust"))]
-            "br" => StreamingDecoderInner::Brotli(brotlic::DecompressorWriter::new(
-                Vec::new(),
-                8_096,
-            )),
+            "br" => {
+                StreamingDecoderInner::Brotli(brotlic::DecompressorWriter::new(Vec::new(), 8_096))
+            },
             "" | "identity" => StreamingDecoderInner::Identity,
             _ => {
                 return Err(io::Error::new(
@@ -188,7 +187,11 @@ impl StreamingEncoder {
             #[cfg(feature = "brotli-c")]
             "br" => {
                 use brotlic::{BrotliEncoderOptions, Quality};
-                let q = if opts.level < 0 { 11 } else { opts.level.clamp(0, 11) as u8 };
+                let q = if opts.level < 0 {
+                    11
+                } else {
+                    opts.level.clamp(0, 11) as u8
+                };
                 let quality = Quality::new(q).map_err(|e| io::Error::other(e.to_string()))?;
                 let encoder = BrotliEncoderOptions::new()
                     .quality(quality)
@@ -201,7 +204,11 @@ impl StreamingEncoder {
             },
             #[cfg(all(not(feature = "brotli-c"), feature = "brotli-rust"))]
             "br" => {
-                let q = if opts.level < 0 { 11 } else { opts.level.clamp(0, 11) as u32 };
+                let q = if opts.level < 0 {
+                    11
+                } else {
+                    opts.level.clamp(0, 11) as u32
+                };
                 StreamingEncoderInner::Brotli(brotlic::CompressorWriter::new(
                     Vec::new(),
                     8_096,

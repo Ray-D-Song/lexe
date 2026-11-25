@@ -193,8 +193,9 @@ mod imp {
         fn apply_dictionary(&mut self) -> io::Result<()> {
             if let Some(dict) = &self.opts.dictionary {
                 if matches!(self.mode, ZlibMode::Deflate | ZlibMode::DeflateRaw) {
-                    let len = u32::try_from(dict.len())
-                        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "dictionary too large"))?;
+                    let len = u32::try_from(dict.len()).map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "dictionary too large")
+                    })?;
                     let rc = unsafe { z::deflateSetDictionary(self.strm, dict.as_ptr(), len) };
                     if rc != z::Z_OK {
                         return Err(unsafe { zlib_err(rc, self.strm) });
@@ -398,8 +399,9 @@ mod imp {
         fn apply_raw_dictionary(&mut self) -> io::Result<()> {
             if let Some(dict) = &self.opts.dictionary {
                 if self.mode == ZlibMode::InflateRaw {
-                    let len = u32::try_from(dict.len())
-                        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "dictionary too large"))?;
+                    let len = u32::try_from(dict.len()).map_err(|_| {
+                        io::Error::new(io::ErrorKind::InvalidInput, "dictionary too large")
+                    })?;
                     let rc = unsafe { z::inflateSetDictionary(self.strm, dict.as_ptr(), len) };
                     if rc != z::Z_OK {
                         return Err(unsafe { zlib_err(rc, self.strm) });
@@ -501,9 +503,8 @@ mod imp {
                             let len = u32::try_from(dict.len()).map_err(|_| {
                                 io::Error::new(io::ErrorKind::InvalidInput, "dictionary too large")
                             })?;
-                            let drc = unsafe {
-                                z::inflateSetDictionary(self.strm, dict.as_ptr(), len)
-                            };
+                            let drc =
+                                unsafe { z::inflateSetDictionary(self.strm, dict.as_ptr(), len) };
                             if drc != z::Z_OK {
                                 return Err(unsafe { zlib_err(drc, self.strm) });
                             }
@@ -582,7 +583,9 @@ mod imp {
             let level = if opts.level < 0 { 6 } else { opts.level as u32 };
             let comp = Compression::new(level);
             let inner = match mode {
-                ZlibMode::Gzip => RustEncInner::Gzip(flate2::write::GzEncoder::new(Vec::new(), comp)),
+                ZlibMode::Gzip => {
+                    RustEncInner::Gzip(flate2::write::GzEncoder::new(Vec::new(), comp))
+                },
                 ZlibMode::Deflate => RustEncInner::Compress(flate2::Compress::new(comp, true)),
                 ZlibMode::DeflateRaw => RustEncInner::Compress(flate2::Compress::new(comp, false)),
                 _ => {
@@ -803,7 +806,9 @@ mod imp {
                         let before_out = decomp.total_out();
                         let status = decomp
                             .decompress(&input[consumed..], &mut scratch, flush)
-                            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+                            .map_err(|e| {
+                                io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+                            })?;
                         consumed += (decomp.total_in() - before_in) as usize;
                         let written = (decomp.total_out() - before_out) as usize;
                         out.extend_from_slice(&scratch[..written]);

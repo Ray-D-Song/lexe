@@ -273,16 +273,14 @@ impl<'js> Socket<'js> {
         let mut signal_val: Option<Value<'js>> = None;
 
         let socket_type = if let Some(obj) = type_or_options.as_object() {
-            let ty = obj
-                .get_optional::<_, String>("type")?
-                .ok_or_else(|| {
-                    throw_coded(
-                        &ctx,
-                        "TypeError",
-                        "ERR_INVALID_ARG_TYPE",
-                        "The \"options.type\" property must be 'udp4' or 'udp6'.",
-                    )
-                })?;
+            let ty = obj.get_optional::<_, String>("type")?.ok_or_else(|| {
+                throw_coded(
+                    &ctx,
+                    "TypeError",
+                    "ERR_INVALID_ARG_TYPE",
+                    "The \"options.type\" property must be 'udp4' or 'udp6'.",
+                )
+            })?;
             bind_options.reuse_addr = obj.get_optional::<_, bool>("reuseAddr")?.unwrap_or(false);
             bind_options.reuse_port = obj.get_optional::<_, bool>("reusePort")?.unwrap_or(false);
             bind_options.ipv6_only = obj.get_optional::<_, bool>("ipv6Only")?.unwrap_or(false);
@@ -369,7 +367,16 @@ impl<'js> Socket<'js> {
         bind_host: String,
         bind_port: u16,
     ) -> Result<()> {
-        let (is_closed, receiver_running, ready_latch, is_ipv6, bind_options, connect_latch, q_bytes, q_count) = {
+        let (
+            is_closed,
+            receiver_running,
+            ready_latch,
+            is_ipv6,
+            bind_options,
+            connect_latch,
+            q_bytes,
+            q_count,
+        ) = {
             let borrow = socket_class.borrow();
             if borrow.is_bound.load(Ordering::SeqCst) {
                 return Err(throw_coded(
@@ -863,11 +870,21 @@ impl<'js> Socket<'js> {
         };
 
         let mut it = args.0.into_iter();
-        let offset_val = it.next().unwrap_or_else(|| Value::new_undefined(ctx.clone()));
-        let length_val = it.next().unwrap_or_else(|| Value::new_undefined(ctx.clone()));
-        let mut port_val = it.next().unwrap_or_else(|| Value::new_undefined(ctx.clone()));
-        let mut address_val = it.next().unwrap_or_else(|| Value::new_undefined(ctx.clone()));
-        let mut cb_val = it.next().unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+        let offset_val = it
+            .next()
+            .unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+        let length_val = it
+            .next()
+            .unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+        let mut port_val = it
+            .next()
+            .unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+        let mut address_val = it
+            .next()
+            .unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+        let mut cb_val = it
+            .next()
+            .unwrap_or_else(|| Value::new_undefined(ctx.clone()));
 
         let slice = if !is_connected {
             let use_slice = (!address_val.is_undefined() && !address_val.is_null())
@@ -1108,11 +1125,7 @@ impl<'js> Socket<'js> {
     }
 
     #[qjs(rename = "setMulticastTTL")]
-    pub fn set_multicast_ttl(
-        this: This<Class<'js, Self>>,
-        ctx: Ctx<'js>,
-        ttl: i32,
-    ) -> Result<i32> {
+    pub fn set_multicast_ttl(this: This<Class<'js, Self>>, ctx: Ctx<'js>, ttl: i32) -> Result<i32> {
         let borrow = this.borrow();
         sock_set_multicast_ttl(borrow.socket.as_deref(), &ctx, borrow.is_ipv6, ttl)
     }

@@ -175,7 +175,10 @@ impl<'js> TimerHandle<'js> {
         self.loop_ref.is_referenced()
     }
 
-    pub fn refresh(this: rquickjs::prelude::This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Class<'js, Self>> {
+    pub fn refresh(
+        this: rquickjs::prelude::This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+    ) -> Result<Class<'js, Self>> {
         let (id, rt_key, interval, repeating, referenced, destroyed, callback, loop_ref) = {
             let h = this.borrow();
             (
@@ -287,7 +290,10 @@ impl<'js> TimerHandle<'js> {
         Ok(this.0)
     }
 
-    pub fn close(this: rquickjs::prelude::This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Class<'js, Self>> {
+    pub fn close(
+        this: rquickjs::prelude::This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+    ) -> Result<Class<'js, Self>> {
         let val = this.0.clone().into_value();
         clear_timeout_interval(ctx, Opt(Some(val)))?;
         Ok(this.0)

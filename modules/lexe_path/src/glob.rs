@@ -8,8 +8,14 @@ enum SegmentNode {
     Literal(char),
     AnyChar,
     AnySeq,
-    CharClass { negate: bool, items: Vec<ClassItem> },
-    ExtGlob { kind: ExtKind, alts: Vec<Vec<SegmentNode>> },
+    CharClass {
+        negate: bool,
+        items: Vec<ClassItem>,
+    },
+    ExtGlob {
+        kind: ExtKind,
+        alts: Vec<Vec<SegmentNode>>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,7 +227,8 @@ fn match_single_pattern(path: &str, pattern: &str) -> bool {
     // Strip a non-significant trailing `/` on path when pattern does not require one
     // (`a/b/` matches `a/b` and `a/**`). Keep `p.trailing_slash` true only when
     // checking whether `**` matched a trailing slash in e.g. `a/` vs `a/**`.
-    let had_trailing_empty = !pat.trailing_slash && p.trailing_slash && matches!(pat.segs.last(), Some(&"**"));
+    let had_trailing_empty =
+        !pat.trailing_slash && p.trailing_slash && matches!(pat.segs.last(), Some(&"**"));
     if had_trailing_empty {
         // `a/` vs `a/**`: treat trailing slash as an empty terminal segment for trailing `**`.
         p.segs.push("");
@@ -481,7 +488,13 @@ fn match_nodes(
     res
 }
 
-fn alt_matches_slice(chars: &[char], start: usize, end: usize, alt: &[SegmentNode], at_start: bool) -> bool {
+fn alt_matches_slice(
+    chars: &[char],
+    start: usize,
+    end: usize,
+    alt: &[SegmentNode],
+    at_start: bool,
+) -> bool {
     let mut memo = HashMap::new();
     match_nodes(&chars[start..end], 0, alt, 0, at_start, &mut memo)
 }

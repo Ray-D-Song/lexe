@@ -1184,9 +1184,7 @@ fn windows_reader_loop(fd: i32, cancel: WorkerCancel, tx: mpsc::UnboundedSender<
     use std::os::windows::io::{FromRawHandle, IntoRawHandle};
 
     let Some(handle) = win_cancel::handle_for_fd(fd) else {
-        let _ = tx.send(ReaderMsg::Error(
-            "EBADF: bad file descriptor, read".into(),
-        ));
+        let _ = tx.send(ReaderMsg::Error("EBADF: bad file descriptor, read".into()));
         return;
     };
 
@@ -2081,7 +2079,10 @@ mod tests {
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        assert_eq!(unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &init_ws) }, 0);
+        assert_eq!(
+            unsafe { libc::ioctl(master, libc::TIOCSWINSZ, &init_ws) },
+            0
+        );
         assert!(isatty(slave));
         assert_eq!(window_size_for_fd(slave), (90, 30));
 

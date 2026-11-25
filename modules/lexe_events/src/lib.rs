@@ -930,10 +930,7 @@ fn is_capture_rejections_enabled<'js>(ctx: &Ctx<'js>, this: &Object<'js>) -> Res
     Ok(false)
 }
 
-fn throw_unhandled_error<'js>(
-    ctx: &Ctx<'js>,
-    args: &[Value<'js>],
-) -> rquickjs::Error {
+fn throw_unhandled_error<'js>(ctx: &Ctx<'js>, args: &[Value<'js>]) -> rquickjs::Error {
     let make_err: Result<Value<'js>> = (|| {
         let helper: Function<'js> = ctx.eval(
             r#"(function (hasArg, er) {
@@ -1021,13 +1018,7 @@ fn attach_capture_rejection<'js>(
 })"#,
     )?;
     let args_vec: Vec<Value<'js>> = args.to_vec();
-    handler.call::<_, ()>((
-        this.clone(),
-        ret.clone(),
-        then_val,
-        event.clone(),
-        args_vec,
-    ))?;
+    handler.call::<_, ()>((this.clone(), ret.clone(), then_val, event.clone(), args_vec))?;
     Ok(())
 }
 

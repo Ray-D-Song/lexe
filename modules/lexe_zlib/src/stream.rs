@@ -132,7 +132,10 @@ impl EncoderHandle {
     pub fn params<'js>(&self, ctx: Ctx<'js>, level: i32, strategy: i32) -> Result<Value<'js>> {
         let mut slot = self.inner.borrow_mut();
         let Some(handle) = slot.as_mut() else {
-            return Err(Exception::throw_message(&ctx, "zlib handle already finished"));
+            return Err(Exception::throw_message(
+                &ctx,
+                "zlib handle already finished",
+            ));
         };
         let out = match handle {
             EncoderHandleInner::Encode(enc) => enc.params(level, strategy),
@@ -150,7 +153,10 @@ impl EncoderHandle {
     pub fn reset(&self, ctx: Ctx<'_>) -> Result<()> {
         let mut slot = self.inner.borrow_mut();
         let Some(handle) = slot.as_mut() else {
-            return Err(Exception::throw_message(&ctx, "zlib handle already finished"));
+            return Err(Exception::throw_message(
+                &ctx,
+                "zlib handle already finished",
+            ));
         };
         let res = match handle {
             EncoderHandleInner::Encode(enc) => enc.reset(),
