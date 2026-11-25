@@ -594,3 +594,208 @@ describe("backup", () => {
     expect(message).toBe("getter-sentinel");
   });
 });
+
+describe("SQLTagStore and createTagStore", () => {
+  it("executes tagged template literals safely with LRU eviction", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec("CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT) STRICT;");
+      const store = db.createTagStore(2);
+      expect(store.capacity).toBe(2);
+      expect(store.size).toBe(0);
+      expect(store.db).toBe(db);
+
+      const SQLTagStoreCtor = Object.getPrototypeOf(store).constructor;
+      let illegErr: any;
+      try {
+        new SQLTagStoreCtor();
+      } catch (e) {
+        illegErr = e;
+      }
+      expect(illegErr?.code).toBe("ERR_ILLEGAL_CONSTRUCTOR");
+
+      const ins = store.run`INSERT INTO items (id, name) VALUES (${1}, ${"one'; DROP TABLE items; --"})`;
+      expect(ins).toEqual({ changes: 1, lastInsertRowid: 1 });
+      expect(store.size).toBe(1);
+
+      store.run`INSERT INTO items (id, name) VALUES (${2}, ${"two"})`;
+      expect(store.get`SELECT name FROM items WHERE id = ${1}`).toEqual(
+        nullProto({ name: "one'; DROP TABLE items; --" })
+      );
+      expect(store.size).toBe(2);
+
+      // Adding a 3rd distinct SQL evicts the LRU entry; total size remains capped at capacity
+      expect(store.all`SELECT * FROM items ORDER BY id`).toEqual([
+        nullProto({ id: 1, name: "one'; DROP TABLE items; --" }),
+        nullProto({ id: 2, name: "two" }),
+      ]);
+      expect(store.size).toBe(2);
+
+      const rows: unknown[] = [];
+      for (const row of store.iterate`SELECT id FROM items ORDER BY id`) {
+        rows.push(row);
+      }
+      expect(rows).toEqual([nullProto({ id: 1 }), nullProto({ id: 2 })]);
+
+      // Interpolated objects are treated as positional values (never named params)
+      expect(() => store.get`SELECT ${({}) as any}`).toThrow();
+
+      store.clear();
+      expect(store.size).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("setAuthorizer", () => {
+  it("exposes authorizer constants and controls SQL compilation", () => {
+    expect(constants.SQLITE_OK).toBe(0);
+    expect(constants.SQLITE_DENY).toBe(1);
+    expect(constants.SQLITE_IGNORE).toBe(2);
+    expect(constants.SQLITE_SELECT).toBe(21);
+    expect(constants.SQLITE_READ).toBe(20);
+    const desc = Object.getOwnPropertyDescriptor(constants, "SQLITE_DENY");
+    expect(desc?.writable).toBe(false);
+    expect(desc?.configurable).toBe(false);
+    expect(desc?.enumerable).toBe(true);
+
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec("CREATE TABLE secrets(id INTEGER PRIMARY KEY, pub TEXT, priv TEXT);");
+      db.exec("INSERT INTO secrets VALUES (1, 'hello', 'topsecret');");
+
+      const seen: Array<[number, string | null, string | null, string | null, string | null]> = [];
+      db.setAuthorizer((action, a1, a2, a3, a4) => {
+        seen.push([action, a1, a2, a3, a4]);
+        if (action === constants.SQLITE_READ && a2 === "priv") {
+          return constants.SQLITE_IGNORE;
+        }
+        if (action === constants.SQLITE_DELETE) {
+          return constants.SQLITE_DENY;
+        }
+        return constants.SQLITE_OK;
+      });
+
+      const row = db.prepare("SELECT pub, priv FROM secrets").get();
+      expect(row).toEqual(nullProto({ pub: "hello", priv: null }));
+      expect(seen.some(([action, a1, a2, a3]) => action === constants.SQLITE_READ && a1 === "secrets" && a2 === "priv" && a3 === "main")).toBe(true);
+
+      let denyErr: any;
+      try {
+        db.exec("DELETE FROM secrets");
+      } catch (e) {
+        denyErr = e;
+      }
+      expect(denyErr?.code).toBe("ERR_SQLITE_ERROR");
+
+      // Clearing authorizer re-allows DELETE
+      db.setAuthorizer(null);
+      db.exec("DELETE FROM secrets");
+      expect(db.prepare("SELECT COUNT(*) AS c FROM secrets").get()).toEqual(nullProto({ c: 0 }));
+
+      // Re-entrancy into db methods from inside authorizer throws ERR_INVALID_STATE
+      let innerErrCode = "";
+      db.setAuthorizer(() => {
+        try {
+          db.exec("SELECT 1");
+        } catch (e: any) {
+          innerErrCode = e.code;
+        }
+        return constants.SQLITE_OK;
+      });
+      db.prepare("SELECT 1").get();
+      expect(innerErrCode).toBe("ERR_INVALID_STATE");
+
+      // Invalid return value from authorizer throws ERR_INVALID_RETURN_VALUE
+      db.setAuthorizer(() => "bad" as any);
+      let retErr: any;
+      try {
+        db.prepare("SELECT 1");
+      } catch (e) {
+        retErr = e;
+      }
+      expect(retErr?.code).toBe("ERR_INVALID_RETURN_VALUE");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("enableDefensive and limits", () => {
+  it("enables defensive mode by default and allows toggling it", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec("CREATE TABLE t(x INTEGER);");
+      db.exec("PRAGMA writable_schema = ON;");
+      expect(() =>
+        db.exec("UPDATE sqlite_schema SET name = 't2' WHERE name = 't'")
+      ).toThrow();
+
+      db.enableDefensive(false);
+      db.exec("PRAGMA writable_schema = ON;");
+      db.exec("UPDATE sqlite_schema SET name = 't2' WHERE name = 't'");
+      db.exec("PRAGMA writable_schema = RESET;");
+      db.enableDefensive(true);
+      db.exec("PRAGMA writable_schema = ON;");
+      expect(() =>
+        db.exec("UPDATE sqlite_schema SET name = 't3' WHERE name = 't2'")
+      ).toThrow();
+    } finally {
+      db.close();
+    }
+
+    const dbNonDef = new DatabaseSync(":memory:", { defensive: false });
+    try {
+      dbNonDef.exec("CREATE TABLE t(x INTEGER);");
+      dbNonDef.exec("PRAGMA writable_schema = ON;");
+      expect(() =>
+        dbNonDef.exec("UPDATE sqlite_schema SET name = 't2' WHERE name = 't'")
+      ).not.toThrow();
+    } finally {
+      dbNonDef.close();
+    }
+  });
+
+  it("supports limits constructor option and dynamic limits property", () => {
+    const db = new DatabaseSync(":memory:", { limits: { sqlLength: 100 } });
+    try {
+      expect(db.limits.sqlLength).toBe(100);
+      expect(() => db.exec(`SELECT '${"a".repeat(200)}'`)).toThrow();
+
+      db.limits.sqlLength = Infinity;
+      expect(db.limits.sqlLength).toBeGreaterThan(1000);
+      expect(db.prepare(`SELECT '${"a".repeat(200)}' AS s`).get()).toEqual(
+        nullProto({ s: "a".repeat(200) })
+      );
+
+      for (const k of [
+        "length",
+        "sqlLength",
+        "column",
+        "exprDepth",
+        "compoundSelect",
+        "vdbeOp",
+        "functionArg",
+        "attach",
+        "likePatternLength",
+        "variableNumber",
+        "triggerDepth",
+      ]) {
+        expect(typeof (db.limits as any)[k]).toBe("number");
+      }
+
+      db.limits.variableNumber = 2;
+      expect(() => db.prepare("SELECT ?, ?, ?")).toThrow();
+
+      expect(() => {
+        db.limits.sqlLength = -1;
+      }).toThrow(RangeError);
+      expect(() => {
+        (db.limits as any).sqlLength = "10";
+      }).toThrow(TypeError);
+    } finally {
+      db.close();
+    }
+  });
+});

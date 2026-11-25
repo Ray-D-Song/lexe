@@ -35,7 +35,7 @@
 | node:readline | ✔︎ | ✔︎ | — |
 | node:readline/promises | ✔︎ | ✔︎ | — |
 | node:repl | ✔︎ | ✘ | Not implemented |
-| node:sqlite | ✔︎ | ✔︎⚠️ | Targets Node 24.3 on SQLite 3.50.1; missing `createTagStore`, `setAuthorizer`, `enableDefensive`, `limits`, and async UDFs ([details](#nodesqlite)) |
+| node:sqlite | ✔︎ | ✔︎ | — |
 | node:stream | ✔︎ | ✔︎\* | JS polyfill (not native) |
 | node:stream/promises | ✔︎ | ✔︎\* | JS polyfill (not native) |
 | node:stream/web | ✔︎ | ✔︎⚠️ | `TransformStream` rejects `readableType`/`writableType`; BYOB/transfer and piping WPT edge cases ([details](#nodestreamweb)) |
@@ -197,12 +197,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Missing common Node.js properties and methods: `execPath`, `execArgv`, `ppid`, `uptime()`, `memoryUsage()` / `memoryUsage.rss()`, `cpuUsage()`, `resourceUsage()`, `constrainedMemory()`, `availableMemory()`, `umask()`, `title`, `config`, `features`, `allowedNodeEnvironmentFlags`, `report`, `permission`, `loadEnvFile()`, `getActiveResourcesInfo()`, `setUncaughtExceptionCaptureCallback()`, `abort()`, `finalization`, `ref()`/`unref()`, and `setSourceMapsEnabled()`.
 - `process.version` (`v24.3.0`) and `process.versions.node` (`24.3.0`) advertise Node 24.3 compatibility while `process.release.name` is `"lexe"` and engine keys such as `v8`, `uv`, and `openssl` are absent from `process.versions`.
-
-#### `node:sqlite`
-
-- Targets the Node 24.3 API on SQLite 3.50.1 (enabled by default as an experimental feature; use `--no-experimental-sqlite` to disable it).
-- Missing newer Node 24 SQLite APIs: `DatabaseSync.prototype.createTagStore()` / `SQLTagStore`, `setAuthorizer()`, `enableDefensive()` / `{ defensive }` option, and `limits`.
-- Asynchronous user-defined SQL functions are not supported.
 
 #### `node:stream/web`
 

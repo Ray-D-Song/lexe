@@ -834,16 +834,16 @@ configure QuickJS). Serialization, snapshots, and profilers are not implemented.
 
 ## sqlite
 
-Experimental `node:sqlite` implementation targeting the Node.js 24.3 API and backed by SQLite 3.50.1. It is available only through the `node:` scheme, enabled by default, and can be disabled with `--no-experimental-sqlite`.
+Experimental `node:sqlite` implementation targeting Node.js 24 on SQLite 3.50.1. It is available only through the `node:` scheme, enabled by default, and can be disabled with `--no-experimental-sqlite`.
 
 Exports:
 
 - `DatabaseSync`
 - `StatementSync`
 - `backup()`
-- changeset conflict `constants`
+- changeset conflict and authorizer `constants` (`SQLITE_OK`, `SQLITE_DENY`, `SQLITE_IGNORE`, and SQLite authorizer action codes)
 
-`DatabaseSync` supports in-memory and file databases, `open()`, `close()`, `exec()`, `prepare()`, `location()`, scalar `function()`, `aggregate()`, `createSession()`, `applyChangeset()`, `loadExtension()`, and `enableLoadExtension()`. `StatementSync` supports `run()`, `get()`, `all()`, `iterate()`, `columns()`, named-parameter controls, BigInt reads, and array rows. Session objects expose `changeset()`, `patchset()`, and `close()`, but `Session` is intentionally not a module export.
+`DatabaseSync` supports in-memory and file databases, `{ open, readOnly, enableForeignKeyConstraints, enableDoubleQuotedStringLiterals, defensive, timeout, allowExtension, limits }` options, `open()`, `close()`, `exec()`, `prepare()`, `location()`, scalar `function()`, `aggregate()`, `createSession()`, `applyChangeset()`, `loadExtension()`, `enableLoadExtension()`, `enableDefensive()`, `setAuthorizer()`, `limits`, and `createTagStore()` (`SQLTagStore` with `run`, `get`, `all`, `iterate`, `clear`, `size`, `capacity`, `db`). `StatementSync` supports `run()`, `get()`, `all()`, `iterate()`, `columns()`, named-parameter controls, BigInt reads, and array rows. Session objects expose `changeset()`, `patchset()`, and `close()`, while internal `Session` and `SQLTagStore` constructors are intentionally not module exports.
 
 The Node 24.3 differential fixture covers module shape, statements, functions, aggregates, sessions/changesets, extension loading, backup, errors, and repeated lifecycle/backup stability. See [`compat/node-sqlite/README.md`](compat/node-sqlite/README.md).
 

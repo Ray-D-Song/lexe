@@ -1,33 +1,55 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::ptr;
+use std::os::raw::{c_char, c_int, c_void};
+use std::ptr::{self, NonNull};
 use std::rc::{Rc, Weak};
 
 use crate::error::{
-    make_sqlite_error, throw_invalid_arg_type, throw_invalid_arg_value, throw_invalid_state,
-    throw_load_extension_error, throw_out_of_range, throw_sqlite_error, throw_type_error,
+    make_sqlite_error, throw_invalid_arg_type, throw_invalid_arg_value, throw_invalid_return_value,
+    throw_invalid_state, throw_load_extension_error, throw_out_of_range, throw_sqlite_error,
+    throw_type_error,
 };
 use crate::ffi::{
-    self, sqlite3, sqlite3_db_config_enable, SQLITE_DBCONFIG_DQS_DDL, SQLITE_DBCONFIG_DQS_DML,
-    SQLITE_DBCONFIG_ENABLE_FKEY, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, SQLITE_OK,
-    SQLITE_OPEN_CREATE, SQLITE_OPEN_READONLY, SQLITE_OPEN_READWRITE, SQLITE_OPEN_URI,
+    self, sqlite3, sqlite3_db_config_enable, SQLITE_DBCONFIG_DEFENSIVE, SQLITE_DBCONFIG_DQS_DDL,
+    SQLITE_DBCONFIG_DQS_DML, SQLITE_DBCONFIG_ENABLE_FKEY, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION,
+    SQLITE_DENY, SQLITE_IGNORE, SQLITE_OK, SQLITE_OPEN_CREATE, SQLITE_OPEN_READONLY,
+    SQLITE_OPEN_READWRITE, SQLITE_OPEN_URI,
 };
 use crate::function::{register_aggregate, register_scalar_function, CallbackEntry};
 use crate::path::{js_type_name, parse_path};
 use crate::session::{apply_changeset, create_session, SessionInner};
 use crate::statement::{StatementInner, StatementSync};
+use crate::tag_store::{create_tag_store, SQLTagStore};
 use rquickjs::class::{Trace, Tracer};
-use rquickjs::function::Opt;
-use rquickjs::{Class, Ctx, Function, IntoJs, Object, Result, Value};
+use rquickjs::function::{Opt, This};
+use rquickjs::object::Accessor;
+use rquickjs::qjs;
+use rquickjs::{Class, Ctx, Error, Function, IntoJs, Object, Persistent, Result, Value};
+
+const LIMIT_DEFS: [(&str, i32); 11] = [
+    ("length", ffi::SQLITE_LIMIT_LENGTH),
+    ("sqlLength", ffi::SQLITE_LIMIT_SQL_LENGTH),
+    ("column", ffi::SQLITE_LIMIT_COLUMN),
+    ("exprDepth", ffi::SQLITE_LIMIT_EXPR_DEPTH),
+    ("compoundSelect", ffi::SQLITE_LIMIT_COMPOUND_SELECT),
+    ("vdbeOp", ffi::SQLITE_LIMIT_VDBE_OP),
+    ("functionArg", ffi::SQLITE_LIMIT_FUNCTION_ARG),
+    ("attach", ffi::SQLITE_LIMIT_ATTACHED),
+    ("likePatternLength", ffi::SQLITE_LIMIT_LIKE_PATTERN_LENGTH),
+    ("variableNumber", ffi::SQLITE_LIMIT_VARIABLE_NUMBER),
+    ("triggerDepth", ffi::SQLITE_LIMIT_TRIGGER_DEPTH),
+];
 
 #[derive(Clone, Debug)]
 pub struct OpenConfig {
     pub read_only: bool,
     pub enable_foreign_keys: bool,
     pub enable_dqs: bool,
+    pub defensive: bool,
     pub timeout: i32,
     pub allow_extension: bool,
+    pub limits: Vec<(i32, i32)>,
 }
 
 impl Default for OpenConfig {
@@ -36,8 +58,104 @@ impl Default for OpenConfig {
             read_only: false,
             enable_foreign_keys: true,
             enable_dqs: false,
+            defensive: true,
             timeout: 0,
             allow_extension: false,
+            limits: Vec::new(),
+        }
+    }
+}
+
+pub struct AuthorizerEntry<'js> {
+    db: Weak<DatabaseInner<'js>>,
+    raw_ctx: NonNull<qjs::JSContext>,
+    function: Persistent<Function<'static>>,
+}
+
+struct AuthorizingScope<'a, 'js> {
+    inner: &'a DatabaseInner<'js>,
+    prev: bool,
+}
+
+impl<'a, 'js> AuthorizingScope<'a, 'js> {
+    fn new(inner: &'a DatabaseInner<'js>) -> Self {
+        let prev = inner.authorizing.replace(true);
+        Self { inner, prev }
+    }
+}
+
+impl<'a, 'js> Drop for AuthorizingScope<'a, 'js> {
+    fn drop(&mut self) {
+        self.inner.authorizing.set(self.prev);
+    }
+}
+
+impl<'js> AuthorizerEntry<'js> {
+    unsafe fn optional_arg<'c>(ctx: &Ctx<'c>, ptr: *const c_char) -> Result<Value<'c>> {
+        if ptr.is_null() {
+            return Ok(Value::new_null(ctx.clone()));
+        }
+        let s = std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned();
+        s.into_js(ctx)
+    }
+
+    unsafe extern "C" fn x_auth(
+        user_data: *mut c_void,
+        action_code: c_int,
+        arg1: *const c_char,
+        arg2: *const c_char,
+        arg3: *const c_char,
+        arg4: *const c_char,
+    ) -> c_int {
+        if user_data.is_null() {
+            return SQLITE_DENY;
+        }
+        let entry = &*(user_data as *const AuthorizerEntry<'js>);
+        let ctx = Ctx::from_raw(entry.raw_ctx);
+        let Some(db) = entry.db.upgrade() else {
+            return SQLITE_DENY;
+        };
+        let _scope = AuthorizingScope::new(&db);
+
+        let Ok(func) = entry.function.clone().restore(&ctx) else {
+            return SQLITE_DENY;
+        };
+
+        let (Ok(a1), Ok(a2), Ok(a3), Ok(a4)) = (
+            Self::optional_arg(&ctx, arg1),
+            Self::optional_arg(&ctx, arg2),
+            Self::optional_arg(&ctx, arg3),
+            Self::optional_arg(&ctx, arg4),
+        ) else {
+            return SQLITE_DENY;
+        };
+
+        match func.call::<_, Value<'js>>((action_code, a1, a2, a3, a4)) {
+            Ok(ret) => {
+                if let Some(code) = ret.as_int() {
+                    if matches!(code, SQLITE_OK | SQLITE_DENY | SQLITE_IGNORE) {
+                        return code;
+                    }
+                } else if let Some(n) = ret.as_number() {
+                    if n == SQLITE_OK as f64 || n == SQLITE_DENY as f64 || n == SQLITE_IGNORE as f64
+                    {
+                        return n as c_int;
+                    }
+                }
+                let _ = throw_invalid_return_value(
+                    &ctx,
+                    "SQLITE_OK, SQLITE_DENY, or SQLITE_IGNORE",
+                    "authorizer",
+                    &js_type_name(&ret),
+                );
+                db.set_pending_exception(ctx.catch());
+                SQLITE_DENY
+            },
+            Err(Error::Exception) => {
+                db.set_pending_exception(ctx.catch());
+                SQLITE_DENY
+            },
+            Err(_) => SQLITE_DENY,
         }
     }
 }
@@ -49,9 +167,11 @@ pub struct DatabaseInner<'js> {
     pub open_generation: Cell<u64>,
     pub enable_load_extension: Cell<bool>,
     pub busy_depth: Cell<u32>,
+    pub authorizing: Cell<bool>,
     pub statements: RefCell<Vec<Weak<StatementInner<'js>>>>,
     pub sessions: RefCell<Vec<Weak<SessionInner<'js>>>>,
     pub callbacks: RefCell<Vec<Weak<CallbackEntry<'js>>>>,
+    pub authorizer: RefCell<Option<Box<AuthorizerEntry<'js>>>>,
     pub aggregate_values: RefCell<HashMap<u64, Value<'js>>>,
     pub pending_exception: RefCell<Option<Value<'js>>>,
     pub next_aggregate_id: Cell<u64>,
@@ -70,9 +190,11 @@ impl<'js> DatabaseInner<'js> {
             open_generation: Cell::new(0),
             enable_load_extension: Cell::new(false),
             busy_depth: Cell::new(0),
+            authorizing: Cell::new(false),
             statements: RefCell::new(Vec::new()),
             sessions: RefCell::new(Vec::new()),
             callbacks: RefCell::new(Vec::new()),
+            authorizer: RefCell::new(None),
             aggregate_values: RefCell::new(HashMap::new()),
             pending_exception: RefCell::new(None),
             next_aggregate_id: Cell::new(1),
@@ -106,6 +228,48 @@ impl<'js> DatabaseInner<'js> {
         } else {
             Err(throw_invalid_state(ctx, "database is not open"))
         }
+    }
+
+    pub fn require_not_authorizing(&self, ctx: &Ctx<'_>) -> Result<()> {
+        if self.authorizing.get() {
+            Err(throw_invalid_state(
+                ctx,
+                "cannot call database method from authorizer",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn prepare_statement(
+        self: &Rc<Self>,
+        ctx: &Ctx<'js>,
+        sql: &str,
+    ) -> Result<Rc<StatementInner<'js>>> {
+        let c_sql = CString::new(sql)
+            .map_err(|_| throw_invalid_arg_type(ctx, "sql", "string without NUL", "string"))?;
+
+        let db = self.connection();
+        let mut stmt: *mut ffi::sqlite3_stmt = ptr::null_mut();
+        let r =
+            unsafe { ffi::sqlite3_prepare_v2(db, c_sql.as_ptr(), -1, &mut stmt, ptr::null_mut()) };
+
+        if let Some(pending) = self.take_pending_exception() {
+            if !stmt.is_null() {
+                unsafe {
+                    ffi::sqlite3_finalize(stmt);
+                }
+            }
+            return Err(ctx.throw(pending));
+        }
+
+        if r != SQLITE_OK {
+            return Err(throw_sqlite_error(ctx, db));
+        }
+
+        let stmt_inner = Rc::new(StatementInner::new(self.clone(), stmt));
+        self.register_statement(&stmt_inner);
+        Ok(stmt_inner)
     }
 
     pub fn sweep_dead_refs(&self) {
@@ -200,6 +364,14 @@ impl<'js> DatabaseInner<'js> {
             return Err(ctx.throw(err));
         }
 
+        let defensive = if self.config.defensive { 1 } else { 0 };
+        let r = unsafe { sqlite3_db_config_enable(db, SQLITE_DBCONFIG_DEFENSIVE, defensive) };
+        if r != SQLITE_OK {
+            let err = make_sqlite_error(ctx, db)?;
+            self.close_internal();
+            return Err(ctx.throw(err));
+        }
+
         if self.config.allow_extension {
             let r =
                 unsafe { sqlite3_db_config_enable(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1) };
@@ -216,6 +388,12 @@ impl<'js> DatabaseInner<'js> {
                 let err = make_sqlite_error(ctx, db)?;
                 self.close_internal();
                 return Err(ctx.throw(err));
+            }
+        }
+
+        for &(limit_id, limit_val) in &self.config.limits {
+            unsafe {
+                ffi::sqlite3_limit(db, limit_id, limit_val);
             }
         }
 
@@ -244,10 +422,12 @@ impl<'js> DatabaseInner<'js> {
         let db = self.connection.replace(ptr::null_mut());
         if !db.is_null() {
             unsafe {
+                ffi::sqlite3_set_authorizer(db, None, ptr::null_mut());
                 ffi::sqlite3_close_v2(db);
             }
         }
 
+        self.authorizer.borrow_mut().take();
         self.callbacks.borrow_mut().clear();
         self.aggregate_values.borrow_mut().clear();
         self.pending_exception.borrow_mut().take();
@@ -346,12 +526,36 @@ impl<'js> DatabaseSync<'js> {
         if let Some(v) = read_optional_bool(ctx, obj, "enableDoubleQuotedStringLiterals")? {
             config.enable_dqs = v;
         }
+        if let Some(v) = read_optional_bool(ctx, obj, "defensive")? {
+            config.defensive = v;
+        }
         if let Some(v) = read_optional_bool(ctx, obj, "allowExtension")? {
             config.allow_extension = v;
         }
         if obj.contains_key("timeout")? {
             let timeout = read_timeout(ctx, obj)?;
             config.timeout = timeout;
+        }
+        if obj.contains_key("limits")? {
+            let limits_val: Value = obj.get("limits")?;
+            if !limits_val.is_undefined() {
+                let Some(limits_obj) = limits_val.as_object() else {
+                    return Err(throw_invalid_arg_type(
+                        ctx,
+                        "options.limits",
+                        "object",
+                        &js_type_name(&limits_val),
+                    ));
+                };
+                for &(name, limit_id) in &LIMIT_DEFS {
+                    let val: Value = limits_obj.get(name)?;
+                    if !val.is_undefined() {
+                        config
+                            .limits
+                            .push((limit_id, parse_limit_value(ctx, name, &val)?));
+                    }
+                }
+            }
         }
 
         Ok((config, open_immediately))
@@ -397,10 +601,12 @@ impl<'js> DatabaseSync<'js> {
     }
 
     pub fn open(&self, ctx: Ctx<'js>) -> Result<()> {
+        self.inner.require_not_authorizing(&ctx)?;
         self.inner.open(&ctx)
     }
 
     pub fn close(&self, ctx: Ctx<'js>) -> Result<()> {
+        self.inner.require_not_authorizing(&ctx)?;
         if !self.inner.is_open() {
             return Err(throw_invalid_state(&ctx, "database is not open"));
         }
@@ -410,6 +616,7 @@ impl<'js> DatabaseSync<'js> {
 
     pub fn exec(&self, ctx: Ctx<'js>, sql: Value<'js>) -> Result<()> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
         let _busy = BusyScope::new(&self.inner);
 
         let sql = sql
@@ -434,6 +641,7 @@ impl<'js> DatabaseSync<'js> {
         sql: Value<'js>,
     ) -> Result<Class<'js, StatementSync<'js>>> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
         let _busy = BusyScope::new(&self.inner);
 
         let sql = sql
@@ -441,31 +649,109 @@ impl<'js> DatabaseSync<'js> {
             .ok_or_else(|| throw_invalid_arg_type(&ctx, "sql", "string", &js_type_name(&sql)))?
             .to_string()?;
 
-        let c_sql = CString::new(sql)
-            .map_err(|_| throw_invalid_arg_type(&ctx, "sql", "string without NUL", "string"))?;
+        let stmt_inner = self.inner.prepare_statement(&ctx, &sql)?;
+        Class::instance(ctx, StatementSync::from_inner(stmt_inner))
+    }
+
+    pub fn create_tag_store(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        max_size: Opt<Value<'js>>,
+    ) -> Result<Class<'js, SQLTagStore<'js>>> {
+        create_tag_store(this, &ctx, max_size)
+    }
+
+    pub fn enable_defensive(&self, ctx: Ctx<'js>, active: Value<'js>) -> Result<()> {
+        self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
+
+        let active = active.as_bool().ok_or_else(|| {
+            throw_invalid_arg_type(&ctx, "active", "boolean", &js_type_name(&active))
+        })?;
 
         let db = self.inner.connection();
-        let mut stmt: *mut ffi::sqlite3_stmt = ptr::null_mut();
-        let r =
-            unsafe { ffi::sqlite3_prepare_v2(db, c_sql.as_ptr(), -1, &mut stmt, ptr::null_mut()) };
-
-        if let Some(pending) = self.inner.take_pending_exception() {
-            if !stmt.is_null() {
-                unsafe {
-                    ffi::sqlite3_finalize(stmt);
-                }
-            }
-            return Err(ctx.throw(pending));
-        }
-
+        let r = unsafe {
+            sqlite3_db_config_enable(db, SQLITE_DBCONFIG_DEFENSIVE, if active { 1 } else { 0 })
+        };
         if r != SQLITE_OK {
             return Err(throw_sqlite_error(&ctx, db));
         }
+        Ok(())
+    }
 
-        let stmt_inner = Rc::new(StatementInner::new(self.inner.clone(), stmt));
-        self.inner.register_statement(&stmt_inner);
+    pub fn set_authorizer(&self, ctx: Ctx<'js>, callback: Value<'js>) -> Result<()> {
+        self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
 
-        Class::instance(ctx, StatementSync::from_inner(stmt_inner))
+        let db = self.inner.connection();
+        if callback.is_null() {
+            let r = unsafe { ffi::sqlite3_set_authorizer(db, None, ptr::null_mut()) };
+            self.inner.authorizer.borrow_mut().take();
+            if r != SQLITE_OK {
+                return Err(throw_sqlite_error(&ctx, db));
+            }
+            return Ok(());
+        }
+
+        let Some(func) = callback.as_function() else {
+            return Err(throw_invalid_arg_type(
+                &ctx,
+                "callback",
+                "function or null",
+                &js_type_name(&callback),
+            ));
+        };
+
+        let mut boxed = Box::new(AuthorizerEntry {
+            db: Rc::downgrade(&self.inner),
+            raw_ctx: ctx.as_raw(),
+            function: Persistent::save(&ctx, func.clone()),
+        });
+        let ptr = (&mut *boxed as *mut AuthorizerEntry<'js>).cast::<c_void>();
+        let r = unsafe { ffi::sqlite3_set_authorizer(db, Some(AuthorizerEntry::x_auth), ptr) };
+        if r != SQLITE_OK {
+            return Err(throw_sqlite_error(&ctx, db));
+        }
+        *self.inner.authorizer.borrow_mut() = Some(boxed);
+        Ok(())
+    }
+
+    #[qjs(get, enumerable)]
+    pub fn limits(&self, ctx: Ctx<'js>) -> Result<Object<'js>> {
+        self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
+
+        let limits_obj = Object::new(ctx.clone())?;
+        for &(limit_name, limit_id) in &LIMIT_DEFS {
+            let get_inner = Rc::downgrade(&self.inner);
+            let set_inner = Rc::downgrade(&self.inner);
+            let get_fn = move |ctx: Ctx<'js>| -> Result<i32> {
+                let Some(db) = get_inner.upgrade() else {
+                    return Err(throw_invalid_state(&ctx, "database is not open"));
+                };
+                db.require_open(&ctx)?;
+                db.require_not_authorizing(&ctx)?;
+                Ok(unsafe { ffi::sqlite3_limit(db.connection(), limit_id, -1) })
+            };
+            let set_fn = move |ctx: Ctx<'js>, val: Value<'js>| -> Result<()> {
+                let Some(db) = set_inner.upgrade() else {
+                    return Err(throw_invalid_state(&ctx, "database is not open"));
+                };
+                db.require_open(&ctx)?;
+                db.require_not_authorizing(&ctx)?;
+                let parsed = parse_limit_value(&ctx, limit_name, &val)?;
+                unsafe {
+                    ffi::sqlite3_limit(db.connection(), limit_id, parsed);
+                }
+                Ok(())
+            };
+            limits_obj.prop(
+                limit_name,
+                Accessor::new(get_fn, set_fn).enumerable().configurable(),
+            )?;
+        }
+
+        Ok(limits_obj)
     }
 
     pub fn location(&self, ctx: Ctx<'js>, db_name: Opt<String>) -> Result<Value<'js>> {
@@ -503,6 +789,7 @@ impl<'js> DatabaseSync<'js> {
         func: Opt<Function<'js>>,
     ) -> Result<()> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
         let _busy = BusyScope::new(&self.inner);
 
         let (options, func) = resolve_function_args(&ctx, options, func)?;
@@ -511,12 +798,14 @@ impl<'js> DatabaseSync<'js> {
 
     pub fn aggregate(&self, ctx: Ctx<'js>, name: String, options: Object<'js>) -> Result<()> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
         let _busy = BusyScope::new(&self.inner);
         register_aggregate(&ctx, &self.inner, &name, options)
     }
 
     pub fn create_session(&self, ctx: Ctx<'js>, options: Opt<Value<'js>>) -> Result<Value<'js>> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
         create_session(&ctx, &self.inner, options)
     }
 
@@ -527,12 +816,14 @@ impl<'js> DatabaseSync<'js> {
         options: Opt<Value<'js>>,
     ) -> Result<Value<'js>> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
         let _busy = BusyScope::new(&self.inner);
         apply_changeset(&ctx, &self.inner, changeset, options)
     }
 
     pub fn enable_load_extension(&self, ctx: Ctx<'js>, allow: Value<'js>) -> Result<()> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
 
         let allow = allow.as_bool().ok_or_else(|| {
             throw_invalid_arg_type(&ctx, "allow", "boolean", &js_type_name(&allow))
@@ -580,6 +871,7 @@ impl<'js> DatabaseSync<'js> {
         entry_point: Opt<String>,
     ) -> Result<()> {
         self.inner.require_open(&ctx)?;
+        self.inner.require_not_authorizing(&ctx)?;
 
         if !self.inner.config.allow_extension || !self.inner.enable_load_extension.get() {
             return Err(throw_invalid_state(
@@ -671,6 +963,30 @@ fn read_optional_bool<'js>(ctx: &Ctx<'js>, obj: &Object<'js>, key: &str) -> Resu
         .as_bool()
         .ok_or_else(|| throw_invalid_arg_type(ctx, key, "boolean", &js_type_name(&value)))
         .map(Some)
+}
+
+fn parse_limit_value<'js>(ctx: &Ctx<'js>, name: &str, value: &Value<'js>) -> Result<i32> {
+    let Some(n) = value.as_number() else {
+        return Err(throw_invalid_arg_type(
+            ctx,
+            name,
+            "number",
+            &js_type_name(value),
+        ));
+    };
+    if n == f64::INFINITY {
+        return Ok(i32::MAX);
+    }
+    if n == f64::NEG_INFINITY || n < 0.0 || n > i32::MAX as f64 {
+        return Err(throw_out_of_range(
+            ctx,
+            format!("The value of \"{name}\" is out of range"),
+        ));
+    }
+    if n.is_nan() || n.trunc() != n {
+        return Err(throw_invalid_arg_type(ctx, name, "integer", "number"));
+    }
+    Ok(n as i32)
 }
 
 fn read_timeout<'js>(ctx: &Ctx<'js>, obj: &Object<'js>) -> Result<i32> {

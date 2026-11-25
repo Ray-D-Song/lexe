@@ -7,6 +7,7 @@ mod native;
 mod path;
 mod session;
 mod statement;
+mod tag_store;
 mod value;
 
 use lexe_utils::module::ModuleInfo;
@@ -20,12 +21,22 @@ use rquickjs::{
 use crate::backup::backup;
 use crate::database::{install_database_sync_extras, DatabaseSync};
 use crate::ffi::{
-    SQLITE_CHANGESET_ABORT, SQLITE_CHANGESET_CONFLICT, SQLITE_CHANGESET_CONSTRAINT,
-    SQLITE_CHANGESET_DATA, SQLITE_CHANGESET_FOREIGN_KEY, SQLITE_CHANGESET_NOTFOUND,
-    SQLITE_CHANGESET_OMIT, SQLITE_CHANGESET_REPLACE,
+    SQLITE_ALTER_TABLE, SQLITE_ANALYZE, SQLITE_ATTACH, SQLITE_CHANGESET_ABORT,
+    SQLITE_CHANGESET_CONFLICT, SQLITE_CHANGESET_CONSTRAINT, SQLITE_CHANGESET_DATA,
+    SQLITE_CHANGESET_FOREIGN_KEY, SQLITE_CHANGESET_NOTFOUND, SQLITE_CHANGESET_OMIT,
+    SQLITE_CHANGESET_REPLACE, SQLITE_COPY, SQLITE_CREATE_INDEX, SQLITE_CREATE_TABLE,
+    SQLITE_CREATE_TEMP_INDEX, SQLITE_CREATE_TEMP_TABLE, SQLITE_CREATE_TEMP_TRIGGER,
+    SQLITE_CREATE_TEMP_VIEW, SQLITE_CREATE_TRIGGER, SQLITE_CREATE_VIEW, SQLITE_CREATE_VTABLE,
+    SQLITE_DELETE, SQLITE_DENY, SQLITE_DETACH, SQLITE_DROP_INDEX, SQLITE_DROP_TABLE,
+    SQLITE_DROP_TEMP_INDEX, SQLITE_DROP_TEMP_TABLE, SQLITE_DROP_TEMP_TRIGGER,
+    SQLITE_DROP_TEMP_VIEW, SQLITE_DROP_TRIGGER, SQLITE_DROP_VIEW, SQLITE_DROP_VTABLE,
+    SQLITE_FUNCTION, SQLITE_IGNORE, SQLITE_INSERT, SQLITE_OK, SQLITE_PRAGMA, SQLITE_READ,
+    SQLITE_RECURSIVE, SQLITE_REINDEX, SQLITE_SAVEPOINT, SQLITE_SELECT, SQLITE_TRANSACTION,
+    SQLITE_UPDATE,
 };
 use crate::session::Session;
 use crate::statement::{install_statement_iterator_prototype, StatementSync};
+use crate::tag_store::SQLTagStore;
 
 pub const NODE_SQLITE_MODULE_NAME: &str = "node:sqlite";
 pub const SQLITE_VERSION: &str = "3.50.1";
@@ -49,39 +60,58 @@ fn emit_experimental_warning(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
-fn define_changeset_constants(_ctx: &Ctx<'_>, constants: &Object<'_>) -> Result<()> {
-    constants.prop(
-        "SQLITE_CHANGESET_OMIT",
-        Property::from(SQLITE_CHANGESET_OMIT).enumerable(),
-    )?;
-    constants.prop(
-        "SQLITE_CHANGESET_REPLACE",
-        Property::from(SQLITE_CHANGESET_REPLACE).enumerable(),
-    )?;
-    constants.prop(
-        "SQLITE_CHANGESET_ABORT",
-        Property::from(SQLITE_CHANGESET_ABORT).enumerable(),
-    )?;
-    constants.prop(
-        "SQLITE_CHANGESET_DATA",
-        Property::from(SQLITE_CHANGESET_DATA).enumerable(),
-    )?;
-    constants.prop(
-        "SQLITE_CHANGESET_NOTFOUND",
-        Property::from(SQLITE_CHANGESET_NOTFOUND).enumerable(),
-    )?;
-    constants.prop(
-        "SQLITE_CHANGESET_CONFLICT",
-        Property::from(SQLITE_CHANGESET_CONFLICT).enumerable(),
-    )?;
-    constants.prop(
-        "SQLITE_CHANGESET_CONSTRAINT",
-        Property::from(SQLITE_CHANGESET_CONSTRAINT).enumerable(),
-    )?;
-    constants.prop(
-        "SQLITE_CHANGESET_FOREIGN_KEY",
-        Property::from(SQLITE_CHANGESET_FOREIGN_KEY).enumerable(),
-    )?;
+fn define_constants(constants: &Object<'_>) -> Result<()> {
+    const CONSTANTS: [(&str, i32); 45] = [
+        ("SQLITE_CHANGESET_OMIT", SQLITE_CHANGESET_OMIT),
+        ("SQLITE_CHANGESET_REPLACE", SQLITE_CHANGESET_REPLACE),
+        ("SQLITE_CHANGESET_ABORT", SQLITE_CHANGESET_ABORT),
+        ("SQLITE_CHANGESET_DATA", SQLITE_CHANGESET_DATA),
+        ("SQLITE_CHANGESET_NOTFOUND", SQLITE_CHANGESET_NOTFOUND),
+        ("SQLITE_CHANGESET_CONFLICT", SQLITE_CHANGESET_CONFLICT),
+        ("SQLITE_CHANGESET_CONSTRAINT", SQLITE_CHANGESET_CONSTRAINT),
+        ("SQLITE_CHANGESET_FOREIGN_KEY", SQLITE_CHANGESET_FOREIGN_KEY),
+        ("SQLITE_OK", SQLITE_OK),
+        ("SQLITE_DENY", SQLITE_DENY),
+        ("SQLITE_IGNORE", SQLITE_IGNORE),
+        ("SQLITE_CREATE_INDEX", SQLITE_CREATE_INDEX),
+        ("SQLITE_CREATE_TABLE", SQLITE_CREATE_TABLE),
+        ("SQLITE_CREATE_TEMP_INDEX", SQLITE_CREATE_TEMP_INDEX),
+        ("SQLITE_CREATE_TEMP_TABLE", SQLITE_CREATE_TEMP_TABLE),
+        ("SQLITE_CREATE_TEMP_TRIGGER", SQLITE_CREATE_TEMP_TRIGGER),
+        ("SQLITE_CREATE_TEMP_VIEW", SQLITE_CREATE_TEMP_VIEW),
+        ("SQLITE_CREATE_TRIGGER", SQLITE_CREATE_TRIGGER),
+        ("SQLITE_CREATE_VIEW", SQLITE_CREATE_VIEW),
+        ("SQLITE_DELETE", SQLITE_DELETE),
+        ("SQLITE_DROP_INDEX", SQLITE_DROP_INDEX),
+        ("SQLITE_DROP_TABLE", SQLITE_DROP_TABLE),
+        ("SQLITE_DROP_TEMP_INDEX", SQLITE_DROP_TEMP_INDEX),
+        ("SQLITE_DROP_TEMP_TABLE", SQLITE_DROP_TEMP_TABLE),
+        ("SQLITE_DROP_TEMP_TRIGGER", SQLITE_DROP_TEMP_TRIGGER),
+        ("SQLITE_DROP_TEMP_VIEW", SQLITE_DROP_TEMP_VIEW),
+        ("SQLITE_DROP_TRIGGER", SQLITE_DROP_TRIGGER),
+        ("SQLITE_DROP_VIEW", SQLITE_DROP_VIEW),
+        ("SQLITE_INSERT", SQLITE_INSERT),
+        ("SQLITE_PRAGMA", SQLITE_PRAGMA),
+        ("SQLITE_READ", SQLITE_READ),
+        ("SQLITE_SELECT", SQLITE_SELECT),
+        ("SQLITE_TRANSACTION", SQLITE_TRANSACTION),
+        ("SQLITE_UPDATE", SQLITE_UPDATE),
+        ("SQLITE_ATTACH", SQLITE_ATTACH),
+        ("SQLITE_DETACH", SQLITE_DETACH),
+        ("SQLITE_ALTER_TABLE", SQLITE_ALTER_TABLE),
+        ("SQLITE_REINDEX", SQLITE_REINDEX),
+        ("SQLITE_ANALYZE", SQLITE_ANALYZE),
+        ("SQLITE_CREATE_VTABLE", SQLITE_CREATE_VTABLE),
+        ("SQLITE_DROP_VTABLE", SQLITE_DROP_VTABLE),
+        ("SQLITE_FUNCTION", SQLITE_FUNCTION),
+        ("SQLITE_SAVEPOINT", SQLITE_SAVEPOINT),
+        ("SQLITE_COPY", SQLITE_COPY),
+        ("SQLITE_RECURSIVE", SQLITE_RECURSIVE),
+    ];
+
+    for (name, value) in CONSTANTS {
+        constants.prop(name, Property::from(value).enumerable())?;
+    }
     Ok(())
 }
 
@@ -101,6 +131,7 @@ impl ModuleDef for SqliteModule {
         emit_experimental_warning(ctx)?;
 
         let _ = Class::<Session>::create_constructor(ctx)?;
+        let _ = Class::<SQLTagStore>::create_constructor(ctx)?;
         install_statement_iterator_prototype(ctx)?;
 
         let default = Object::new(ctx.clone())?;
@@ -109,7 +140,7 @@ impl ModuleDef for SqliteModule {
         Class::<StatementSync>::define(&default)?;
 
         let constants = Object::new(ctx.clone())?;
-        define_changeset_constants(ctx, &constants)?;
+        define_constants(&constants)?;
         default.set("constants", constants.clone())?;
         default.set("backup", Func::from(backup))?;
 

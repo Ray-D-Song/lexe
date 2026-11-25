@@ -30,6 +30,19 @@ pub fn throw_invalid_arg_type(ctx: &Ctx<'_>, name: &str, expected: &str, actual:
     )
 }
 
+pub fn throw_invalid_return_value(
+    ctx: &Ctx<'_>,
+    expected: &str,
+    name: &str,
+    actual: &str,
+) -> Error {
+    throw_type_error_code(
+        ctx,
+        "ERR_INVALID_RETURN_VALUE",
+        format!("Expected {expected} to be returned from the \"{name}\", got {actual}"),
+    )
+}
+
 pub fn throw_invalid_arg_value(ctx: &Ctx<'_>, message: impl AsRef<str>) -> Error {
     throw_type_error_code(ctx, "ERR_INVALID_ARG_VALUE", message)
 }

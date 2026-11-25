@@ -14,6 +14,55 @@ pub const SQLITE_DONE: c_int = 101;
 pub const SQLITE_ROW: c_int = 100;
 pub const SQLITE_ABORT: c_int = 4;
 pub const SQLITE_INTERRUPT: c_int = 9;
+pub const SQLITE_DENY: c_int = 1;
+pub const SQLITE_IGNORE: c_int = 2;
+
+pub const SQLITE_COPY: c_int = 0;
+pub const SQLITE_CREATE_INDEX: c_int = 1;
+pub const SQLITE_CREATE_TABLE: c_int = 2;
+pub const SQLITE_CREATE_TEMP_INDEX: c_int = 3;
+pub const SQLITE_CREATE_TEMP_TABLE: c_int = 4;
+pub const SQLITE_CREATE_TEMP_TRIGGER: c_int = 5;
+pub const SQLITE_CREATE_TEMP_VIEW: c_int = 6;
+pub const SQLITE_CREATE_TRIGGER: c_int = 7;
+pub const SQLITE_CREATE_VIEW: c_int = 8;
+pub const SQLITE_DELETE: c_int = 9;
+pub const SQLITE_DROP_INDEX: c_int = 10;
+pub const SQLITE_DROP_TABLE: c_int = 11;
+pub const SQLITE_DROP_TEMP_INDEX: c_int = 12;
+pub const SQLITE_DROP_TEMP_TABLE: c_int = 13;
+pub const SQLITE_DROP_TEMP_TRIGGER: c_int = 14;
+pub const SQLITE_DROP_TEMP_VIEW: c_int = 15;
+pub const SQLITE_DROP_TRIGGER: c_int = 16;
+pub const SQLITE_DROP_VIEW: c_int = 17;
+pub const SQLITE_INSERT: c_int = 18;
+pub const SQLITE_PRAGMA: c_int = 19;
+pub const SQLITE_READ: c_int = 20;
+pub const SQLITE_SELECT: c_int = 21;
+pub const SQLITE_TRANSACTION: c_int = 22;
+pub const SQLITE_UPDATE: c_int = 23;
+pub const SQLITE_ATTACH: c_int = 24;
+pub const SQLITE_DETACH: c_int = 25;
+pub const SQLITE_ALTER_TABLE: c_int = 26;
+pub const SQLITE_REINDEX: c_int = 27;
+pub const SQLITE_ANALYZE: c_int = 28;
+pub const SQLITE_CREATE_VTABLE: c_int = 29;
+pub const SQLITE_DROP_VTABLE: c_int = 30;
+pub const SQLITE_FUNCTION: c_int = 31;
+pub const SQLITE_SAVEPOINT: c_int = 32;
+pub const SQLITE_RECURSIVE: c_int = 33;
+
+pub const SQLITE_LIMIT_LENGTH: c_int = 0;
+pub const SQLITE_LIMIT_SQL_LENGTH: c_int = 1;
+pub const SQLITE_LIMIT_COLUMN: c_int = 2;
+pub const SQLITE_LIMIT_EXPR_DEPTH: c_int = 3;
+pub const SQLITE_LIMIT_COMPOUND_SELECT: c_int = 4;
+pub const SQLITE_LIMIT_VDBE_OP: c_int = 5;
+pub const SQLITE_LIMIT_FUNCTION_ARG: c_int = 6;
+pub const SQLITE_LIMIT_ATTACHED: c_int = 7;
+pub const SQLITE_LIMIT_LIKE_PATTERN_LENGTH: c_int = 8;
+pub const SQLITE_LIMIT_VARIABLE_NUMBER: c_int = 9;
+pub const SQLITE_LIMIT_TRIGGER_DEPTH: c_int = 10;
 
 pub const SQLITE_OPEN_READONLY: c_int = 0x0000_0001;
 pub const SQLITE_OPEN_READWRITE: c_int = 0x0000_0002;
@@ -41,6 +90,7 @@ pub const SQLITE_CHANGESET_CONSTRAINT: c_int = 4;
 pub const SQLITE_CHANGESET_FOREIGN_KEY: c_int = 5;
 
 pub const SQLITE_DBCONFIG_ENABLE_FKEY: c_int = 1002;
+pub const SQLITE_DBCONFIG_DEFENSIVE: c_int = 1010;
 pub const SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION: c_int = 1015;
 pub const SQLITE_DBCONFIG_DQS_DDL: c_int = 1013;
 pub const SQLITE_DBCONFIG_DQS_DML: c_int = 1014;
@@ -57,6 +107,16 @@ pub type xFunc = Option<unsafe extern "C" fn(*mut sqlite3_context, c_int, *mut *
 pub type xStep = Option<unsafe extern "C" fn(*mut sqlite3_context, c_int, *mut *mut sqlite3_value)>;
 pub type xFinal = Option<unsafe extern "C" fn(*mut sqlite3_context)>;
 pub type xDestroy = Option<unsafe extern "C" fn(*mut c_void)>;
+pub type xAuth = Option<
+    unsafe extern "C" fn(
+        *mut c_void,
+        c_int,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+        *const c_char,
+    ) -> c_int,
+>;
 
 #[repr(C)]
 pub struct sqlite3_api_routines {
@@ -147,6 +207,12 @@ extern "C" {
     pub fn sqlite3_get_autocommit(db: *mut sqlite3) -> c_int;
     pub fn sqlite3_db_filename(db: *mut sqlite3, z_db_name: *const c_char) -> *const c_char;
     pub fn sqlite3_busy_timeout(db: *mut sqlite3, ms: c_int) -> c_int;
+    pub fn sqlite3_limit(db: *mut sqlite3, id: c_int, new_val: c_int) -> c_int;
+    pub fn sqlite3_set_authorizer(
+        db: *mut sqlite3,
+        x_auth: xAuth,
+        p_user_data: *mut c_void,
+    ) -> c_int;
 
     pub fn sqlite3_create_function_v2(
         db: *mut sqlite3,

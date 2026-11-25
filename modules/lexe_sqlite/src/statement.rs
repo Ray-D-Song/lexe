@@ -54,6 +54,10 @@ impl<'js> StatementInner<'js> {
         self.statement.get()
     }
 
+    pub fn is_iterator_active(&self) -> bool {
+        self.iterator_active.get()
+    }
+
     pub fn is_finalized(&self) -> bool {
         self.statement.get().is_null()
             || !self.database.is_open()
@@ -94,6 +98,120 @@ impl<'js> StatementInner<'js> {
         self.database
             .check_sqlite_or_pending(ctx, self.database.connection(), r)?;
         Ok(())
+    }
+
+    pub(crate) fn bind_positional_params(
+        &self,
+        ctx: &Ctx<'js>,
+        values: &[Value<'js>],
+    ) -> Result<()> {
+        self.prepare_execution(ctx)?;
+        let stmt = self.as_ptr();
+        for (i, value) in values.iter().enumerate() {
+            let idx = i32::try_from(i + 1)
+                .map_err(|_| throw_invalid_arg_type(ctx, "values", "32-bit length", "overflow"))?;
+            bind_js_value(ctx, stmt, idx, value.clone())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn execute_get(self: &Rc<Self>, ctx: &Ctx<'js>) -> Result<Value<'js>> {
+        let stmt = self.as_ptr();
+        let r = unsafe { ffi::sqlite3_step(stmt) };
+
+        if let Some(pending) = self.database.take_pending_exception() {
+            let _ = self.reset_after_execution(ctx);
+            return Err(ctx.throw(pending));
+        }
+
+        if r == SQLITE_DONE {
+            let _ = self.reset_after_execution(ctx);
+            return Ok(Value::new_undefined(ctx.clone()));
+        }
+
+        if r != SQLITE_ROW {
+            let _ = self.reset_after_execution(ctx);
+            return Err(throw_sqlite_error(ctx, self.database.connection()));
+        }
+
+        let value = self.row_value(ctx, stmt)?;
+        let _ = self.reset_after_execution(ctx);
+        Ok(value)
+    }
+
+    pub(crate) fn execute_all(self: &Rc<Self>, ctx: &Ctx<'js>) -> Result<Value<'js>> {
+        let stmt = self.as_ptr();
+        let arr = Array::new(ctx.clone())?;
+        let mut index = 0usize;
+
+        loop {
+            let r = unsafe { ffi::sqlite3_step(stmt) };
+
+            if let Some(pending) = self.database.take_pending_exception() {
+                let _ = self.reset_after_execution(ctx);
+                return Err(ctx.throw(pending));
+            }
+
+            if r == SQLITE_DONE {
+                break;
+            }
+            if r != SQLITE_ROW {
+                let _ = self.reset_after_execution(ctx);
+                return Err(throw_sqlite_error(ctx, self.database.connection()));
+            }
+
+            let row = self.row_value(ctx, stmt)?;
+            arr.set(index, row)?;
+            index += 1;
+        }
+
+        let _ = self.reset_after_execution(ctx);
+        Ok(arr.into_value())
+    }
+
+    pub(crate) fn execute_run(self: &Rc<Self>, ctx: &Ctx<'js>) -> Result<Object<'js>> {
+        let stmt = self.as_ptr();
+        let r = unsafe { ffi::sqlite3_step(stmt) };
+
+        if let Some(pending) = self.database.take_pending_exception() {
+            let _ = self.reset_after_execution(ctx);
+            return Err(ctx.throw(pending));
+        }
+
+        if r != SQLITE_DONE && r != SQLITE_ROW {
+            let _ = self.reset_after_execution(ctx);
+            return Err(throw_sqlite_error(ctx, self.database.connection()));
+        }
+
+        let db = self.database.connection();
+        let changes = unsafe { ffi::sqlite3_changes64(db) };
+        let last_id = unsafe { ffi::sqlite3_last_insert_rowid(db) };
+
+        let _ = self.reset_after_execution(ctx);
+
+        let result = null_prototype_object(ctx)?;
+        if self.read_bigints.get() {
+            result.set("changes", changes)?;
+            result.set("lastInsertRowid", last_id)?;
+        } else {
+            result.set("changes", changes as f64)?;
+            result.set("lastInsertRowid", last_id as f64)?;
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn execute_iterate(
+        self: &Rc<Self>,
+        ctx: Ctx<'js>,
+    ) -> Result<Class<'js, StatementIterator<'js>>> {
+        self.iterator_active.set(true);
+        Class::instance(
+            ctx,
+            StatementIterator {
+                inner: self.clone(),
+                done: Cell::new(false),
+            },
+        )
     }
 
     fn bind_params(&self, ctx: &Ctx<'js>, args: &[Value<'js>]) -> Result<()> {
@@ -240,97 +358,21 @@ impl<'js> StatementSync<'js> {
         self.inner.require_live(&ctx)?;
         let _busy = BusyScope::new(&self.inner.database);
         self.inner.bind_params(&ctx, &args)?;
-
-        let stmt = self.inner.as_ptr();
-        let r = unsafe { ffi::sqlite3_step(stmt) };
-
-        if let Some(pending) = self.inner.database.take_pending_exception() {
-            let _ = self.inner.reset_after_execution(&ctx);
-            return Err(ctx.throw(pending));
-        }
-
-        if r == SQLITE_DONE {
-            let _ = self.inner.reset_after_execution(&ctx);
-            return Ok(Value::new_undefined(ctx));
-        }
-
-        if r != SQLITE_ROW {
-            let _ = self.inner.reset_after_execution(&ctx);
-            return Err(throw_sqlite_error(&ctx, self.inner.database.connection()));
-        }
-
-        let value = self.inner.row_value(&ctx, stmt)?;
-        let _ = self.inner.reset_after_execution(&ctx);
-        Ok(value)
+        self.inner.execute_get(&ctx)
     }
 
     pub fn all(&self, ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>> {
         self.inner.require_live(&ctx)?;
         let _busy = BusyScope::new(&self.inner.database);
         self.inner.bind_params(&ctx, &args)?;
-
-        let stmt = self.inner.as_ptr();
-        let arr = Array::new(ctx.clone())?;
-        let mut index = 0u32;
-
-        loop {
-            let r = unsafe { ffi::sqlite3_step(stmt) };
-
-            if let Some(pending) = self.inner.database.take_pending_exception() {
-                let _ = self.inner.reset_after_execution(&ctx);
-                return Err(ctx.throw(pending));
-            }
-
-            if r == SQLITE_DONE {
-                break;
-            }
-            if r != SQLITE_ROW {
-                let _ = self.inner.reset_after_execution(&ctx);
-                return Err(throw_sqlite_error(&ctx, self.inner.database.connection()));
-            }
-
-            let row = self.inner.row_value(&ctx, stmt)?;
-            arr.set(index as usize, row)?;
-            index += 1;
-        }
-
-        let _ = self.inner.reset_after_execution(&ctx);
-        Ok(arr.into_value())
+        self.inner.execute_all(&ctx)
     }
 
     pub fn run(&self, ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Object<'js>> {
         self.inner.require_live(&ctx)?;
         let _busy = BusyScope::new(&self.inner.database);
         self.inner.bind_params(&ctx, &args)?;
-
-        let stmt = self.inner.as_ptr();
-        let r = unsafe { ffi::sqlite3_step(stmt) };
-
-        if let Some(pending) = self.inner.database.take_pending_exception() {
-            let _ = self.inner.reset_after_execution(&ctx);
-            return Err(ctx.throw(pending));
-        }
-
-        if r != SQLITE_DONE && r != SQLITE_ROW {
-            let _ = self.inner.reset_after_execution(&ctx);
-            return Err(throw_sqlite_error(&ctx, self.inner.database.connection()));
-        }
-
-        let db = self.inner.database.connection();
-        let changes = unsafe { ffi::sqlite3_changes64(db) };
-        let last_id = unsafe { ffi::sqlite3_last_insert_rowid(db) };
-
-        let _ = self.inner.reset_after_execution(&ctx);
-
-        let result = null_prototype_object(&ctx)?;
-        if self.inner.read_bigints.get() {
-            result.set("changes", changes)?;
-            result.set("lastInsertRowid", last_id)?;
-        } else {
-            result.set("changes", changes as f64)?;
-            result.set("lastInsertRowid", last_id as f64)?;
-        }
-        Ok(result)
+        self.inner.execute_run(&ctx)
     }
 
     pub fn iterate(
@@ -340,15 +382,7 @@ impl<'js> StatementSync<'js> {
     ) -> Result<Class<'js, StatementIterator<'js>>> {
         self.inner.require_live(&ctx)?;
         self.inner.bind_params(&ctx, &args)?;
-        self.inner.iterator_active.set(true);
-
-        Class::instance(
-            ctx,
-            StatementIterator {
-                inner: self.inner.clone(),
-                done: Cell::new(false),
-            },
-        )
+        self.inner.execute_iterate(ctx)
     }
 
     pub fn columns(&self, ctx: Ctx<'js>) -> Result<Array<'js>> {
