@@ -54,11 +54,9 @@ it("settles the writable side when the transform errors via controller.error", a
   }
 });
 
-// Known gap, tracked separately: when the transform throws instead of calling
-// `controller.error()`, the readable side is never errored, so `reader.read()`
-// hangs forever. Node rejects it with the thrown error. Enabled once that is
-// fixed; the writable side already settles, covered by the case above.
-it.skip("rejects the read when the transform throws", async () => {
+// When `transform()` throws synchronously, both readable and writable reject
+// with the thrown error.
+it("rejects the read when the transform throws", async () => {
   const ts: any = new TransformStream({
     transform() {
       throw new Error("sync boom");

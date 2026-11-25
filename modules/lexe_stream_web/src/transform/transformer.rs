@@ -22,14 +22,14 @@ pub(super) struct Transformer<'js> {
 
 impl<'js> Transformer<'js> {
     pub fn from_object(obj: Object<'js>) -> Result<Self> {
-        let start = obj.get_value_or_undefined::<_, _>("start")?;
-        let transform = obj.get_value_or_undefined::<_, _>("transform")?;
-        let flush = obj.get_value_or_undefined::<_, _>("flush")?;
-        let cancel = obj.get_value_or_undefined::<_, _>("cancel")?;
         let readable_type: Option<rquickjs::Value<'js>> =
             obj.get_value_or_undefined("readableType")?;
         let writable_type: Option<rquickjs::Value<'js>> =
             obj.get_value_or_undefined("writableType")?;
+        let start = obj.get_value_or_undefined::<_, _>("start")?;
+        let transform = obj.get_value_or_undefined::<_, _>("transform")?;
+        let flush = obj.get_value_or_undefined::<_, _>("flush")?;
+        let cancel = obj.get_value_or_undefined::<_, _>("cancel")?;
 
         Ok(Self {
             start,

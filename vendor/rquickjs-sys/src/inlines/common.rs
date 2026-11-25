@@ -169,4 +169,7 @@ extern "C" {
     pub fn JS_GetModuleStatus(m: *mut JSModuleDef) -> c_int;
     pub fn JS_GetModuleEvalException(ctx: *mut JSContext, m: *mut JSModuleDef) -> JSValue;
     pub fn JS_ModuleHasTLA(m: *mut JSModuleDef) -> bool;
+    pub fn JS_IsNonDetachableArrayBuffer(obj: JSValueConst) -> c_int;
+    pub fn JS_SetNonDetachableArrayBuffer(obj: JSValueConst, non_detachable: bool) -> c_int;
+    pub fn JS_IsSharedArrayBuffer(obj: JSValueConst) -> bool;
 }

@@ -143,7 +143,36 @@ pub(super) fn transform_stream_default_controller_enqueue<'js>(
     let controller_class = get_readable_default_controller(stream_class)
         .ok_or_else(|| Exception::throw_type(&ctx, "readable controller not available"))?;
 
-    readable_stream_default_controller_enqueue_value(ctx.clone(), controller_class.clone(), chunk)?;
+    let can_enqueue = {
+        let stream = stream_class.borrow();
+        let readable = stream.readable.as_ref().unwrap().borrow();
+        controller_class
+            .borrow()
+            .readable_stream_default_controller_can_close_or_enqueue(&readable)
+    };
+    if !can_enqueue {
+        return Err(Exception::throw_type(
+            &ctx,
+            "TransformStream is not in a state that permits enqueue",
+        ));
+    }
+
+    if let Err(err) = readable_stream_default_controller_enqueue_value(
+        ctx.clone(),
+        controller_class.clone(),
+        chunk,
+    ) {
+        if matches!(err, Error::Exception) {
+            let e = ctx.catch();
+            transform_stream_error_writable_and_unblock_write(
+                ctx.clone(),
+                stream_class,
+                e.clone(),
+            )?;
+            return Err(ctx.throw(e));
+        }
+        return Err(err);
+    }
 
     // Update backpressure
     let has_backpressure = {
@@ -156,8 +185,8 @@ pub(super) fn transform_stream_default_controller_enqueue<'js>(
     };
 
     let current_bp = stream_class.borrow().backpressure;
-    if has_backpressure != current_bp {
-        transform_stream_set_backpressure(stream_class, true)?;
+    if has_backpressure && !current_bp {
+        transform_stream_set_backpressure(&ctx, stream_class, true)?;
     }
 
     Ok(())
@@ -172,7 +201,10 @@ pub(super) fn transform_stream_default_controller_terminate<'js>(
 
     readable_stream_default_controller_close_stream(ctx.clone(), controller_class)?;
 
-    let error = ctx.eval::<Value, _>("new TypeError('TransformStream terminated')")?;
+    let type_error = lexe_utils::primordials::BasePrimordials::get(&ctx)?
+        .constructor_type_error
+        .clone();
+    let error: Value = type_error.call(("The transform stream has been terminated",))?;
     transform_stream_error_writable_and_unblock_write(ctx, stream_class, error)?;
     Ok(())
 }
@@ -198,7 +230,7 @@ pub(super) fn transform_stream_error_writable_and_unblock_write<'js>(
     let writable_class = stream_class.borrow().writable.clone();
 
     {
-        let mut stream = stream_class.borrow_mut();
+        let stream = stream_class.borrow();
         if let Some(ref controller_class) = stream.controller {
             controller_class.borrow_mut().clear_algorithms();
         }
@@ -228,13 +260,17 @@ pub(super) fn transform_stream_error_writable_and_unblock_write<'js>(
 }
 
 pub(super) fn transform_stream_set_backpressure<'js>(
+    ctx: &Ctx<'js>,
     stream_class: &TransformStreamClass<'js>,
     backpressure: bool,
 ) -> Result<()> {
-    let mut stream = stream_class.borrow_mut();
-    if let Some(ref bp_promise) = stream.backpressure_change_promise {
+    let old_bp = stream_class.borrow().backpressure_change_promise.clone();
+    if let Some(ref bp_promise) = old_bp {
         bp_promise.resolve_undefined()?;
     }
+    let new_bp = ResolveablePromise::new(ctx)?;
+    let mut stream = stream_class.borrow_mut();
+    stream.backpressure_change_promise = Some(new_bp);
     stream.backpressure = backpressure;
     Ok(())
 }
@@ -245,14 +281,27 @@ pub(super) fn transform_stream_default_controller_perform_transform<'js>(
     controller_class: &TransformStreamDefaultControllerClass<'js>,
     chunk: Value<'js>,
 ) -> Result<Promise<'js>> {
-    let controller = controller_class.borrow();
-    let algorithm = controller
-        .transform_algorithm
-        .clone()
-        .expect("transform algorithm must exist");
-    drop(controller);
-
+    let algorithm = controller_class.borrow().transform_algorithm.clone();
     let promise_primordials = crate::utils::promise::PromisePrimordials::get(&ctx)?.clone();
+
+    let Some(algorithm) = algorithm else {
+        let stored_error = stream_class
+            .borrow()
+            .writable
+            .as_ref()
+            .and_then(|w| w.borrow().stored_error());
+        if let Some(err) = stored_error {
+            return crate::utils::promise::promise_rejected_with(&promise_primordials, err);
+        }
+        let type_error = lexe_utils::primordials::BasePrimordials::get(&ctx)?
+            .constructor_type_error
+            .clone();
+        return crate::utils::promise::promise_rejected_with_constructor(
+            &type_error,
+            &promise_primordials,
+            "TransformStream is not writable",
+        );
+    };
 
     let transform_promise = match algorithm {
         TransformAlgorithm::Identity => {
@@ -267,23 +316,25 @@ pub(super) fn transform_stream_default_controller_perform_transform<'js>(
         TransformAlgorithm::Function { f, transformer } => {
             let result: Result<Value> =
                 f.call((This(transformer), chunk, controller_class.clone()));
-            // Node wraps this call in try/catch and runs `transformStreamError`
-            // before rethrowing, so a throwing transform errors both sides.
-            // Returning the error as a rejected promise alone leaves the
-            // readable side in "readable" and `reader.read()` pending forever.
             if let Err(Error::Exception) = result {
                 let error = ctx.catch();
                 transform_stream_error(ctx.clone(), stream_class, error.clone())?;
-                return Ok(crate::utils::promise::promise_rejected_with(
-                    &promise_primordials,
-                    error,
-                )?);
+                return crate::utils::promise::promise_rejected_with(&promise_primordials, error);
             }
             promise_resolved_with(&ctx, &promise_primordials, result)?
         },
     };
 
-    Ok(transform_promise)
+    let sc = stream_class.clone();
+    crate::utils::promise::upon_promise::<Value<'js>, _>(ctx, transform_promise, move |ctx, res| {
+        match res {
+            Ok(_) => Ok(Value::new_undefined(ctx)),
+            Err(r) => {
+                transform_stream_error(ctx.clone(), &sc, r.clone())?;
+                Err(ctx.throw(r))
+            },
+        }
+    })
 }
 
 pub(super) fn perform_flush<'js>(

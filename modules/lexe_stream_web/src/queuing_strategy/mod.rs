@@ -1,6 +1,8 @@
+use lexe_utils::primordials::{BasePrimordials, Primordial};
 use rquickjs::{
-    class::{JsCell, JsClass, Readable, Trace},
+    class::{JsCell, JsClass, Trace},
     function::{Constructor, Params},
+    object::Property,
     Class, Ctx, Error, Exception, FromJs, Function, JsLifetime, Object, Result, Value,
 };
 
@@ -11,6 +13,44 @@ use crate::utils::ValueOrUndefined;
 
 mod byte_length;
 mod count;
+
+#[derive(Clone, JsLifetime)]
+pub(crate) struct QueuingStrategyPrimordials<'js> {
+    pub(crate) byte_length_size: Class<'js, NativeSizeFunction>,
+    pub(crate) count_size: Class<'js, NativeSizeFunction>,
+}
+
+impl<'js> Primordial<'js> for QueuingStrategyPrimordials<'js> {
+    fn new(ctx: &Ctx<'js>) -> Result<Self> {
+        let byte_length_size = Class::instance(ctx.clone(), NativeSizeFunction::ByteLength)?;
+        byte_length_size.prop("name", Property::from("size").configurable())?;
+        byte_length_size.prop("length", Property::from(1).configurable())?;
+
+        let count_size = Class::instance(ctx.clone(), NativeSizeFunction::Count)?;
+        count_size.prop("name", Property::from("size").configurable())?;
+        count_size.prop("length", Property::from(0).configurable())?;
+
+        Ok(Self {
+            byte_length_size,
+            count_size,
+        })
+    }
+}
+
+fn js_to_number<'js>(ctx: &Ctx<'js>, val: Value<'js>) -> Result<f64> {
+    if let Some(n) = val.as_number() {
+        return Ok(n);
+    }
+    if val.is_big_int() {
+        return Err(Exception::throw_type(
+            ctx,
+            "Cannot convert a BigInt value to a number",
+        ));
+    }
+    let number_ctor = BasePrimordials::get(ctx)?.constructor_number.clone();
+    let coerced: Value = number_ctor.call((val,))?;
+    Ok(coerced.as_number().unwrap_or(f64::NAN))
+}
 
 /// QueuingStrategy is the structure of a user-provided object describing how backpressure should be signalled.
 /// https://streams.spec.whatwg.org/#qs-api
@@ -53,7 +93,7 @@ impl<'js> QueuingStrategy<'js> {
                 high_water_mark: Some(high_water_mark),
                 ..
             }) => {
-                let high_water_mark = high_water_mark.as_number().unwrap_or(f64::NAN);
+                let high_water_mark = js_to_number(ctx, high_water_mark)?;
                 // If highWaterMark is NaN or highWaterMark < 0, throw a RangeError exception.
                 if high_water_mark.is_nan() || high_water_mark < 0.0 {
                     Err(Exception::throw_range(ctx, "Invalid highWaterMark"))
@@ -152,15 +192,22 @@ pub(crate) struct QueueingStrategyInit {
 }
 
 impl<'js> FromJs<'js> for QueueingStrategyInit {
-    fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> Result<Self> {
-        let ty_name = value.type_name();
-        let obj = value
-            .as_object()
-            .ok_or_else(|| Error::new_from_js(ty_name, "Object"))?;
+    fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Self> {
+        let Some(obj) = value.as_object() else {
+            return Err(Exception::throw_type(
+                ctx,
+                "QueueingStrategyInit must be an object",
+            ));
+        };
 
-        let high_water_mark = obj
-            .get_value_or_undefined("highWaterMark")?
-            .ok_or_else(|| Error::new_from_js(ty_name, "QueueingStrategyInit"))?;
+        let Some(high_water_mark) = obj.get_value_or_undefined::<_, Value>("highWaterMark")? else {
+            return Err(Exception::throw_type(
+                ctx,
+                "Property 'highWaterMark' is required",
+            ));
+        };
+
+        let high_water_mark = js_to_number(ctx, high_water_mark)?;
 
         Ok(Self { high_water_mark })
     }
@@ -177,7 +224,9 @@ pub(super) enum NativeSizeFunction {
 impl<'js> JsClass<'js> for NativeSizeFunction {
     const NAME: &'static str = "NativeSizeFunction";
 
-    type Mutable = Readable;
+    const KIND: rquickjs::class::ClassKind = rquickjs::class::ClassKind::Callable;
+
+    type Mutable = rquickjs::class::Readable;
 
     fn prototype(ctx: &Ctx<'js>) -> Result<Option<Object<'js>>> {
         Ok(Some(Function::prototype(ctx.clone())))

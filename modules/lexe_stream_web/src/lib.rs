@@ -2,14 +2,18 @@ use lexe_utils::{
     module::{export_default, ModuleInfo},
     primordials::{BasePrimordials, Primordial},
 };
-use queuing_strategy::{ByteLengthQueuingStrategy, CountQueuingStrategy};
+use queuing_strategy::{
+    ByteLengthQueuingStrategy, CountQueuingStrategy, QueuingStrategyPrimordials,
+};
 use readable::{
     ReadableByteStreamController, ReadableStreamBYOBReader, ReadableStreamBYOBRequest,
     ReadableStreamDefaultController, ReadableStreamDefaultReader,
 };
 use rquickjs::{
+    atom::PredefinedAtom,
     module::{Declarations, Exports, ModuleDef},
-    Class, Ctx, Result,
+    object::Property,
+    Class, Ctx, Object, Result,
 };
 use writable::{WritableStream, WritableStreamDefaultController, WritableStreamDefaultWriter};
 
@@ -40,8 +44,8 @@ pub use readable::{
 pub use readable::{CancelAlgorithm, PullAlgorithm, ReadableStreamControllerClass, StartAlgorithm};
 pub use readable::{NativePull, NativePullFn, NativePullResult};
 
-/// Defines web streams, which are exposed through the "stream/web" Node import, but also at the global scope
-/// Web streams consist of Readable, Writable, and Transform streams. Transform is currently unimplemented.
+/// Defines web streams, which are exposed through the "stream/web" Node import, and also at global scope.
+/// Web streams consist of Readable, Writable, Transform, Encoding, and Compression streams.
 ///
 /// https://developer.mozilla.org/en-US/docs/Web/API/Streams_API
 ///
@@ -141,6 +145,7 @@ pub fn init(ctx: &Ctx) -> Result<()> {
 
     BasePrimordials::init(ctx)?;
     PromisePrimordials::init(ctx)?;
+    QueuingStrategyPrimordials::init(ctx)?;
     ArrayConstructorPrimordials::init(ctx)?;
     WritableStreamDefaultControllerPrimordials::init(ctx)?;
     IteratorPrimordials::init(ctx)?;
@@ -168,5 +173,39 @@ pub fn init(ctx: &Ctx) -> Result<()> {
     encoding::install_encoding_streams(ctx)?;
     compression::install_compression_streams(ctx)?;
 
+    define_to_string_tags(globals)?;
+
+    Ok(())
+}
+
+fn define_to_string_tags(globals: &Object<'_>) -> Result<()> {
+    for name in [
+        "ByteLengthQueuingStrategy",
+        "CountQueuingStrategy",
+        "ReadableByteStreamController",
+        "ReadableStream",
+        "ReadableStreamBYOBReader",
+        "ReadableStreamBYOBRequest",
+        "ReadableStreamDefaultController",
+        "ReadableStreamDefaultReader",
+        "WritableStream",
+        "WritableStreamDefaultController",
+        "WritableStreamDefaultWriter",
+        "TransformStream",
+        "TransformStreamDefaultController",
+        "TextEncoderStream",
+        "TextDecoderStream",
+        "CompressionStream",
+        "DecompressionStream",
+    ] {
+        let ctor: Object = globals.get(name)?;
+        let proto: Object = ctor.get(PredefinedAtom::Prototype)?;
+        if !proto.contains_key(PredefinedAtom::SymbolToStringTag)? {
+            proto.prop(
+                PredefinedAtom::SymbolToStringTag,
+                Property::from(name).configurable(),
+            )?;
+        }
+    }
     Ok(())
 }

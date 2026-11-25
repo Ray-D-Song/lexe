@@ -81,19 +81,25 @@ const runNode = (source: string): Promise<string> =>
 
 // --- construction --------------------------------------------------------
 
-it("is a TransformStream with readable and writable sides", () => {
+it("is a GenericTransformStream with readable and writable sides", () => {
   const stream = new CompressionStream("gzip");
-  expect(stream instanceof TransformStream).toBe(true);
+  expect(stream instanceof TransformStream).toBe(false);
+  expect(Object.prototype.toString.call(stream)).toBe("[object CompressionStream]");
   expect(stream.readable).toBeTruthy();
   expect(stream.writable).toBeTruthy();
   expect(stream.readable.constructor.name).toBe("ReadableStream");
   expect(stream.writable.constructor.name).toBe("WritableStream");
 });
 
-it("exposes the format it was built with", () => {
+it("implements GenericTransformStream shape without exposing non-standard format properties", () => {
   for (const format of FORMATS) {
-    expect((new CompressionStream(format) as any).format).toBe(format);
-    expect((new DecompressionStream(format) as any).format).toBe(format);
+    const cs = new CompressionStream(format);
+    const ds = new DecompressionStream(format);
+    expect((cs as any).format).toBeUndefined();
+    expect((cs as any).encoding).toBeUndefined();
+    expect((ds as any).format).toBeUndefined();
+    expect((ds as any).encoding).toBeUndefined();
+    expect(Object.prototype.toString.call(ds)).toBe("[object DecompressionStream]");
   }
 });
 

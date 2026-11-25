@@ -1,13 +1,16 @@
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use lexe_utils::primordials::Primordial;
 use rquickjs::{
     atom::PredefinedAtom,
     class::{Trace, Tracer},
     function::Constructor,
-    prelude::{IntoArg, OnceFn, This},
+    prelude::{IntoArg, OnceFn, Opt, This},
     promise::PromiseState,
-    Ctx, Error, FromJs, Function, IntoJs, JsLifetime, Promise, Result, Value,
+    Class, Ctx, Error, FromJs, Function, IntoJs, JsLifetime, Promise, Result, Value,
 };
 
 pub fn promise_rejected_with<'js>(
@@ -58,6 +61,7 @@ pub struct PromisePrimordials<'js> {
     pub promise_reject: Function<'js>,
     pub promise_all: Function<'js>,
     pub promise_resolved_with_undefined: Promise<'js>,
+    pub function_bind: Function<'js>,
 }
 
 impl<'js> Trace<'js> for PromisePrimordials<'js> {
@@ -67,6 +71,7 @@ impl<'js> Trace<'js> for PromisePrimordials<'js> {
         self.promise_reject.trace(tracer);
         self.promise_all.trace(tracer);
         self.promise_resolved_with_undefined.trace(tracer);
+        self.function_bind.trace(tracer);
     }
 }
 
@@ -79,6 +84,7 @@ impl<'js> Primordial<'js> for PromisePrimordials<'js> {
         let promise_resolve: Function<'js> = promise_constructor.get("resolve")?;
         let promise_reject: Function<'js> = promise_constructor.get("reject")?;
         let promise_all: Function<'js> = promise_constructor.get("all")?;
+        let function_bind: Function<'js> = promise_resolve.get("bind")?;
 
         let promise_resolved_with_undefined = promise_resolve.call((
             This(promise_constructor.clone()),
@@ -91,6 +97,7 @@ impl<'js> Primordial<'js> for PromisePrimordials<'js> {
             promise_reject,
             promise_all,
             promise_resolved_with_undefined,
+            function_bind,
         })
     }
 }
@@ -237,13 +244,171 @@ impl<'js> Trace<'js> for ResolveablePromise<'js> {
     }
 }
 
+pub trait TracedReaction<'js>: Trace<'js> {
+    fn call(
+        self: Box<Self>,
+        ctx: Ctx<'js>,
+        result: std::result::Result<Value<'js>, Value<'js>>,
+    ) -> Result<Value<'js>>;
+}
+
+pub trait TracedCallback<'js>: Trace<'js> {
+    fn call(self: Box<Self>, ctx: Ctx<'js>, arg: Value<'js>) -> Result<Value<'js>>;
+}
+
+#[rquickjs::class]
+pub(crate) struct TracedReactionCell<'js> {
+    inner: RefCell<Option<Box<dyn TracedReaction<'js> + 'js>>>,
+}
+
+unsafe impl<'js> JsLifetime<'js> for TracedReactionCell<'js> {
+    type Changed<'to> = TracedReactionCell<'to>;
+}
+
+impl<'js> Trace<'js> for TracedReactionCell<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        if let Ok(inner) = self.inner.try_borrow() {
+            if let Some(cb) = inner.as_ref() {
+                cb.trace(tracer);
+            }
+        }
+    }
+}
+
+#[rquickjs::class]
+pub(crate) struct TracedCallbackCell<'js> {
+    inner: RefCell<Option<Box<dyn TracedCallback<'js> + 'js>>>,
+}
+
+unsafe impl<'js> JsLifetime<'js> for TracedCallbackCell<'js> {
+    type Changed<'to> = TracedCallbackCell<'to>;
+}
+
+impl<'js> Trace<'js> for TracedCallbackCell<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        if let Ok(inner) = self.inner.try_borrow() {
+            if let Some(cb) = inner.as_ref() {
+                cb.trace(tracer);
+            }
+        }
+    }
+}
+
+/// Bind a GC-traced state cell onto a stateless Rust JS function via `Function.prototype.bind`
+/// so QuickJS's `JSBoundFunction` marks captured JS objects and avoids `JS_FreeRuntime` leaks.
+pub fn make_traced_once_fn<'js, C: TracedCallback<'js> + 'js>(
+    ctx: &Ctx<'js>,
+    cb: C,
+) -> Result<Function<'js>> {
+    let cell = Class::instance(
+        ctx.clone(),
+        TracedCallbackCell {
+            inner: RefCell::new(Some(Box::new(cb))),
+        },
+    )?;
+    let invoke = Function::new(
+        ctx.clone(),
+        |ctx: Ctx<'js>,
+         cell: Class<'js, TracedCallbackCell<'js>>,
+         arg: Opt<Value<'js>>|
+         -> Result<Value<'js>> {
+            let taken = cell.borrow().inner.borrow_mut().take();
+            match taken {
+                Some(cb) => {
+                    let v = arg.0.unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+                    cb.call(ctx, v)
+                },
+                None => Ok(Value::new_undefined(ctx)),
+            }
+        },
+    )?;
+    let bind = PromisePrimordials::get(ctx)?.function_bind.clone();
+    bind.call((This(invoke), Value::new_undefined(ctx.clone()), cell))
+}
+
+pub fn upon_promise_traced<'js, C: TracedReaction<'js> + 'js>(
+    ctx: &Ctx<'js>,
+    promise: Promise<'js>,
+    cb: C,
+) -> Result<Promise<'js>> {
+    let cell = Class::instance(
+        ctx.clone(),
+        TracedReactionCell {
+            inner: RefCell::new(Some(Box::new(cb))),
+        },
+    )?;
+    let invoke = Function::new(
+        ctx.clone(),
+        |ctx: Ctx<'js>,
+         cell: Class<'js, TracedReactionCell<'js>>,
+         is_reject: bool,
+         arg: Opt<Value<'js>>|
+         -> Result<Value<'js>> {
+            let taken = cell.borrow().inner.borrow_mut().take();
+            match taken {
+                Some(cb) => {
+                    let v = arg.0.unwrap_or_else(|| Value::new_undefined(ctx.clone()));
+                    let res = if is_reject { Err(v) } else { Ok(v) };
+                    cb.call(ctx, res)
+                },
+                None => Ok(Value::new_undefined(ctx)),
+            }
+        },
+    )?;
+    let bind = PromisePrimordials::get(ctx)?.function_bind.clone();
+    let on_fulfill: Function<'js> = bind.call((
+        This(invoke.clone()),
+        Value::new_undefined(ctx.clone()),
+        cell.clone(),
+        false,
+    ))?;
+    let on_reject: Function<'js> =
+        bind.call((This(invoke), Value::new_undefined(ctx.clone()), cell, true))?;
+    promise.then()?.call((This(promise), on_fulfill, on_reject))
+}
+
+pub fn upon_promise_fulfilment_traced<'js, C: TracedCallback<'js> + 'js>(
+    ctx: &Ctx<'js>,
+    promise: Promise<'js>,
+    cb: C,
+) -> Result<Promise<'js>> {
+    let on_fulfill = make_traced_once_fn(ctx, cb)?;
+    promise.then()?.call((This(promise), on_fulfill))
+}
+
+pub fn on_promise_rejected_traced<'js, C: TracedCallback<'js> + 'js>(
+    ctx: &Ctx<'js>,
+    promise: Promise<'js>,
+    cb: C,
+) -> Result<()> {
+    let on_reject = make_traced_once_fn(ctx, cb)?;
+    promise.catch()?.call((This(promise), on_reject))
+}
+
 pub fn with_promise_result<'js>(
     ctx: &Ctx<'js>,
     f: impl FnOnce() -> Result<Promise<'js>>,
 ) -> Result<Promise<'js>> {
     match f() {
         Ok(value) => Ok(value),
-        Err(Error::Exception) => promise_rejected_catch(ctx, &*PromisePrimordials::get(ctx)?),
+        Err(Error::Exception) => {
+            // Clone and drop the userdata guard before calling Promise.reject so
+            // host_promise_rejection_tracker can safely borrow ctx userdata.
+            let primordials = PromisePrimordials::get(ctx)?.clone();
+            promise_rejected_catch(ctx, &primordials)
+        },
+        Err(Error::FromJs { from, to, message }) => {
+            let primordials = PromisePrimordials::get(ctx)?.clone();
+            let type_error = lexe_utils::primordials::BasePrimordials::get(ctx)?
+                .constructor_type_error
+                .clone();
+            let msg = match message {
+                Some(m) => format!("Error converting from js '{from}' into type '{to}': {m}"),
+                None => format!("Error converting from js '{from}' into type '{to}'"),
+            };
+            let err_val: Value<'js> = type_error.call((msg,))?;
+            promise_rejected_with(&primordials, err_val)
+        },
         Err(err) => Err(err),
     }
 }

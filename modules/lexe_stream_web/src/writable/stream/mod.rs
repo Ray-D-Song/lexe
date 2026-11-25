@@ -77,7 +77,7 @@ impl<'js> WritableStream<'js> {
     fn new(
         ctx: Ctx<'js>,
         underlying_sink: Opt<Undefined<Object<'js>>>,
-        queuing_strategy: Opt<Undefined<QueuingStrategy<'js>>>,
+        queuing_strategy: Opt<Null<Undefined<QueuingStrategy<'js>>>>,
     ) -> Result<Class<'js, Self>> {
         // If underlyingSink is missing, set it to null.
         let underlying_sink = Null(underlying_sink.0);
@@ -115,7 +115,7 @@ impl<'js> WritableStream<'js> {
             },
         )?;
         let stream = OwnedBorrowMut::from_class(stream_class.clone());
-        let queuing_strategy = queuing_strategy.0.and_then(|qs| qs.0);
+        let queuing_strategy = queuing_strategy.0.and_then(|n| n.0).and_then(|u| u.0);
 
         // Let sizeAlgorithm be ! ExtractSizeAlgorithm(strategy).
         let size_algorithm = QueuingStrategy::extract_size_algorithm(queuing_strategy.as_ref());
@@ -236,10 +236,11 @@ impl<'js> WritableStream<'js> {
                 controller: ts_controller.clone(),
             },
             super::WritableCloseAlgorithm::Transform {
-                stream: ts_stream,
+                stream: ts_stream.clone(),
                 controller: ts_controller.clone(),
             },
             super::WritableAbortAlgorithm::Transform {
+                stream: ts_stream,
                 controller: ts_controller,
             },
             high_water_mark,

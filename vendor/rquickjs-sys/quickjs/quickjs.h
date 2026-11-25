@@ -1063,6 +1063,11 @@ JS_EXTERN bool JS_IsArrayBuffer(JSValueConst obj);
 JS_EXTERN int JS_IsImmutableArrayBuffer(JSValueConst obj);
 // returns 0 if obj is an ArrayBuffer, -1 otherwise
 JS_EXTERN int JS_SetImmutableArrayBuffer(JSValueConst obj, bool immutable);
+// returns true or false if obj is a non-detachable ArrayBuffer, -1 otherwise
+JS_EXTERN int JS_IsNonDetachableArrayBuffer(JSValueConst obj);
+// returns 0 if obj is an ArrayBuffer, -1 otherwise
+JS_EXTERN int JS_SetNonDetachableArrayBuffer(JSValueConst obj, bool non_detachable);
+JS_EXTERN bool JS_IsSharedArrayBuffer(JSValueConst obj);
 JS_EXTERN uint8_t *JS_GetUint8Array(JSContext *ctx, size_t *psize, JSValueConst obj);
 
 typedef enum JSTypedArrayEnum {

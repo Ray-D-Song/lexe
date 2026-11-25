@@ -1,6 +1,7 @@
+use lexe_utils::primordials::Primordial;
 use rquickjs::{class::Trace, methods, Class, Ctx, JsLifetime, Result};
 
-use super::{NativeSizeFunction, QueueingStrategyInit};
+use super::{NativeSizeFunction, QueueingStrategyInit, QueuingStrategyPrimordials};
 
 #[derive(JsLifetime, Trace)]
 #[rquickjs::class]
@@ -13,10 +14,11 @@ pub(crate) struct CountQueuingStrategy<'js> {
 impl<'js> CountQueuingStrategy<'js> {
     #[qjs(constructor)]
     pub(crate) fn new(ctx: Ctx<'js>, init: QueueingStrategyInit) -> Result<Self> {
+        let size = QueuingStrategyPrimordials::get(&ctx)?.count_size.clone();
         // Set this.[[highWaterMark]] to init["highWaterMark"].
         Ok(Self {
             high_water_mark: init.high_water_mark,
-            size: Class::instance(ctx, NativeSizeFunction::Count)?,
+            size,
         })
     }
 

@@ -7,8 +7,8 @@ use rquickjs::{
     function::Constructor,
     methods,
     prelude::{Opt, This},
-    ArrayBuffer, Class, Ctx, Error, Exception, FromJs, Function, IntoJs, JsLifetime, Object,
-    Promise, Result, Value,
+    ArrayBuffer, Class, Ctx, Exception, FromJs, Function, IntoJs, JsLifetime, Object, Promise,
+    Result, Value,
 };
 
 use crate::{
@@ -22,7 +22,7 @@ use crate::{
     },
     utils::{
         promise::{promise_rejected_with_constructor, with_promise_result, ResolveablePromise},
-        UnwrapOrUndefined, ValueOrUndefined,
+        UnwrapOrUndefined,
     },
 };
 
@@ -386,18 +386,29 @@ struct ReadableStreamBYOBReaderReadOptions {
 
 impl<'js> FromJs<'js> for ReadableStreamBYOBReaderReadOptions {
     fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Self> {
-        let ty_name = value.type_name();
-        let obj = value
-            .as_object()
-            .ok_or(Error::new_from_js(ty_name, "Object"))?;
+        if value.is_undefined() || value.is_null() {
+            return Ok(Self { min: 1 });
+        }
 
-        let min = obj.get_value_or_undefined::<_, f64>("min")?.unwrap_or(1.0);
-        if min < u64::MIN as f64 || min > u64::MAX as f64 {
+        let Some(obj) = value.as_object() else {
+            return Err(Exception::throw_type(ctx, "options must be an object"));
+        };
+
+        let min_val: Value<'js> = obj.get("min")?;
+        if min_val.is_undefined() || min_val.is_null() {
+            return Ok(Self { min: 1 });
+        }
+
+        let Some(min) = min_val.as_number() else {
+            return Err(Exception::throw_type(ctx, "options.min must be a number"));
+        };
+
+        if !min.is_finite() || min.fract() != 0.0 || min < 0.0 || min >= 18446744073709551616.0 {
             return Err(Exception::throw_type(
                 ctx,
                 "min on ReadableStreamBYOBReaderReadOptions must fit into unsigned long long",
             ));
-        };
+        }
 
         Ok(Self { min: min as u64 })
     }
@@ -440,6 +451,15 @@ impl<'js> ViewBytes<'js> {
     ) -> Result<Self> {
         if function_array_buffer_is_view.call::<_, bool>((object.clone(),))? {
             if let Some(view) = ObjectBytes::from_array_buffer(object)? {
+                if let Some((buffer, _, _)) = view.get_array_buffer()? {
+                    if unsafe { rquickjs::qjs::JS_IsSharedArrayBuffer(buffer.as_value().as_raw()) }
+                    {
+                        return Err(Exception::throw_type(
+                            ctx,
+                            "view's buffer must not be a SharedArrayBuffer",
+                        ));
+                    }
+                }
                 return Ok(Self(view));
             }
         }

@@ -300,6 +300,9 @@ fn recreate_mirror(
     // detach + eventual finalization is exactly the same well-tested path any
     // ordinary `new ArrayBuffer(n)` from JS already goes through.
     let buffer = ArrayBuffer::new_copy(ctx.clone(), bytes)?;
+    unsafe {
+        rquickjs::qjs::JS_SetNonDetachableArrayBuffer(buffer.as_value().as_raw(), true);
+    }
     let value: Value = buffer.into_value();
     host.memory_mirrors.borrow_mut().insert(
         bits,

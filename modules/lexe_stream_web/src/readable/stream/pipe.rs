@@ -5,11 +5,11 @@ use std::{
 };
 
 use lexe_abort::AbortSignal;
-use lexe_utils::{option::Undefined, result::ResultExt};
+use lexe_utils::result::ResultExt;
 use rquickjs::{
-    class::{OwnedBorrow, Trace},
-    prelude::{OnceFn, This},
-    Class, Coerced, Ctx, Error, FromJs, Function, Promise, Result, Value,
+    class::{OwnedBorrow, Trace, Tracer},
+    prelude::This,
+    Class, Coerced, Ctx, Exception, FromJs, Function, JsLifetime, Promise, Result, Value,
 };
 
 use crate::{
@@ -27,8 +27,9 @@ use crate::{
     },
     utils::{
         promise::{
-            promise_resolved_with, upon_promise, upon_promise_fulfilment, PromisePrimordials,
-            ResolveablePromise,
+            make_traced_once_fn, on_promise_rejected_traced, promise_resolved_with,
+            upon_promise_fulfilment_traced, upon_promise_traced, PromisePrimordials,
+            ResolveablePromise, TracedCallback, TracedReaction,
         },
         UnwrapOrUndefined, ValueOrUndefined,
     },
@@ -65,33 +66,35 @@ impl<'js> ReadableStream<'js> {
             .clone()
             .expect("pipeTo called on writable stream without controller");
 
-        // If source.[[controller]] implements ReadableByteStreamController, let reader be either ! AcquireReadableStreamBYOBReader(source) or ! AcquireReadableStreamDefaultReader(source), at the user agent’s discretion.
-        // Otherwise, let reader be ! AcquireReadableStreamDefaultReader(source).
         let (mut source, reader) =
             ReadableStreamReaderClass::acquire_readable_stream_default_reader(ctx.clone(), source)?;
 
         let source_closed_promise = reader.borrow().generic.closed_promise.promise.clone();
 
-        // Let writer be ! AcquireWritableStreamDefaultWriter(dest).
         let (dest, writer) =
             WritableStreamDefaultWriter::acquire_writable_stream_default_writer(&ctx, dest)?;
 
         let dest_closed_promise = writer.borrow().closed_promise.promise.clone();
 
-        // Set source.[[disturbed]] to true.
         source.disturbed = true;
 
-        let current_write = Rc::new(RefCell::new(
-            source
-                .promise_primordials
-                .promise_resolved_with_undefined
-                .clone(),
-        ));
+        let shared = Class::instance(
+            ctx.clone(),
+            PipeShared {
+                current_write: RefCell::new(
+                    source
+                        .promise_primordials
+                        .promise_resolved_with_undefined
+                        .clone(),
+                ),
+                abort_callback: RefCell::new(None),
+            },
+        )?;
 
         let promise_primordials = source.promise_primordials.clone();
         let constructor_type_error = source.constructor_type_error.clone();
 
-        let mut pipe_to = PipeTo {
+        let pipe_to = PipeTo {
             source_objects: ReadableStreamClassObjects {
                 stream: source.into_inner(),
                 controller: source_controller,
@@ -102,219 +105,105 @@ impl<'js> ReadableStream<'js> {
                 controller: dest_controller,
                 writer,
             },
-            current_write,
-            // Let shuttingDown be false.
+            shared,
             shutting_down: Rc::new(AtomicBool::new(false)),
             signal,
-            abort_callback: None,
-            // Let promise be a new promise.
             promise: ResolveablePromise::new(&ctx)?,
             promise_primordials: promise_primordials.clone(),
         };
 
         // If signal is not undefined,
         if let Some(signal) = &pipe_to.signal {
-            // Let abortAlgorithm be the following steps:
-            let abort_algorithm = {
-                let signal = signal.clone();
-                let pipe_to = pipe_to.clone();
-                move |ctx: Ctx<'js>| -> Result<()> {
-                    // Let error be signal’s abort reason.
-                    let error = signal.borrow().reason().unwrap_or_undefined(&ctx);
-
-                    // Let actions be an empty ordered set.
-                    let mut actions =
-                        Vec::<Box<dyn FnOnce(Ctx<'js>) -> Result<Promise<'js>>>>::new();
-
-                    // If preventAbort is false, append the following action to actions:
-                    if !prevent_abort {
-                        let dest_objects = pipe_to.dest_objects.clone();
-                        let error = error.clone();
-                        actions.push(Box::new(move |ctx| {
-                            let dest_objects = WritableStreamObjects::from_class(dest_objects);
-
-                            if matches!(dest_objects.stream.state, WritableStreamState::Writable) {
-                                // If dest.[[state]] is "writable", return ! WritableStreamAbort(dest, error).
-                                let (promise, _) = WritableStream::writable_stream_abort(
-                                    ctx,
-                                    dest_objects,
-                                    Some(error.clone()),
-                                )?;
-                                Ok(promise)
-                            } else {
-                                // Otherwise, return a promise resolved with undefined.
-                                Ok(dest_objects
-                                    .stream
-                                    .promise_primordials
-                                    .promise_resolved_with_undefined
-                                    .clone())
-                            }
-                        }));
-                    }
-
-                    // If preventCancel is false, append the following action action to actions:
-                    if !prevent_cancel {
-                        let source_objects = pipe_to.source_objects.clone();
-                        let error = error.clone();
-                        actions.push(Box::new(move |ctx| {
-                            let source_objects = ReadableStreamObjects::from_class(source_objects);
-
-                            if let ReadableStreamState::Readable = source_objects.stream.state {
-                                // If source.[[state]] is "readable", return ! ReadableStreamCancel(source, error).
-                                let (promise, _) = ReadableStream::readable_stream_cancel(
-                                    ctx,
-                                    source_objects,
-                                    error.clone(),
-                                )?;
-
-                                Ok(promise)
-                            } else {
-                                // Otherwise, return a promise resolved with undefined.
-                                Ok(source_objects
-                                    .stream
-                                    .promise_primordials
-                                    .promise_resolved_with_undefined
-                                    .clone())
-                            }
-                        }));
-                    }
-
-                    // Shutdown with an action consisting of getting a promise to wait for all of the actions in actions, and with error.
+            let run_abort =
+                |ctx: Ctx<'js>, pipe_to: &PipeTo<'js>, sig: &Class<'js, AbortSignal<'js>>| {
+                    let error = sig.borrow().reason().unwrap_or_undefined(&ctx);
                     pipe_to.shutdown_with_action(
                         ctx,
-                        move |ctx| {
-                            let promises: Vec<Promise<'js>> = actions
-                                .into_iter()
-                                .map(|action| action(ctx.clone()))
-                                .collect::<Result<Vec<_>>>()?;
-
-                            let all_promises: Promise<'js> =
-                                promise_primordials.promise_all.call((
-                                    This(promise_primordials.promise_constructor.clone()),
-                                    promises,
-                                ))?;
-
-                            Ok(all_promises)
+                        PipeAction::AbortSignal {
+                            prevent_abort,
+                            prevent_cancel,
+                            error: error.clone(),
                         },
                         Some(error),
                     )
-                }
-            };
+                };
 
-            // If signal is aborted, perform abortAlgorithm and return promise.
             {
-                let signal = signal.borrow();
-
-                if signal.aborted {
-                    abort_algorithm(ctx.clone())?;
-
+                let signal_ref = signal.borrow();
+                if signal_ref.aborted {
+                    drop(signal_ref);
+                    run_abort(ctx, &pipe_to, signal)?;
                     return Ok(pipe_to.promise.promise);
                 }
             }
 
-            let abort_callback = pipe_to
-                .abort_callback
-                .insert(Function::new(ctx.clone(), OnceFn::new(abort_algorithm))?);
+            #[derive(Trace)]
+            struct PipeAbortSignalHandler<'js> {
+                pipe_to: PipeTo<'js>,
+                signal: Class<'js, AbortSignal<'js>>,
+                prevent_abort: bool,
+                prevent_cancel: bool,
+            }
 
-            // Add abortAlgorithm to signal.
-            AbortSignal::set_on_abort(This(signal.clone()), ctx.clone(), abort_callback.clone())?;
+            impl<'js> TracedCallback<'js> for PipeAbortSignalHandler<'js> {
+                fn call(self: Box<Self>, ctx: Ctx<'js>, _: Value<'js>) -> Result<Value<'js>> {
+                    let error = self.signal.borrow().reason().unwrap_or_undefined(&ctx);
+                    self.pipe_to.shutdown_with_action(
+                        ctx.clone(),
+                        PipeAction::AbortSignal {
+                            prevent_abort: self.prevent_abort,
+                            prevent_cancel: self.prevent_cancel,
+                            error: error.clone(),
+                        },
+                        Some(error),
+                    )?;
+                    Ok(Value::new_undefined(ctx))
+                }
+            }
+
+            let abort_cb = make_traced_once_fn(
+                &ctx,
+                PipeAbortSignalHandler {
+                    pipe_to: pipe_to.clone(),
+                    signal: signal.clone(),
+                    prevent_abort,
+                    prevent_cancel,
+                },
+            )?;
+            *pipe_to.shared.borrow().abort_callback.borrow_mut() = Some(abort_cb.clone());
+            AbortSignal::set_on_abort(This(signal.clone()), ctx.clone(), abort_cb)?;
         }
-
-        // In parallel but not really; see #905, using reader and writer, read all chunks from source and write them to dest.
-        // Due to the locking provided by the reader and writer, the exact manner in which this happens is not observable to author code, and so there is flexibility in how this is done.
-        // The following constraints apply regardless of the exact algorithm used:
 
         // Errors must be propagated forward
         PipeTo::is_or_becomes_errored(
             ctx.clone(),
             source_stored_error,
             source_closed_promise.clone(),
-            {
-                let pipe_to = pipe_to.clone();
-                move |ctx, stored_error| {
-                    if !prevent_abort {
-                        pipe_to.shutdown_with_action(
-                            ctx,
-                            {
-                                let pipe_to = pipe_to.clone();
-                                let stored_error = stored_error.clone();
-                                move |ctx| {
-                                    let dest_objects = WritableStreamObjects::from_class(
-                                        pipe_to.dest_objects.clone(),
-                                    );
-
-                                    let (promise, _) = WritableStream::writable_stream_abort(
-                                        ctx,
-                                        dest_objects,
-                                        Some(stored_error),
-                                    )?;
-
-                                    Ok(promise)
-                                }
-                            },
-                            Some(stored_error),
-                        )
-                    } else {
-                        pipe_to.shutdown(ctx, Some(stored_error))
-                    }
-                }
+            PipeToErrorKind::Forward {
+                pipe_to: pipe_to.clone(),
+                prevent_abort,
             },
         )?;
 
         // Errors must be propagated backward
-        PipeTo::is_or_becomes_errored(ctx.clone(), dest_stored_error, dest_closed_promise, {
-            let pipe_to = pipe_to.clone();
-            move |ctx, stored_error| {
-                if !prevent_cancel {
-                    pipe_to.shutdown_with_action(
-                        ctx,
-                        {
-                            let pipe_to = pipe_to.clone();
-                            let stored_error = stored_error.clone();
-                            move |ctx| {
-                                let source_objects = ReadableStreamObjects::from_class(
-                                    pipe_to.source_objects.clone(),
-                                );
-
-                                let (promise, _) = ReadableStream::readable_stream_cancel(
-                                    ctx,
-                                    source_objects,
-                                    stored_error,
-                                )?;
-
-                                Ok(promise)
-                            }
-                        },
-                        Some(stored_error),
-                    )
-                } else {
-                    pipe_to.shutdown(ctx, Some(stored_error))
-                }
-            }
-        })?;
+        PipeTo::is_or_becomes_errored(
+            ctx.clone(),
+            dest_stored_error,
+            dest_closed_promise,
+            PipeToErrorKind::Backward {
+                pipe_to: pipe_to.clone(),
+                prevent_cancel,
+            },
+        )?;
 
         // Closing must be propagated forward
-        PipeTo::is_or_becomes_closed(ctx.clone(), source_closed, source_closed_promise, {
-            let pipe_to = pipe_to.clone();
-            move |ctx| {
-                if !prevent_close {
-                    pipe_to.shutdown_with_action(
-                        ctx,
-                        {
-                            let pipe_to = pipe_to.clone();
-                            move |ctx| {
-                                let dest_objects = WritableStreamObjects::from_class(pipe_to.dest_objects);
-
-                                WritableStreamDefaultWriter::writable_stream_default_writer_close_with_error_propagation(ctx, dest_objects)
-                            }
-                        },
-                        None,
-                    )
-                } else {
-                    pipe_to.shutdown(ctx, None)
-                }
-            }
-        })?;
+        PipeTo::is_or_becomes_closed(
+            ctx.clone(),
+            source_closed,
+            source_closed_promise,
+            pipe_to.clone(),
+            prevent_close,
+        )?;
 
         // Closing must be propagated backward
         if dest_closing {
@@ -325,22 +214,7 @@ impl<'js> ReadableStream<'js> {
             if !prevent_cancel {
                 pipe_to.shutdown_with_action(
                     ctx.clone(),
-                    {
-                        let pipe_to = pipe_to.clone();
-                        let dest_closed = dest_closed.clone();
-                        move |ctx| {
-                            let source_objects =
-                                ReadableStreamObjects::from_class(pipe_to.source_objects.clone());
-
-                            let (promise, _) = ReadableStream::readable_stream_cancel(
-                                ctx,
-                                source_objects,
-                                dest_closed,
-                            )?;
-
-                            Ok(promise)
-                        }
-                    },
+                    PipeAction::CancelSource(dest_closed.clone()),
                     Some(dest_closed),
                 )?;
             } else {
@@ -350,9 +224,33 @@ impl<'js> ReadableStream<'js> {
 
         let result_promise = pipe_to.promise.promise.clone();
         let pipe_loop_promise = pipe_to.pipe_loop(ctx)?;
-        pipe_loop_promise.set_is_handled()?;
+        let _ = pipe_loop_promise.set_is_handled();
 
         Ok(result_promise)
+    }
+}
+
+/// Mutable JS-visible state shared by every clone of a `PipeTo`. It lives in a single JS object so
+/// the garbage collector sees exactly one owner for the promises inside (tracing a shared `Rc` from
+/// several holders would decrement their reference counts more than once).
+#[rquickjs::class]
+pub(crate) struct PipeShared<'js> {
+    current_write: RefCell<Promise<'js>>,
+    abort_callback: RefCell<Option<Function<'js>>>,
+}
+
+unsafe impl<'js> JsLifetime<'js> for PipeShared<'js> {
+    type Changed<'to> = PipeShared<'to>;
+}
+
+impl<'js> Trace<'js> for PipeShared<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        if let Ok(cw) = self.current_write.try_borrow() {
+            cw.trace(tracer);
+        }
+        if let Ok(cb) = self.abort_callback.try_borrow() {
+            cb.trace(tracer);
+        }
     }
 }
 
@@ -364,24 +262,383 @@ struct PipeTo<'js> {
         ReadableStreamDefaultReaderOwned<'js>,
     >,
     dest_objects: WritableStreamClassObjects<'js, WritableStreamDefaultWriterOwned<'js>>,
-    current_write: Rc<RefCell<Promise<'js>>>,
+    shared: Class<'js, PipeShared<'js>>,
     shutting_down: Rc<AtomicBool>,
     signal: Option<Class<'js, AbortSignal<'js>>>,
-    abort_callback: Option<Function<'js>>,
     promise: ResolveablePromise<'js>,
 
     promise_primordials: PromisePrimordials<'js>,
 }
 
+impl<'js> Trace<'js> for PipeTo<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        self.source_objects.trace(tracer);
+        self.dest_objects.trace(tracer);
+        self.shared.trace(tracer);
+        self.signal.trace(tracer);
+        self.promise.trace(tracer);
+        self.promise_primordials.trace(tracer);
+    }
+}
+
+#[derive(Clone, Trace)]
+enum PipeAction<'js> {
+    AbortSignal {
+        prevent_abort: bool,
+        prevent_cancel: bool,
+        error: Value<'js>,
+    },
+    AbortDest(Value<'js>),
+    CancelSource(Value<'js>),
+    CloseDest,
+}
+
+impl<'js> PipeAction<'js> {
+    fn run(self, ctx: Ctx<'js>, pipe_to: &PipeTo<'js>) -> Result<Promise<'js>> {
+        match self {
+            PipeAction::AbortSignal {
+                prevent_abort,
+                prevent_cancel,
+                error,
+            } => {
+                let mut promises: Vec<Promise<'js>> = Vec::new();
+                if !prevent_abort {
+                    let dest_objects =
+                        WritableStreamObjects::from_class(pipe_to.dest_objects.clone());
+                    let p = if matches!(dest_objects.stream.state, WritableStreamState::Writable) {
+                        WritableStream::writable_stream_abort(
+                            ctx.clone(),
+                            dest_objects,
+                            Some(error.clone()),
+                        )?
+                        .0
+                    } else {
+                        dest_objects
+                            .stream
+                            .promise_primordials
+                            .promise_resolved_with_undefined
+                            .clone()
+                    };
+                    promises.push(p);
+                }
+                if !prevent_cancel {
+                    let source_objects =
+                        ReadableStreamObjects::from_class(pipe_to.source_objects.clone());
+                    let p = if let ReadableStreamState::Readable = source_objects.stream.state {
+                        ReadableStream::readable_stream_cancel(ctx.clone(), source_objects, error)?
+                            .0
+                    } else {
+                        source_objects
+                            .stream
+                            .promise_primordials
+                            .promise_resolved_with_undefined
+                            .clone()
+                    };
+                    promises.push(p);
+                }
+                pipe_to.promise_primordials.promise_all.call((
+                    This(pipe_to.promise_primordials.promise_constructor.clone()),
+                    promises,
+                ))
+            },
+            PipeAction::AbortDest(stored_error) => {
+                let dest_objects = WritableStreamObjects::from_class(pipe_to.dest_objects.clone());
+                let (promise, _) =
+                    WritableStream::writable_stream_abort(ctx, dest_objects, Some(stored_error))?;
+                Ok(promise)
+            },
+            PipeAction::CancelSource(stored_error) => {
+                let source_objects =
+                    ReadableStreamObjects::from_class(pipe_to.source_objects.clone());
+                let (promise, _) =
+                    ReadableStream::readable_stream_cancel(ctx, source_objects, stored_error)?;
+                Ok(promise)
+            },
+            PipeAction::CloseDest => {
+                let dest_objects = WritableStreamObjects::from_class(pipe_to.dest_objects.clone());
+                WritableStreamDefaultWriter::writable_stream_default_writer_close_with_error_propagation(
+                    ctx,
+                    dest_objects,
+                )
+            },
+        }
+    }
+}
+
+#[derive(Trace)]
+enum PipeToErrorKind<'js> {
+    Forward {
+        pipe_to: PipeTo<'js>,
+        prevent_abort: bool,
+    },
+    Backward {
+        pipe_to: PipeTo<'js>,
+        prevent_cancel: bool,
+    },
+}
+
+impl<'js> TracedCallback<'js> for PipeToErrorKind<'js> {
+    fn call(self: Box<Self>, ctx: Ctx<'js>, stored_error: Value<'js>) -> Result<Value<'js>> {
+        match *self {
+            PipeToErrorKind::Forward {
+                pipe_to,
+                prevent_abort,
+            } => {
+                if !prevent_abort {
+                    pipe_to.shutdown_with_action(
+                        ctx.clone(),
+                        PipeAction::AbortDest(stored_error.clone()),
+                        Some(stored_error),
+                    )?;
+                } else {
+                    pipe_to.shutdown(ctx.clone(), Some(stored_error))?;
+                }
+            },
+            PipeToErrorKind::Backward {
+                pipe_to,
+                prevent_cancel,
+            } => {
+                if !prevent_cancel {
+                    pipe_to.shutdown_with_action(
+                        ctx.clone(),
+                        PipeAction::CancelSource(stored_error.clone()),
+                        Some(stored_error),
+                    )?;
+                } else {
+                    pipe_to.shutdown(ctx.clone(), Some(stored_error))?;
+                }
+            },
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+}
+
+#[derive(Trace)]
+struct PipeClosedHandler<'js> {
+    pipe_to: PipeTo<'js>,
+    prevent_close: bool,
+}
+
+impl<'js> TracedCallback<'js> for PipeClosedHandler<'js> {
+    fn call(self: Box<Self>, ctx: Ctx<'js>, _: Value<'js>) -> Result<Value<'js>> {
+        if !self.prevent_close {
+            self.pipe_to
+                .shutdown_with_action(ctx.clone(), PipeAction::CloseDest, None)?;
+        } else {
+            self.pipe_to.shutdown(ctx.clone(), None)?;
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+}
+
+#[derive(Trace)]
+struct PipeLoopNextHandler<'js> {
+    pipe_to: PipeTo<'js>,
+    loop_promise: ResolveablePromise<'js>,
+}
+
+impl<'js> TracedReaction<'js> for PipeLoopNextHandler<'js> {
+    fn call(
+        self: Box<Self>,
+        ctx: Ctx<'js>,
+        result: std::result::Result<Value<'js>, Value<'js>>,
+    ) -> Result<Value<'js>> {
+        match result {
+            Ok(v) => {
+                let done = v.as_bool().unwrap_or(false);
+                self.pipe_to.next(ctx.clone(), done, self.loop_promise)?;
+            },
+            Err(err) => self.loop_promise.reject(err)?,
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+}
+
+#[derive(Trace)]
+struct PipeStepReadyHandler<'js> {
+    pipe_to: PipeTo<'js>,
+}
+
+impl<'js> TracedCallback<'js> for PipeStepReadyHandler<'js> {
+    fn call(self: Box<Self>, ctx: Ctx<'js>, _: Value<'js>) -> Result<Value<'js>> {
+        if self.pipe_to.shutting_down.load(Ordering::Acquire) {
+            return Ok(Value::new_bool(ctx, true));
+        }
+
+        let read_promise = ResolveablePromise::new(&ctx)?;
+
+        struct ReadRequest<'js> {
+            dest_objects: WritableStreamClassObjects<'js, WritableStreamDefaultWriterOwned<'js>>,
+            shared: Class<'js, PipeShared<'js>>,
+            shutting_down: Rc<AtomicBool>,
+            read_promise: ResolveablePromise<'js>,
+        }
+
+        impl<'js> Trace<'js> for ReadRequest<'js> {
+            fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+                self.dest_objects.trace(tracer);
+                self.shared.trace(tracer);
+                self.read_promise.trace(tracer);
+            }
+        }
+
+        impl<'js> ReadableStreamReadRequest<'js> for ReadRequest<'js> {
+            fn chunk_steps(
+                &self,
+                objects: ReadableStreamDefaultReaderObjects<'js>,
+                chunk: Value<'js>,
+            ) -> Result<ReadableStreamDefaultReaderObjects<'js>> {
+                let ctx = chunk.ctx().clone();
+                if self.shutting_down.load(Ordering::Acquire) {
+                    self.read_promise.resolve(Value::new_bool(ctx, true))?;
+                    return Ok(objects);
+                }
+
+                // calling write can trigger user code; ensure we don't hold locks
+                let objects = objects.into_inner();
+
+                let dest_objects = WritableStreamObjects::from_class(self.dest_objects.clone());
+                let write_promise =
+                    WritableStreamDefaultWriter::writable_stream_default_writer_write(
+                        ctx.clone(),
+                        dest_objects,
+                        chunk,
+                    )?;
+
+                let _: Promise<'js> = write_promise.catch()?.call((
+                    This(write_promise.clone()),
+                    Function::new(ctx.clone(), || {}),
+                ))?;
+
+                *self.shared.borrow().current_write.borrow_mut() = write_promise;
+                self.read_promise.resolve(Value::new_bool(ctx, false))?;
+
+                Ok(ReadableStreamObjects::from_class(objects))
+            }
+
+            fn close_steps(
+                &self,
+                ctx: &Ctx<'js>,
+                objects: ReadableStreamDefaultReaderObjects<'js>,
+            ) -> Result<ReadableStreamDefaultReaderObjects<'js>> {
+                self.read_promise
+                    .resolve(Value::new_bool(ctx.clone(), true))?;
+
+                Ok(objects)
+            }
+
+            fn error_steps(
+                &self,
+                objects: ReadableStreamDefaultReaderObjects<'js>,
+                reason: Value<'js>,
+            ) -> Result<ReadableStreamDefaultReaderObjects<'js>> {
+                self.read_promise.reject(reason)?;
+
+                Ok(objects)
+            }
+        }
+
+        let objects = ReadableStreamObjects::from_class(self.pipe_to.source_objects.clone());
+        let promise = read_promise.promise.clone();
+
+        ReadableStreamDefaultReader::readable_stream_default_reader_read(
+            &ctx,
+            objects,
+            ReadRequest {
+                dest_objects: self.pipe_to.dest_objects,
+                shared: self.pipe_to.shared,
+                shutting_down: self.pipe_to.shutting_down,
+                read_promise,
+            },
+        )?;
+
+        Ok(promise.into_value())
+    }
+}
+
+#[derive(Trace)]
+struct PipeFinalizeHandler<'js> {
+    pipe_to: PipeTo<'js>,
+    original_error: Option<Value<'js>>,
+}
+
+impl<'js> TracedReaction<'js> for PipeFinalizeHandler<'js> {
+    fn call(
+        self: Box<Self>,
+        ctx: Ctx<'js>,
+        result: std::result::Result<Value<'js>, Value<'js>>,
+    ) -> Result<Value<'js>> {
+        match result {
+            Ok(_) => self.pipe_to.finalize(ctx.clone(), self.original_error)?,
+            Err(new_error) => self.pipe_to.finalize(ctx.clone(), Some(new_error))?,
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+}
+
+#[derive(Trace)]
+struct PipeShutdownWaitHandler<'js> {
+    pipe_to: PipeTo<'js>,
+    action: Option<PipeAction<'js>>,
+    original_error: Option<Value<'js>>,
+}
+
+impl<'js> TracedReaction<'js> for PipeShutdownWaitHandler<'js> {
+    fn call(
+        self: Box<Self>,
+        ctx: Ctx<'js>,
+        _: std::result::Result<Value<'js>, Value<'js>>,
+    ) -> Result<Value<'js>> {
+        if let Some(action) = self.action {
+            let action_promise = action.run(ctx.clone(), &self.pipe_to)?;
+            upon_promise_traced(
+                &ctx,
+                action_promise,
+                PipeFinalizeHandler {
+                    pipe_to: self.pipe_to,
+                    original_error: self.original_error,
+                },
+            )?;
+        } else {
+            self.pipe_to.finalize(ctx.clone(), self.original_error)?;
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+}
+
+struct PipeWaitWriteLoopHandler<'js> {
+    old_current_write: Promise<'js>,
+    shared: Class<'js, PipeShared<'js>>,
+}
+
+impl<'js> Trace<'js> for PipeWaitWriteLoopHandler<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        self.old_current_write.trace(tracer);
+        self.shared.trace(tracer);
+    }
+}
+
+impl<'js> TracedReaction<'js> for PipeWaitWriteLoopHandler<'js> {
+    fn call(
+        self: Box<Self>,
+        ctx: Ctx<'js>,
+        _: std::result::Result<Value<'js>, Value<'js>>,
+    ) -> Result<Value<'js>> {
+        if !self
+            .old_current_write
+            .eq(&self.shared.borrow().current_write.borrow())
+        {
+            Ok(PipeTo::wait_for_writes_to_finish(ctx, self.shared)?.into_value())
+        } else {
+            Ok(Value::new_undefined(ctx))
+        }
+    }
+}
+
 impl<'js> PipeTo<'js> {
-    // Using reader and writer, read all chunks from this and write them to dest
-    // - Backpressure must be enforced
-    // - Shutdown must stop all activity
     fn pipe_loop(self, ctx: Ctx<'js>) -> Result<ResolveablePromise<'js>> {
         let loop_promise = ResolveablePromise::new(&ctx)?;
-
         self.next(ctx, false, loop_promise.clone())?;
-
         Ok(loop_promise)
     }
 
@@ -390,17 +647,15 @@ impl<'js> PipeTo<'js> {
             loop_promise.resolve_undefined()?
         } else {
             let pipe_step_promise = self.pipe_step(ctx.clone())?;
-            upon_promise(ctx, pipe_step_promise, {
-                {
-                    let pipe_to = self.clone();
-                    move |ctx, result| match result {
-                        Ok(done) => pipe_to.next(ctx, done, loop_promise),
-                        Err(err) => loop_promise.reject(err),
-                    }
-                }
-            })?;
+            upon_promise_traced(
+                &ctx,
+                pipe_step_promise,
+                PipeLoopNextHandler {
+                    pipe_to: self.clone(),
+                    loop_promise,
+                },
+            )?;
         }
-
         Ok(())
     }
 
@@ -421,121 +676,26 @@ impl<'js> PipeTo<'js> {
             .promise
             .clone();
 
-        upon_promise_fulfilment(ctx, writer_ready, {
-            let current_write = self.current_write.clone();
-            let source_objects = self.source_objects.clone();
-            let dest_objects = self.dest_objects.clone();
-            move |ctx: Ctx<'js>, ()| -> Result<Promise<'js>> {
-                let read_promise = ResolveablePromise::new(&ctx)?;
-
-                struct ReadRequest<'js> {
-                    dest_objects:
-                        WritableStreamClassObjects<'js, WritableStreamDefaultWriterOwned<'js>>,
-                    current_write: Rc<RefCell<Promise<'js>>>,
-                    read_promise: ResolveablePromise<'js>,
-                }
-
-                impl<'js> Trace<'js> for ReadRequest<'js> {
-                    fn trace<'a>(&self, tracer: rquickjs::class::Tracer<'a, 'js>) {
-                        self.current_write.as_ref().borrow().trace(tracer);
-                        self.read_promise.trace(tracer);
-                    }
-                }
-
-                impl<'js> ReadableStreamReadRequest<'js> for ReadRequest<'js> {
-                    fn chunk_steps(
-                        &self,
-                        objects: ReadableStreamDefaultReaderObjects<'js>,
-                        chunk: Value<'js>,
-                    ) -> Result<ReadableStreamDefaultReaderObjects<'js>> {
-                        let ctx = chunk.ctx().clone();
-
-                        // calling write can trigger user code; ensure we don't hold locks
-                        let objects = objects.into_inner();
-
-                        let dest_objects =
-                            WritableStreamObjects::from_class(self.dest_objects.clone());
-                        let write_promise =
-                            WritableStreamDefaultWriter::writable_stream_default_writer_write(
-                                ctx.clone(),
-                                dest_objects,
-                                chunk,
-                            )?;
-
-                        // Store the write's own promise, as Node does
-                        // (`this.state.currentWrite = writableStreamDefaultWriterWrite(...)`),
-                        // and mark it handled by attaching and discarding a
-                        // rejection handler, instead of keeping the promise
-                        // `.catch()` returns. A derived promise settles only once
-                        // the original one does, so awaiting it in
-                        // `wait_for_writes_to_finish` can wait on something
-                        // nothing will ever settle.
-                        let _: Promise<'js> = write_promise.catch()?.call((
-                            This(write_promise.clone()),
-                            Function::new(ctx.clone(), || {}),
-                        ))?;
-
-                        self.current_write.replace(write_promise);
-                        self.read_promise
-                            .resolve(Value::new_bool(ctx.clone(), false))?;
-
-                        Ok(ReadableStreamObjects::from_class(objects))
-                    }
-
-                    fn close_steps(
-                        &self,
-                        ctx: &Ctx<'js>,
-                        objects: ReadableStreamDefaultReaderObjects<'js>,
-                    ) -> Result<ReadableStreamDefaultReaderObjects<'js>> {
-                        self.read_promise
-                            .resolve(Value::new_bool(ctx.clone(), true))?;
-
-                        Ok(objects)
-                    }
-
-                    fn error_steps(
-                        &self,
-                        objects: ReadableStreamDefaultReaderObjects<'js>,
-                        reason: Value<'js>,
-                    ) -> Result<ReadableStreamDefaultReaderObjects<'js>> {
-                        self.read_promise.reject(reason)?;
-
-                        Ok(objects)
-                    }
-                }
-
-                let objects = ReadableStreamObjects::from_class(source_objects);
-
-                let promise = read_promise.promise.clone();
-
-                ReadableStreamDefaultReader::readable_stream_default_reader_read(
-                    &ctx,
-                    objects,
-                    ReadRequest {
-                        current_write,
-                        read_promise,
-                        dest_objects,
-                    },
-                )?;
-
-                Ok(promise)
-            }
-        })
+        upon_promise_fulfilment_traced(
+            &ctx,
+            writer_ready,
+            PipeStepReadyHandler {
+                pipe_to: self.clone(),
+            },
+        )
     }
 
     fn is_or_becomes_errored(
         ctx: Ctx<'js>,
         stored_error: Option<Value<'js>>,
         promise: Promise<'js>,
-        action: impl FnOnce(Ctx<'js>, Value<'js>) -> Result<()> + 'js,
+        handler: PipeToErrorKind<'js>,
     ) -> Result<()> {
         if let Some(stored_error) = stored_error {
-            action(ctx, stored_error)
+            Box::new(handler).call(ctx, stored_error)?;
+            Ok(())
         } else {
-            promise.catch()?.call((
-                This(promise.clone()),
-                Function::new(ctx.clone(), OnceFn::new(action)),
-            ))
+            on_promise_rejected_traced(&ctx, promise, handler)
         }
     }
 
@@ -543,12 +703,18 @@ impl<'js> PipeTo<'js> {
         ctx: Ctx<'js>,
         already_closed: bool,
         promise: Promise<'js>,
-        action: impl FnOnce(Ctx<'js>) -> Result<()> + 'js,
+        pipe_to: PipeTo<'js>,
+        prevent_close: bool,
     ) -> Result<()> {
+        let handler = PipeClosedHandler {
+            pipe_to,
+            prevent_close,
+        };
         if already_closed {
-            action(ctx)?;
+            let v = Value::new_undefined(ctx.clone());
+            Box::new(handler).call(ctx, v)?;
         } else {
-            upon_promise_fulfilment(ctx, promise, |ctx, ()| action(ctx))?;
+            upon_promise_fulfilment_traced(&ctx, promise, handler)?;
         }
         Ok(())
     }
@@ -556,25 +722,12 @@ impl<'js> PipeTo<'js> {
     fn shutdown_with_action(
         &self,
         ctx: Ctx<'js>,
-        action: impl FnOnce(Ctx<'js>) -> Result<Promise<'js>> + 'js,
+        action: PipeAction<'js>,
         original_error: Option<Value<'js>>,
     ) -> Result<()> {
         if self.shutting_down.swap(true, Ordering::AcqRel) {
-            // already shutting down
             return Ok(());
         }
-
-        let do_the_rest = {
-            let pipe_to = self.clone();
-            move |ctx: Ctx<'js>| -> Result<()> {
-                let action_promise = action(ctx.clone())?;
-                upon_promise(ctx, action_promise, move |ctx, result| match result {
-                    Ok(()) => pipe_to.finalize(ctx, original_error),
-                    Err(new_error) => pipe_to.finalize(ctx, Some(new_error)),
-                })?;
-                Ok(())
-            }
-        };
 
         let writable = {
             let dest_stream = OwnedBorrow::from_class(self.dest_objects.stream.clone());
@@ -583,18 +736,32 @@ impl<'js> PipeTo<'js> {
         };
 
         if writable {
-            let wait_promise =
-                Self::wait_for_writes_to_finish(ctx.clone(), self.current_write.clone())?;
-            upon_promise_fulfilment(ctx, wait_promise, |ctx: Ctx<'js>, ()| do_the_rest(ctx))?;
+            let wait_promise = Self::wait_for_writes_to_finish(ctx.clone(), self.shared.clone())?;
+            upon_promise_traced(
+                &ctx,
+                wait_promise,
+                PipeShutdownWaitHandler {
+                    pipe_to: self.clone(),
+                    action: Some(action),
+                    original_error,
+                },
+            )?;
         } else {
-            do_the_rest(ctx)?
+            let action_promise = action.run(ctx.clone(), self)?;
+            upon_promise_traced(
+                &ctx,
+                action_promise,
+                PipeFinalizeHandler {
+                    pipe_to: self.clone(),
+                    original_error,
+                },
+            )?;
         }
         Ok(())
     }
 
     fn shutdown(&self, ctx: Ctx<'js>, error: Option<Value<'js>>) -> Result<()> {
         if self.shutting_down.swap(true, Ordering::AcqRel) {
-            // already shutting down
             return Ok(());
         }
 
@@ -605,12 +772,16 @@ impl<'js> PipeTo<'js> {
         };
 
         if writable {
-            let wait_promise =
-                Self::wait_for_writes_to_finish(ctx.clone(), self.current_write.clone())?;
-            let pipe_to = self.clone();
-            upon_promise_fulfilment(ctx, wait_promise, move |ctx, ()| {
-                pipe_to.finalize(ctx, error)
-            })?;
+            let wait_promise = Self::wait_for_writes_to_finish(ctx.clone(), self.shared.clone())?;
+            upon_promise_traced(
+                &ctx,
+                wait_promise,
+                PipeShutdownWaitHandler {
+                    pipe_to: self.clone(),
+                    action: None,
+                    original_error: error,
+                },
+            )?;
         } else {
             self.finalize(ctx, error)?;
         }
@@ -619,22 +790,16 @@ impl<'js> PipeTo<'js> {
 
     fn wait_for_writes_to_finish(
         ctx: Ctx<'js>,
-        current_write: Rc<RefCell<Promise<'js>>>,
+        shared: Class<'js, PipeShared<'js>>,
     ) -> Result<Promise<'js>> {
-        let old_current_write: Promise<'js> = current_write.as_ref().borrow().clone();
+        let old_current_write: Promise<'js> = shared.borrow().current_write.borrow().clone();
 
-        upon_promise_fulfilment(
-            ctx,
+        upon_promise_traced(
+            &ctx,
             old_current_write.clone(),
-            move |ctx: Ctx<'js>, ()| -> Result<Undefined<Promise<'js>>> {
-                if !old_current_write.eq(&current_write.as_ref().borrow()) {
-                    Ok(Undefined(Some(Self::wait_for_writes_to_finish(
-                        ctx,
-                        current_write,
-                    )?)))
-                } else {
-                    Ok(Undefined(None))
-                }
+            PipeWaitWriteLoopHandler {
+                old_current_write,
+                shared,
             },
         )
     }
@@ -646,12 +811,9 @@ impl<'js> PipeTo<'js> {
         WritableStreamDefaultWriter::writable_stream_default_writer_release(dest_objects)?;
         ReadableStreamDefaultReader::readable_stream_default_reader_release(source_objects)?;
 
-        if let (Some(signal), Some(abort_callback)) = (&self.signal, &self.abort_callback) {
-            AbortSignal::remove_on_abort(
-                This(signal.clone()),
-                ctx.clone(),
-                abort_callback.clone(),
-            )?;
+        let abort_callback = self.shared.borrow().abort_callback.borrow().clone();
+        if let (Some(signal), Some(abort_callback)) = (&self.signal, abort_callback) {
+            AbortSignal::remove_on_abort(This(signal.clone()), ctx.clone(), abort_callback)?;
         }
 
         if let Some(error) = error {
@@ -672,10 +834,12 @@ pub struct StreamPipeOptions<'js> {
 
 impl<'js> FromJs<'js> for StreamPipeOptions<'js> {
     fn from_js(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Self> {
-        let ty_name = value.type_name();
-        let obj = value
-            .as_object()
-            .ok_or(Error::new_from_js(ty_name, "Object"))?;
+        if value.is_undefined() || value.is_null() {
+            return Ok(Self::default());
+        }
+        let Some(obj) = value.as_object() else {
+            return Err(Exception::throw_type(ctx, "options must be an object"));
+        };
 
         let get_bool = |key| {
             Result::Ok(
@@ -686,8 +850,8 @@ impl<'js> FromJs<'js> for StreamPipeOptions<'js> {
         };
 
         let prevent_abort = get_bool("preventAbort")?;
-        let prevent_close = get_bool("preventClose")?;
         let prevent_cancel = get_bool("preventCancel")?;
+        let prevent_close = get_bool("preventClose")?;
 
         let signal = match obj.get_value_or_undefined::<_, Value<'js>>("signal")? {
             Some(signal) => Some(

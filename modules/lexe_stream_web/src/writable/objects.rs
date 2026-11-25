@@ -1,4 +1,7 @@
-use rquickjs::{class::OwnedBorrowMut, Class, Result};
+use rquickjs::{
+    class::{OwnedBorrowMut, Trace, Tracer},
+    Class, Result,
+};
 
 use crate::writable::{
     default_controller::{
@@ -19,6 +22,17 @@ pub(crate) struct WritableStreamClassObjects<'js, W: WritableStreamWriter<'js>> 
     pub(crate) stream: Class<'js, WritableStream<'js>>,
     pub(crate) controller: WritableStreamDefaultControllerClass<'js>,
     pub(crate) writer: W::Class,
+}
+
+impl<'js, W: WritableStreamWriter<'js>> Trace<'js> for WritableStreamClassObjects<'js, W>
+where
+    W::Class: Trace<'js>,
+{
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        self.stream.trace(tracer);
+        self.controller.trace(tracer);
+        self.writer.trace(tracer);
+    }
 }
 
 impl<'js, W: WritableStreamWriter<'js>> Clone for WritableStreamClassObjects<'js, W> {

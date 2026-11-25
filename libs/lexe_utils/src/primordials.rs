@@ -38,6 +38,7 @@ pub struct BasePrimordials<'js> {
     // Functions
     pub function_array_from: Function<'js>,
     pub function_array_buffer_is_view: Function<'js>,
+    pub function_array_buffer_transfer: Function<'js>,
     pub function_get_own_property_descriptor: Function<'js>,
     pub function_parse_int: Function<'js>,
     pub function_parse_float: Function<'js>,
@@ -119,6 +120,9 @@ impl<'js> Primordial<'js> for BasePrimordials<'js> {
 
         let constructor_array_buffer: Object = globals.get(PredefinedAtom::ArrayBuffer)?;
         let function_array_buffer_is_view: Function = constructor_array_buffer.get("isView")?;
+        let prototype_array_buffer: Object =
+            constructor_array_buffer.get(PredefinedAtom::Prototype)?;
+        let function_array_buffer_transfer: Function = prototype_array_buffer.get("transfer")?;
 
         let constructor_data_view: Constructor = globals.get(PredefinedAtom::DataView)?;
         let prototype_data_view: Object = constructor_data_view.get(PredefinedAtom::Prototype)?;
@@ -194,6 +198,7 @@ impl<'js> Primordial<'js> for BasePrimordials<'js> {
             prototype_data_view,
             function_array_from,
             function_array_buffer_is_view,
+            function_array_buffer_transfer,
             function_get_own_property_descriptor,
             function_parse_float,
             function_parse_int,

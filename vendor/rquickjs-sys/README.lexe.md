@@ -35,6 +35,11 @@ In `JS_DetachArrayBuffer`, after calling `free_func` on the backing store,
 clear `free_func` and `opaque` to `NULL` so the ArrayBuffer finalizer does not
 release the same backing store again after `transfer` / detach.
 
+Also exposes `JS_IsNonDetachableArrayBuffer`, `JS_SetNonDetachableArrayBuffer`
+(blocking JS `ArrayBuffer.prototype.transfer*` while allowing internal host
+`JS_DetachArrayBuffer`, used for `WebAssembly.Memory.buffer`), and
+`JS_IsSharedArrayBuffer`.
+
 ### 3. `JS_SetGCHook` prologue/epilogue notifications
 
 `JS_SetGCHook(rt, gc_hook, opaque)` exposes phase `0` (before) / `1` (after)

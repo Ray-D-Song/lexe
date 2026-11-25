@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, panic, rc::Rc};
+use std::cell::OnceCell;
 
 use crate::{
     queuing_strategy::{QueuingStrategy, SizeAlgorithm},
@@ -24,8 +24,8 @@ use crate::{
     utils::{
         promise::{
             promise_rejected_catch, promise_rejected_with, promise_rejected_with_constructor,
-            promise_resolved_with, upon_promise_fulfilment, with_promise_result,
-            PromisePrimordials,
+            promise_resolved_with, upon_promise_fulfilment_traced, with_promise_result,
+            PromisePrimordials, TracedCallback,
         },
         UnwrapOrUndefined, ValueOrUndefined,
     },
@@ -37,13 +37,13 @@ use source::UnderlyingSource;
 
 pub use algorithms::{CancelAlgorithm, PullAlgorithm, StartAlgorithm};
 use lexe_utils::{
-    option::{Null, NullableOpt, Undefined},
+    option::{Null, Undefined},
     primordials::{BasePrimordials, Primordial},
     result::ResultExt,
 };
 use rquickjs::{
     atom::PredefinedAtom,
-    class::{OwnedBorrowMut, Trace},
+    class::{OwnedBorrowMut, Trace, Tracer},
     function::Constructor,
     prelude::{List, Opt, This},
     Class, Coerced, Ctx, Error, Exception, FromJs, Function, IntoJs, JsLifetime, Object, Promise,
@@ -127,7 +127,7 @@ impl<'js> ReadableStream<'js> {
     fn new(
         ctx: Ctx<'js>,
         underlying_source: Opt<Undefined<Object<'js>>>,
-        queuing_strategy: Opt<Undefined<QueuingStrategy<'js>>>,
+        queuing_strategy: Opt<Null<Undefined<QueuingStrategy<'js>>>>,
     ) -> Result<Class<'js, Self>> {
         // If underlyingSource is missing, set it to null.
         let underlying_source = Null(underlying_source.0);
@@ -161,7 +161,7 @@ impl<'js> ReadableStream<'js> {
         )?;
         drop(base_primordials);
         let stream = OwnedBorrowMut::from_class(stream_class.clone());
-        let queuing_strategy = queuing_strategy.0.and_then(|qs| qs.0);
+        let queuing_strategy = queuing_strategy.0.and_then(|n| n.0).and_then(|u| u.0);
 
         match underlying_source_dict.r#type {
             // If underlyingSourceDict["type"] is "bytes":
@@ -293,7 +293,7 @@ impl<'js> ReadableStream<'js> {
         ctx: Ctx<'js>,
         stream: This<OwnedBorrowMut<'js, Self>>,
         transform: ReadableWritablePair<'js>,
-        options: NullableOpt<StreamPipeOptions<'js>>,
+        options: Opt<Null<Undefined<StreamPipeOptions<'js>>>>,
     ) -> Result<ReadableStreamClass<'js>> {
         // If ! IsReadableStreamLocked(this) is true, throw a TypeError exception.
         if stream.is_readable_stream_locked() {
@@ -315,7 +315,11 @@ impl<'js> ReadableStream<'js> {
         }
 
         // Let signal be options["signal"] if it exists, or undefined otherwise.
-        let options = options.0.unwrap_or_default();
+        let options = options
+            .0
+            .and_then(|n| n.0)
+            .and_then(|u| u.0)
+            .unwrap_or_default();
 
         // Let promise be ! ReadableStreamPipeTo(this, transform["writable"], options["preventClose"], options["preventAbort"], options["preventCancel"], signal).
         let promise = ReadableStream::readable_stream_pipe_to(
@@ -342,7 +346,7 @@ impl<'js> ReadableStream<'js> {
         ctx: Ctx<'js>,
         stream: This<Value<'js>>,
         destination: Value<'js>,
-        options: NullableOpt<Value<'js>>,
+        options: Opt<Value<'js>>,
     ) -> Result<Promise<'js>> {
         with_promise_result(&ctx, || {
             let stream =
@@ -351,9 +355,13 @@ impl<'js> ReadableStream<'js> {
                     "'pipeTo' called on an object that is not a valid instance of ReadableStream.",
                 )?);
 
+            let destination = WritableStreamOwned::from_class(
+                Class::from_value(&destination).or_throw_type(&ctx,"'pipeTo' instructed to pipe to an object that is not a valid instance of WritableStream.")?,
+            );
+
             let options = match options.0 {
-                Some(options) => Some(StreamPipeOptions::from_js(&ctx, options)?),
-                None => None,
+                Some(options) => StreamPipeOptions::from_js(&ctx, options)?,
+                None => StreamPipeOptions::default(),
             };
 
             // If ! IsReadableStreamLocked(this) is true, return a promise rejected with a TypeError exception.
@@ -365,10 +373,6 @@ impl<'js> ReadableStream<'js> {
                 );
             }
 
-            let destination = WritableStreamOwned::from_class(
-                Class::from_value(&destination).or_throw_type(&ctx,"'pipeTo' instructed to pipe to an object that is not a valid instance of WritableStream.")?,
-            );
-
             // If ! IsWritableStreamLocked(destination) is true, return a promise rejected with a TypeError exception.
             if destination.is_writable_stream_locked() {
                 return promise_rejected_with_constructor(
@@ -377,9 +381,6 @@ impl<'js> ReadableStream<'js> {
                     "ReadableStream.prototype.pipeTo cannot be used on a locked WritableStream",
                 );
             }
-
-            // Let signal be options["signal"] if it exists, or undefined otherwise.
-            let options = options.unwrap_or_default();
 
             // Return ! ReadableStreamPipeTo(this, destination, options["preventClose"], options["preventAbort"], options["preventCancel"], signal).
             Self::readable_stream_pipe_to(
@@ -416,7 +417,7 @@ impl<'js> ReadableStream<'js> {
     fn values(
         ctx: Ctx<'js>,
         stream: This<OwnedBorrowMut<'js, Self>>,
-        arg: Opt<Object<'js>>,
+        arg: Opt<Null<Undefined<Object<'js>>>>,
     ) -> Result<Class<'js, ReadableStreamAsyncIterator<'js>>> {
         // Let reader be ? AcquireReadableStreamDefaultReader(stream).
         let (stream, reader) = ReadableStreamReaderClass::acquire_readable_stream_default_reader(
@@ -425,9 +426,12 @@ impl<'js> ReadableStream<'js> {
         )?;
 
         // Let preventCancel be args[0]["preventCancel"].
-        let prevent_cancel = match arg.0 {
+        let prevent_cancel = match arg.0.and_then(|n| n.0).and_then(|u| u.0) {
             None => false,
-            Some(arg) => matches!(arg.get_value_or_undefined("preventCancel")?, Some(true)),
+            Some(arg) => arg
+                .get_value_or_undefined::<_, Coerced<bool>>("preventCancel")?
+                .map(|b| b.0)
+                .unwrap_or(false),
         };
 
         let promise_primordials = stream.promise_primordials.clone();
@@ -671,9 +675,18 @@ impl<'js> ReadableStream<'js> {
                 let (source_cancel_promise, objects) = C::cancel_steps(&ctx, objects, reason)?;
 
                 // Return the result of reacting to sourceCancelPromise with a fulfillment step that returns undefined.
-                let promise = upon_promise_fulfilment(ctx, source_cancel_promise, |_, ()| {
-                    Ok(rquickjs::Undefined)
-                })?;
+                #[derive(Trace)]
+                struct CancelResolveUndefined;
+                impl<'js> TracedCallback<'js> for CancelResolveUndefined {
+                    fn call(self: Box<Self>, ctx: Ctx<'js>, _: Value<'js>) -> Result<Value<'js>> {
+                        Ok(Value::new_undefined(ctx))
+                    }
+                }
+                let promise = upon_promise_fulfilment_traced(
+                    &ctx,
+                    source_cancel_promise,
+                    CancelResolveUndefined,
+                )?;
 
                 Ok((promise, objects))
             },
@@ -825,143 +838,33 @@ impl<'js> ReadableStream<'js> {
         ctx: &Ctx<'js>,
         async_iterable: Value<'js>,
     ) -> Result<Class<'js, Self>> {
-        let stream: Rc<OnceCell<Class<'js, Self>>> = Rc::new(OnceCell::new());
-
         // Let iteratorRecord be ? GetIterator(asyncIterable, async).
         let iterator_record =
             IteratorRecord::get_iterator(ctx, async_iterable, IteratorKind::Async)?;
-        let iterator = iterator_record.iterator.clone();
 
         // Let startAlgorithm be an algorithm that returns undefined.
         let start_algorithm = StartAlgorithm::ReturnUndefined;
 
         let promise_primordials = PromisePrimordials::get(ctx)?.clone();
 
-        // Let pullAlgorithm be the following steps:
-        let pull_algorithm = {
-            let stream = stream.clone();
-            let promise_primordials = promise_primordials.clone();
-            move |ctx: Ctx<'js>, controller: ReadableStreamControllerClass<'js>| {
-                // Let nextResult be IteratorNext(iteratorRecord).
-                let next_result: Result<Object<'js>> = iterator_record.iterator_next(&ctx, None);
-                let next_promise = match next_result {
-                    // If nextResult is an abrupt completion, return a promise rejected with nextResult.[[Value]].
-                    Err(Error::Exception) => {
-                        return promise_rejected_catch(&ctx, &promise_primordials);
-                    },
-                    Err(err) => return Err(err),
-                    // Let nextPromise be a promise resolved with nextResult.[[Value]].
-                    Ok(next_result) => promise_resolved_with(
-                        &ctx,
-                        &promise_primordials,
-                        Ok(next_result.into_inner()),
-                    )?,
-                };
-
-                // Return the result of reacting to nextPromise with the following fulfillment steps, given iterResult:
-                upon_promise_fulfilment(ctx, next_promise, {
-                    let stream = stream.clone();
-                    move |ctx, iter_result: Value<'js>| {
-                        let iter_result = match iter_result.into_object() {
-                            // If Type(iterResult) is not Object, throw a TypeError.
-                            None => {
-                                return Err(Exception::throw_type(&ctx, "The promise returned by the iterator.next() method must fulfill with an object"));
-                            },
-                            Some(iter_result) => iter_result,
-                        };
-
-                        // Let done be ? IteratorComplete(iterResult).
-                        let done = IteratorRecord::iterator_complete(&iter_result)?;
-
-                        let stream = OwnedBorrowMut::from_class(stream.get().cloned().expect("ReadableStreamFromIterable pull steps called with uninitialised stream"));
-                        let controller = match controller {
-                        ReadableStreamControllerClass::ReadableStreamDefaultController(c) => OwnedBorrowMut::from_class(c),
-                        _ => panic!("ReadableStreamFromIterable pull steps called without default controller")
-                    };
-
-                        let objects = ReadableStreamObjects::new_default(stream, controller);
-
-                        // If done is true:
-                        if done {
-                            // Perform ! ReadableStreamDefaultControllerClose(stream.[[controller]]).
-                            ReadableStreamDefaultController::readable_stream_default_controller_close(ctx.clone(), objects)?;
-                        } else {
-                            // Let value be ? IteratorValue(iterResult).
-                            let value = IteratorRecord::iterator_value(&iter_result)?;
-
-                            // Perform ! ReadableStreamDefaultControllerEnqueue(stream.[[controller]], value).
-                            ReadableStreamDefaultController::readable_stream_default_controller_enqueue(ctx.clone(), objects, value)?;
-                        }
-
-                        Ok(())
-                    }
-                })
-            }
-        };
-
-        // Let cancelAlgorithm be the following steps, given reason:
-        let cancel_algorithm = {
-            let ctx = ctx.clone();
-            let promise_primordials = promise_primordials.clone();
-            move |reason: Value<'js>| {
-                // Let iterator be iteratorRecord.[[Iterator]].
-
-                // Let returnMethod be GetMethod(iterator, "return").
-                let return_method: Function<'js> = match iterator.get(PredefinedAtom::Return) {
-                    // If returnMethod is an abrupt completion, return a promise rejected with returnMethod.[[Value]].
-                    Err(Error::Exception) => {
-                        return promise_rejected_catch(&ctx, &promise_primordials);
-                    },
-                    Err(err) => return Err(err),
-                    Ok(None) => {
-                        // If returnMethod.[[Value]] is undefined, return a promise resolved with undefined.
-                        return Ok(promise_primordials.promise_resolved_with_undefined.clone());
-                    },
-                    Ok(Some(return_method)) => return_method,
-                };
-
-                // Let returnResult be Call(returnMethod.[[Value]], iterator, « reason »).
-                let return_result: Result<Value<'js>> =
-                    return_method.call((This(iterator), reason));
-
-                let return_result = match return_result {
-                    // If returnResult is an abrupt completion, return a promise rejected with returnResult.[[Value]].
-                    Err(Error::Exception) => {
-                        return promise_rejected_catch(&ctx, &promise_primordials);
-                    },
-                    Err(err) => return Err(err),
-                    Ok(return_result) => return_result,
-                };
-
-                // Let returnPromise be a promise resolved with returnResult.[[Value]].
-                let return_promise =
-                    promise_resolved_with(&ctx, &promise_primordials, Ok(return_result))?;
-
-                // Return the result of reacting to returnPromise with the following fulfillment steps, given iterResult:
-                upon_promise_fulfilment(
-                    ctx,
-                    return_promise,
-                    move |ctx: Ctx<'js>, iter_result: Value<'js>| {
-                        // If Type(iterResult) is not Object, throw a TypeError.
-                        if !iter_result.is_object() {
-                            return Err(Exception::throw_type(&ctx, "The promise returned by the iterator.next() method must fulfill with an object"));
-                        }
-                        // Return undefined.
-                        Ok(rquickjs::Undefined)
-                    },
-                )
-            }
-        };
+        let state = Class::instance(
+            ctx.clone(),
+            FromIterableState {
+                stream: OnceCell::new(),
+                iterator_record,
+                promise_primordials,
+            },
+        )?;
 
         let objects_class = ReadableStream::create_readable_stream(
             ctx.clone(),
             start_algorithm,
-            PullAlgorithm::from_fn(pull_algorithm),
-            CancelAlgorithm::from_fn(cancel_algorithm),
+            PullAlgorithm::FromIterable(state.clone()),
+            CancelAlgorithm::FromIterable(state.clone()),
             Some(0.0),
             None,
         )?;
-        _ = stream.set(objects_class.stream.clone());
+        let _ = state.borrow().stream.set(objects_class.stream.clone());
         Ok(objects_class.stream)
     }
 
@@ -970,6 +873,157 @@ impl<'js> ReadableStream<'js> {
             .clone()
             .map(ReadableStreamReaderOwned::from_class)
     }
+}
+
+#[rquickjs::class]
+pub(crate) struct FromIterableState<'js> {
+    stream: OnceCell<Class<'js, ReadableStream<'js>>>,
+    iterator_record: IteratorRecord<'js>,
+    promise_primordials: PromisePrimordials<'js>,
+}
+
+unsafe impl<'js> JsLifetime<'js> for FromIterableState<'js> {
+    type Changed<'to> = FromIterableState<'to>;
+}
+
+impl<'js> Trace<'js> for FromIterableState<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        if let Some(s) = self.stream.get() {
+            s.trace(tracer);
+        }
+        self.iterator_record.trace(tracer);
+        self.promise_primordials.trace(tracer);
+    }
+}
+
+#[derive(Trace)]
+struct FromIterableNextHandler<'js> {
+    stream: Class<'js, ReadableStream<'js>>,
+    controller: ReadableStreamControllerClass<'js>,
+}
+
+impl<'js> TracedCallback<'js> for FromIterableNextHandler<'js> {
+    fn call(self: Box<Self>, ctx: Ctx<'js>, iter_result: Value<'js>) -> Result<Value<'js>> {
+        let iter_result = match iter_result.into_object() {
+            None => {
+                return Err(Exception::throw_type(
+                    &ctx,
+                    "The promise returned by the iterator.next() method must fulfill with an object",
+                ));
+            },
+            Some(iter_result) => iter_result,
+        };
+
+        let done = IteratorRecord::iterator_complete(&iter_result)?;
+        let stream = OwnedBorrowMut::from_class(self.stream);
+        let controller = match self.controller {
+            ReadableStreamControllerClass::ReadableStreamDefaultController(c) => {
+                OwnedBorrowMut::from_class(c)
+            },
+            _ => panic!("ReadableStreamFromIterable pull steps called without default controller"),
+        };
+
+        let objects = ReadableStreamObjects::new_default(stream, controller);
+
+        if done {
+            ReadableStreamDefaultController::readable_stream_default_controller_close(
+                ctx.clone(),
+                objects,
+            )?;
+        } else {
+            let value = IteratorRecord::iterator_value(&iter_result)?;
+            ReadableStreamDefaultController::readable_stream_default_controller_enqueue(
+                ctx.clone(),
+                objects,
+                value,
+            )?;
+        }
+
+        Ok(Value::new_undefined(ctx))
+    }
+}
+
+#[derive(Trace)]
+struct FromIterableReturnCheck;
+
+impl<'js> TracedCallback<'js> for FromIterableReturnCheck {
+    fn call(self: Box<Self>, ctx: Ctx<'js>, iter_result: Value<'js>) -> Result<Value<'js>> {
+        if !iter_result.is_object() {
+            return Err(Exception::throw_type(
+                &ctx,
+                "The promise returned by the iterator.next() method must fulfill with an object",
+            ));
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+}
+
+pub(super) fn from_iterable_pull_algorithm<'js>(
+    ctx: Ctx<'js>,
+    state: Class<'js, FromIterableState<'js>>,
+    controller: ReadableStreamControllerClass<'js>,
+) -> Result<Promise<'js>> {
+    let state_ref = state.borrow();
+    let promise_primordials = state_ref.promise_primordials.clone();
+    let next_result: Result<Object<'js>> = state_ref.iterator_record.iterator_next(&ctx, None);
+    let stream = state_ref
+        .stream
+        .get()
+        .cloned()
+        .expect("ReadableStreamFromIterable pull steps called with uninitialised stream");
+    drop(state_ref);
+
+    let next_promise = match next_result {
+        Err(Error::Exception) => {
+            return promise_rejected_catch(&ctx, &promise_primordials);
+        },
+        Err(err) => return Err(err),
+        Ok(next_result) => {
+            promise_resolved_with(&ctx, &promise_primordials, Ok(next_result.into_inner()))?
+        },
+    };
+
+    upon_promise_fulfilment_traced(
+        &ctx,
+        next_promise,
+        FromIterableNextHandler { stream, controller },
+    )
+}
+
+pub(super) fn from_iterable_cancel_algorithm<'js>(
+    ctx: Ctx<'js>,
+    state: Class<'js, FromIterableState<'js>>,
+    reason: Value<'js>,
+) -> Result<Promise<'js>> {
+    let state_ref = state.borrow();
+    let iterator = state_ref.iterator_record.iterator.clone();
+    let promise_primordials = state_ref.promise_primordials.clone();
+    drop(state_ref);
+
+    let return_method: Function<'js> = match iterator.get(PredefinedAtom::Return) {
+        Err(Error::Exception) => {
+            return promise_rejected_catch(&ctx, &promise_primordials);
+        },
+        Err(err) => return Err(err),
+        Ok(None) => {
+            return Ok(promise_primordials.promise_resolved_with_undefined.clone());
+        },
+        Ok(Some(return_method)) => return_method,
+    };
+
+    let return_result: Result<Value<'js>> = return_method.call((This(iterator), reason));
+
+    let return_result = match return_result {
+        Err(Error::Exception) => {
+            return promise_rejected_catch(&ctx, &promise_primordials);
+        },
+        Err(err) => return Err(err),
+        Ok(return_result) => return_result,
+    };
+
+    let return_promise = promise_resolved_with(&ctx, &promise_primordials, Ok(return_result))?;
+
+    upon_promise_fulfilment_traced(&ctx, return_promise, FromIterableReturnCheck)
 }
 
 // enum ReadableStreamType { "bytes" };

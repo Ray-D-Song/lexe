@@ -565,7 +565,7 @@ impl<'js> ReadableByteStreamController<'js> {
         ))?;
 
         // Let transferredBuffer be ? TransferArrayBuffer(buffer).
-        let transferred_buffer = transfer_array_buffer(buffer)?;
+        let transferred_buffer = transfer_array_buffer(ctx, buffer)?;
 
         // If controller.[[pendingPullIntos]] is not empty,
         // Let firstPendingPullInto be controller.[[pendingPullIntos]][0].
@@ -585,8 +585,10 @@ impl<'js> ReadableByteStreamController<'js> {
                 .readable_byte_stream_controller_invalidate_byob_request();
 
             // Set firstPendingPullInto’s buffer to ! TransferArrayBuffer(firstPendingPullInto’s buffer).
-            objects.controller.pending_pull_intos[0].buffer =
-                transfer_array_buffer(objects.controller.pending_pull_intos[0].buffer.clone())?;
+            objects.controller.pending_pull_intos[0].buffer = transfer_array_buffer(
+                ctx,
+                objects.controller.pending_pull_intos[0].buffer.clone(),
+            )?;
 
             // If firstPendingPullInto’s reader type is "none", perform ? ReadableByteStreamControllerEnqueueDetachedPullIntoToQueue(controller, firstPendingPullInto).
             if let PullIntoDescriptorReaderType::None =
@@ -1063,7 +1065,7 @@ impl<'js> ReadableByteStreamController<'js> {
             ..
         } = pull_into_descriptor;
         // Let buffer be ! TransferArrayBuffer(pullIntoDescriptor’s buffer).
-        let buffer = transfer_array_buffer(buffer);
+        let buffer = transfer_array_buffer(&ctx, buffer)?;
         // Return ! Construct(pullIntoDescriptor’s view constructor, « buffer, pullIntoDescriptor’s byte offset, bytesFilled ÷ elementSize »).
         let view: Object = pull_into_descriptor.view_constructor.construct((
             buffer,
@@ -1099,7 +1101,7 @@ impl<'js> ReadableByteStreamController<'js> {
         let (buffer, byte_length, byte_offset) = view.get_array_buffer()?;
 
         // Let bufferResult be TransferArrayBuffer(view.[[ViewedArrayBuffer]]).
-        let buffer_result = transfer_array_buffer(buffer);
+        let buffer_result = transfer_array_buffer(ctx, buffer);
         let buffer = match buffer_result {
             // If bufferResult is an abrupt completion,
             Err(Error::Exception) => {
@@ -1175,6 +1177,7 @@ impl<'js> ReadableByteStreamController<'js> {
                 let filled_view = objects
                     .controller
                     .readable_byte_steam_controller_convert_pull_into_descriptor(
+                        ctx,
                         pull_into_descriptor,
                     )?;
 
@@ -1222,6 +1225,7 @@ impl<'js> ReadableByteStreamController<'js> {
 
     fn readable_byte_steam_controller_convert_pull_into_descriptor(
         &mut self,
+        ctx: &Ctx<'js>,
         pull_into_descriptor: PullIntoDescriptor<'js>,
     ) -> Result<Value<'js>> {
         // Let bytesFilled be pullIntoDescriptor’s bytes filled.
@@ -1231,7 +1235,7 @@ impl<'js> ReadableByteStreamController<'js> {
         let element_size = pull_into_descriptor.element_size;
 
         // Let buffer be ! TransferArrayBuffer(pullIntoDescriptor’s buffer).
-        let buffer = transfer_array_buffer(pull_into_descriptor.buffer)?;
+        let buffer = transfer_array_buffer(ctx, pull_into_descriptor.buffer)?;
 
         // Return ! Construct(pullIntoDescriptor’s view constructor, « buffer, pullIntoDescriptor’s byte offset, bytesFilled ÷ elementSize »).
         pull_into_descriptor.view_constructor.construct((
@@ -1279,7 +1283,7 @@ impl<'js> ReadableByteStreamController<'js> {
         };
 
         // Set firstDescriptor’s buffer to ! TransferArrayBuffer(firstDescriptor’s buffer).
-        first_descriptor.buffer = transfer_array_buffer(first_descriptor.buffer.clone())?;
+        first_descriptor.buffer = transfer_array_buffer(&ctx, first_descriptor.buffer.clone())?;
 
         // Perform ? ReadableByteStreamControllerRespondInternal(controller, bytesWritten).
         Self::readable_byte_stream_controller_respond_internal(ctx, objects, bytes_written)
@@ -1506,7 +1510,7 @@ impl<'js> ReadableByteStreamController<'js> {
             }
 
             // Set firstDescriptor’s buffer to ? TransferArrayBuffer(view.[[ViewedArrayBuffer]]).
-            first_descriptor.buffer = transfer_array_buffer(buffer)?;
+            first_descriptor.buffer = transfer_array_buffer(&ctx, buffer)?;
         }
 
         // Perform ? ReadableByteStreamControllerRespondInternal(controller, viewByteLength).
@@ -2011,8 +2015,14 @@ impl<'js> Trace<'js> for ReadableByteStreamQueueEntry<'js> {
     }
 }
 
-fn transfer_array_buffer(buffer: ArrayBuffer<'_>) -> Result<ArrayBuffer<'_>> {
-    buffer.get::<_, Function>("transfer")?.call((This(buffer),))
+fn transfer_array_buffer<'js>(
+    ctx: &Ctx<'js>,
+    buffer: ArrayBuffer<'js>,
+) -> Result<ArrayBuffer<'js>> {
+    let transfer_fn = BasePrimordials::get(ctx)?
+        .function_array_buffer_transfer
+        .clone();
+    transfer_fn.call((This(buffer),))
 }
 
 fn copy_data_block_bytes(

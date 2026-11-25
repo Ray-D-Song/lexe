@@ -3,9 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const SKIP_FILES = [
-  "non-transferable-buffers.any.js", // SKIP: WebAssembly support is pending
-];
+const SKIP_FILES: string[] = [];
 
 const __filename = fileURLToPath(import.meta.url);
 const basename = path.basename(__filename);

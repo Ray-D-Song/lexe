@@ -54,6 +54,35 @@ const COMPRESSION_STREAM_JS: &str = r#"(function () {
 
   const FORMATS = new Set(["gzip", "deflate", "deflate-raw"]);
 
+  const arrayBufferByteLength = Object.getOwnPropertyDescriptor(
+    ArrayBuffer.prototype,
+    "byteLength"
+  )?.get;
+  const sharedArrayBufferByteLength =
+    typeof SharedArrayBuffer === "function"
+      ? Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, "byteLength")?.get
+      : undefined;
+
+  const isArrayBufferLike = (chunk) => {
+    if (chunk instanceof ArrayBuffer) return true;
+    if (typeof SharedArrayBuffer === "function" && chunk instanceof SharedArrayBuffer) {
+      return true;
+    }
+    if (arrayBufferByteLength) {
+      try {
+        arrayBufferByteLength.call(chunk);
+        return true;
+      } catch {}
+    }
+    if (sharedArrayBufferByteLength) {
+      try {
+        sharedArrayBufferByteLength.call(chunk);
+        return true;
+      } catch {}
+    }
+    return false;
+  };
+
   const factoryFor = (kind, format) => {
     const zlib = require("node:zlib");
     if (kind === "compress") {
@@ -66,194 +95,79 @@ const COMPRESSION_STREAM_JS: &str = r#"(function () {
     return zlib.createInflateRaw();
   };
 
-  // A chunk as bytes: Buffers, typed arrays and array buffers all arrive here.
+  // A chunk as bytes: Buffers, typed arrays and array buffers (including cross-realm) all arrive here.
   const toBytes = (chunk) => {
     if (chunk instanceof Uint8Array) return chunk;
-    if (chunk instanceof ArrayBuffer) return new Uint8Array(chunk);
     if (ArrayBuffer.isView(chunk)) {
       return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     }
-    // A string is not a valid chunk for these streams; Node throws.
-    throw new TypeError("This TransformStream is not a string transform");
+    if (isArrayBufferLike(chunk)) {
+      return new Uint8Array(chunk);
+    }
+    // A string or non-BufferSource value is not a valid chunk for these streams.
+    throw new TypeError("The provided value is not of type '(ArrayBuffer or ArrayBufferView)'");
   };
 
   const makeClass = (name, kind) => {
     const TransformStreamRef = globalThis.TransformStream;
 
-    return class extends TransformStreamRef {
-      #format;
-      // A plain holder rather than instance fields: the `start` handler runs
-      // before the derived class's private fields are initialised, so it cannot
-      // touch them.
-      #state = { handle: null, controller: null, pendingError: null };
+    const toStreamError = (error) => {
+      if (kind === "decompress" && !(error instanceof TypeError)) {
+        return new TypeError(error && error.message ? error.message : String(error));
+      }
+      return error;
+    };
+
+    const Cls = class {
+      #transform;
 
       constructor(format) {
-        const state = { handle: null, controller: null, pendingError: null, drain: null, drainReject: null };
-        super({
-          start: (controller) => {
-            state.controller = controller;
-          },
-          transform: (chunk, controller) => {
-            state.controller = controller;
-            // Error the stream before throwing: if the transform rejects
-            // without this, `flush` still waits on the zlib handle's `end`,
-            // which never arrives for input we refused.
-            let bytes;
-            try {
-              bytes = toBytes(chunk);
-            } catch (error) {
-              state.pendingError = error;
-              controller.error(error);
-              throw error;
-            }
-            const handle = state.handle;
-            if (!handle || state.pendingError) {
-              const error =
-                state.pendingError || new Error("The stream has already failed");
-              state.pendingError = null;
-              controller.error(error);
-              throw error;
-            }
-            // A decode failure is thrown *synchronously* by `write` (the handle
-            // reports invalid data as an exception, not as an `error` event), so
-            // it escapes this function without the handle ever emitting. Clean
-            // up here, otherwise the live zlib handle keeps the transform
-            // reachable and the runtime reports a leaked object at exit.
-            let more;
-            try {
-              more = handle.write(bytes);
-            } catch (error) {
-              if (state.drain) {
-                handle.off("drain", state.drain);
-                state.drain = null;
-              }
-              if (state.drainReject) {
-                const rejectDrain = state.drainReject;
-                state.drainReject = null;
-                try {
-                  rejectDrain(error);
-                } catch {}
-              }
-              state.detach();
-              try {
-                handle.destroy();
-              } catch {}
-              state.handle = null;
-              state.controller = null;
-              state.pendingError = null;
-              controller.error(error);
-              throw error;
-            }
-            if (more === false) {
-              // The handle signals write readiness with `drain`. If it errors
-              // instead, nothing will ever drain, so this promise must reject:
-              // a waiter left pending forever keeps the transform (and the
-              // handle it closes over) reachable, which the runtime reports as
-              // a leaked object at exit.
-              const drainPromise = new Promise((resolve, reject) => {
-                const onDrain = () => {
-                  handle.off("drain", onDrain);
-                  state.drain = null;
-                  state.drainReject = null;
-                  resolve();
-                };
-                state.drain = onDrain;
-                state.drainReject = reject;
-                handle.on("drain", onDrain);
-              });
-              // The error already reaches JavaScript through the stream
-              // (`controller.error`); this rejection exists only so the
-              // transform stops waiting. Marking it handled keeps it from also
-              // surfacing as an unhandled rejection.
-              drainPromise.catch(() => {});
-              return drainPromise;
-            }
-            return undefined;
-          },
-          flush: () => {
-            const handle = state.handle;
-            return new Promise((resolve, reject) => {
-              if (!handle || state.pendingError) {
-                const error =
-                  state.pendingError || new Error("The stream has already failed");
-                state.detach();
-                try {
-                  if (handle) handle.destroy();
-                } catch {}
-                state.handle = null;
-                state.controller = null;
-                state.pendingError = null;
-                reject(error);
-                return;
-              }
-              // Both listeners are removed on either outcome: a leftover
-              // `error` handler keeps this transform reachable from the zlib
-              // handle, which is a cycle the runtime cannot collect.
-              const onError = (error) => {
-                handle.off("end", onEnd);
-                state.detach();
-                state.handle = null;
-                state.controller = null;
-                state.pendingError = null;
-                reject(error);
-              };
-              const onEnd = () => {
-                // The zlib stream finished; the last `data` events already
-                // enqueued their chunks.
-                handle.off("error", onError);
-                state.detach();
-                resolve();
-              };
-              handle.once("end", onEnd);
-              handle.once("error", onError);
-              handle.end();
-            });
-          },
-        });
-
-        this.#state = state;
-
-        if (typeof format !== "string" || !FORMATS.has(format)) {
+        if (arguments.length < 1) {
+          throw new TypeError(
+            "Failed to construct '" +
+              name +
+              "': 1 argument required, but only 0 present."
+          );
+        }
+        const fmt = `${format}`;
+        if (!FORMATS.has(fmt)) {
           // Node reports a TypeError for an unsupported format rather than
           // silently doing nothing.
           throw new TypeError(
             'The "format" argument must be one of "deflate", "deflate-raw", or "gzip". Received ' +
-              JSON.stringify(format)
+              JSON.stringify(fmt)
           );
         }
 
-        this.#format = format;
-        const handle = factoryFor(kind, format);
-        state.handle = handle;
-
-        const onData = (chunk) => {
-          if (!state.controller) return;
-          try {
-            // Copy: the zlib buffer is reused between events.
-            state.controller.enqueue(new Uint8Array(chunk));
-          } catch (error) {
-            // The readable side was cancelled; stop feeding it.
-            state.pendingError = error;
-          }
+        const handle = factoryFor(kind, fmt);
+        const state = {
+          handle,
+          controller: null,
+          pendingError: null,
+          lastError: null,
+          failed: false,
+          closed: false,
+          totalIn: 0,
+          drain: null,
+          drainReject: null,
+          flushDetach: null,
+          flushSettle: null,
+          detach: () => {},
         };
-        const onError = (error) => {
-          // An inflate failure surfaces here. Store it so the pending
-          // `transform`/`flush` reports it, and error the readable side so a
-          // consumer sees it without waiting for a flush.
-          state.pendingError = error;
-          // `controller.error()` rejects the stream, and a rejected transform's
-          // `flush` never runs, so nothing else will release this handle. Drop
-          // the listeners and destroy it here: a live zlib handle keeps the
-          // transform reachable, which the runtime reports as a leaked object
-          // (`gc_obj_list` assertion) when the worker exits.
-          state.detach();
-          try {
-            handle.destroy();
-          } catch {}
-          const controller = state.controller;
-          if (state.drain) {
-            handle.off("drain", state.drain);
-            state.drain = null;
+
+        const cleanup = (error) => {
+          const h = state.handle;
+          if (h) {
+            if (state.drain) {
+              h.off("drain", state.drain);
+              state.drain = null;
+            }
+            state.detach();
+          }
+          if (state.flushDetach) {
+            const detachFlush = state.flushDetach;
+            state.flushDetach = null;
+            detachFlush();
           }
           if (state.drainReject) {
             const rejectDrain = state.drainReject;
@@ -262,32 +176,196 @@ const COMPRESSION_STREAM_JS: &str = r#"(function () {
               rejectDrain(error);
             } catch {}
           }
+          if (state.flushSettle) {
+            const settleFlush = state.flushSettle;
+            state.flushSettle = null;
+            try {
+              settleFlush(error);
+            } catch {}
+          }
+          if (error !== null && error !== undefined) {
+            state.failed = true;
+            state.lastError = error;
+          }
           state.handle = null;
           state.controller = null;
           state.pendingError = null;
-          if (controller) {
+          if (h) {
             try {
-              controller.error(error);
+              h.destroy();
             } catch {}
           }
         };
+
+        const onData = (chunk) => {
+          if (!state.controller || state.closed) return;
+          try {
+            // Copy: the zlib buffer may be reused between events.
+            state.controller.enqueue(new Uint8Array(chunk));
+          } catch (error) {
+            // The readable side was cancelled; stop feeding it.
+            state.pendingError = toStreamError(error);
+          }
+        };
+
+        const onError = (error) => {
+          // An inflate failure surfaces here. Store it so any pending
+          // `transform`/`flush` reports it, and error the readable side so a
+          // consumer sees it without waiting for a flush.
+          const err = toStreamError(error);
+          state.pendingError = err;
+          // Drop listeners and destroy the handle immediately: a live zlib
+          // handle keeps the stream reachable (`gc_obj_list` assertion at exit).
+          const controller = state.controller;
+          cleanup(err);
+          if (controller) {
+            try {
+              controller.error(err);
+            } catch {}
+          }
+        };
+
         handle.on("data", onData);
         handle.on("error", onError);
-        // Kept on the state so `flush` can detach them.
         state.detach = () => {
           handle.off("data", onData);
           handle.off("error", onError);
         };
+
+        this.#transform = new TransformStreamRef({
+          start: (controller) => {
+            state.controller = controller;
+          },
+          transform: (chunk, controller) => {
+            state.controller = controller;
+            let bytes;
+            try {
+              bytes = toBytes(chunk);
+            } catch (error) {
+              state.pendingError = error;
+              controller.error(error);
+              throw error;
+            }
+            const currentHandle = state.handle;
+            if (!currentHandle || state.pendingError || state.failed) {
+              const error = toStreamError(
+                state.pendingError ||
+                  state.lastError ||
+                  new TypeError("The stream has already failed")
+              );
+              cleanup(error);
+              controller.error(error);
+              throw error;
+            }
+            state.totalIn += bytes.byteLength;
+            let more;
+            try {
+              more = currentHandle.write(bytes);
+            } catch (error) {
+              const err = toStreamError(error);
+              cleanup(err);
+              controller.error(err);
+              throw err;
+            }
+            if (state.failed) {
+              const err = state.lastError || new TypeError("The stream has already failed");
+              controller.error(err);
+              throw err;
+            }
+            if (state.pendingError) {
+              const err = toStreamError(state.pendingError);
+              cleanup(err);
+              controller.error(err);
+              throw err;
+            }
+            if (more === false) {
+              const drainPromise = new Promise((resolve, reject) => {
+                const onDrain = () => {
+                  currentHandle.off("drain", onDrain);
+                  state.drain = null;
+                  state.drainReject = null;
+                  resolve();
+                };
+                state.drain = onDrain;
+                state.drainReject = reject;
+                currentHandle.on("drain", onDrain);
+              });
+              // Error already reaches the stream via `controller.error`; avoid
+              // spurious unhandled rejections if rejected during cleanup/cancel.
+              drainPromise.catch(() => {});
+              return drainPromise;
+            }
+            return undefined;
+          },
+          flush: () => {
+            const currentHandle = state.handle;
+            return new Promise((resolve, reject) => {
+              if (!currentHandle || state.pendingError || state.failed) {
+                const error = toStreamError(
+                  state.pendingError ||
+                    state.lastError ||
+                    new TypeError("The stream has already failed")
+                );
+                cleanup(error);
+                reject(error);
+                return;
+              }
+              const onFlushError = (error) => {
+                cleanup(toStreamError(error));
+              };
+              const onEnd = () => {
+                let trailingError = null;
+                if (kind === "decompress" && fmt === "deflate") {
+                  const consumed = currentHandle.bytesWritten;
+                  if (consumed < state.totalIn) {
+                    trailingError = new TypeError("Junk found after compressed data");
+                  }
+                }
+                cleanup(trailingError);
+              };
+              state.flushDetach = () => {
+                currentHandle.off("end", onEnd);
+                currentHandle.off("error", onFlushError);
+              };
+              state.flushSettle = (error) => {
+                if (error !== null && error !== undefined) {
+                  reject(error);
+                } else {
+                  resolve();
+                }
+              };
+              currentHandle.once("end", onEnd);
+              currentHandle.once("error", onFlushError);
+              currentHandle.end();
+            });
+          },
+          cancel: (reason) => {
+            state.closed = true;
+            const cancelError =
+              reason !== undefined ? reason : new TypeError("Stream cancelled");
+            cleanup(cancelError);
+          },
+        });
       }
 
-      get format() {
-        return this.#format;
+      get readable() {
+        return this.#transform.readable;
       }
 
-      get encoding() {
-        return this.#format;
+      get writable() {
+        return this.#transform.writable;
       }
     };
+
+    Object.defineProperty(Cls, "name", {
+      value: name,
+      configurable: true,
+    });
+    Object.defineProperty(Cls.prototype, Symbol.toStringTag, {
+      value: name,
+      configurable: true,
+    });
+    return Cls;
   };
 
   const CompressionStream = makeClass("CompressionStream", "compress");

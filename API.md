@@ -871,11 +871,15 @@ All helpers are also attached to the default export (`stream.isReadable(s)`).
 
 ## stream/web
 
-Also available as `node:stream/web`. `TextEncoderStream` and `TextDecoderStream` are installed globally when the stream/web module is loaded.
+Also available as `node:stream/web`. Its Web Streams, text encoding stream, and compression stream constructors (including `TextEncoderStream`, `TextDecoderStream`, `CompressionStream`, and `DecompressionStream`) are installed globally.
 
 [ByteLengthQueuingStrategy](https://nodejs.org/api/webstreams.html#class-bytelengthqueuingstrategy)
 
+[CompressionStream](https://nodejs.org/api/webstreams.html#class-compressionstream)
+
 [CountQueuingStrategy](https://nodejs.org/api/webstreams.html#class-countqueuingstrategy)
+
+[DecompressionStream](https://nodejs.org/api/webstreams.html#class-decompressionstream)
 
 [ReadableByteStreamController](https://nodejs.org/api/webstreams.html#class-readablebytestreamcontroller)
 
@@ -894,6 +898,8 @@ Also available as `node:stream/web`. `TextEncoderStream` and `TextDecoderStream`
 [TextEncoderStream](https://nodejs.org/api/webstreams.html#class-textencoderstream)
 
 [TransformStream](https://nodejs.org/api/webstreams.html#class-transformstream)
+
+[TransformStreamDefaultController](https://nodejs.org/api/webstreams.html#class-transformstreamdefaultcontroller)
 
 [WritableStream](https://nodejs.org/api/webstreams.html#class-writablestream)
 

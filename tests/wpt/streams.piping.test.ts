@@ -5,8 +5,6 @@ import { fileURLToPath } from "node:url";
 
 const SKIP_FILES = [
   "general-addition.any.js", // waiting on resolution of https://github.com/whatwg/streams/issues/1243.
-  "throwing-options.any.js", // requires TransformStream
-  "transform-streams.any.js", // requires TransformStream
 ];
 
 const __filename = fileURLToPath(import.meta.url);

@@ -35,10 +35,11 @@
 | node:readline | ✔︎ | ✔︎ | — |
 | node:readline/promises | ✔︎ | ✔︎ | — |
 | node:repl | ✔︎ | ✘ | Not implemented |
+| node:sea | ✔︎ | ✘ | Not implemented (`isSea`, `getAsset`, `getRawAsset`, `getAssetAsBlob`) |
 | node:sqlite | ✔︎ | ✔︎ | — |
 | node:stream | ✔︎ | ✔︎\* | JS polyfill (not native) |
 | node:stream/promises | ✔︎ | ✔︎\* | JS polyfill (not native) |
-| node:stream/web | ✔︎ | ✔︎⚠️ | `TransformStream` rejects `readableType`/`writableType`; BYOB/transfer and piping WPT edge cases ([details](#nodestreamweb)) |
+| node:stream/web | ✔︎ | ✔︎ | — |
 | node:string_decoder | ✔︎ | ✔︎ | — |
 | node:test | ✔︎ | ✔︎\* | JS polyfill (not native) |
 | node:timers | ✔︎ | ✔︎ | — |
@@ -63,7 +64,7 @@
 
 | [Web Platform API](https://min-common-api.proposal.wintertc.org/) | lexe | Key differences from standard / Node.js |
 | --- | --- | --- |
-| COMPRESSION | ✔︎⚠️ | Supports `gzip`/`deflate`/`deflate-raw` via `node:zlib`; inherits `node:stream/web` streaming limits ([details](#compression)) |
+| COMPRESSION | ✔︎ | — |
 | CONSOLE | ✔︎ | — |
 | DOM | ✔︎⚠️ | WinterTC `Event`/`EventTarget`/`AbortController`/`AbortSignal` subset only; no `ErrorEvent`, `CloseEvent`, or browser DOM ([details](#dom)) |
 | ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
@@ -72,7 +73,7 @@
 | FILEAPI | ✔︎⚠️ | `Blob`, `File`, and `URL.createObjectURL` only; missing `FileReader`/`FileReaderSync`/`FileList`; no `fetch("blob:...")` ([details](#fileapi)) |
 | HR-TIME | ✔︎ | — |
 | HTML | ✔︎⚠️ | `navigator` only exposes `userAgent`; `structuredClone` omits `DOMException`/`Blob`/`File`/`MessagePort`/`CryptoKey`; no `BroadcastChannel` ([details](#html)) |
-| STREAMS | ✔︎⚠️ | Same limitations as `node:stream/web` ([details](#streams)) |
+| STREAMS | ✔︎ | — |
 | URL | ✔︎ | — |
 | URLPATTERN | ✔︎ | — |
 | WASM-JS-API-2 | ✔︎⚠️ | `wasmi` interpreter; missing GC/exceptions/threads/Memory64/JSPI/`v128` boundary; copied `Memory.buffer`; retained `externref`s ([details](#wasm-js-api-2)) |
@@ -153,11 +154,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Extension hooks apply to the CommonJS loader only; they do not change static ESM import semantics.
 - Native `.node` addon loading requires building with `--features napi` or `--features v8-compat` (see [Native addons](#native-addons)).
 
-#### `node:stream/web`
-
-- `TransformStream` rejects `readableType` and `writableType` options.
-- WPT edge cases around non-transferable `ArrayBuffer` / BYOB transfer, owning-type byte streams, and some `pipeTo` / `TransformStream` cases are not yet compliant.
-
 #### `node:tls`
 
 - Rejects (`ERR_TLS_OPTION_NOT_SUPPORTED`) `pfx`, `ciphers`, `sigalgs`, `dhparam`, `crl`, `psk`, `ocsp`, `session`, `ticket`, async `SNICallback`, `ALPNCallback`, soft mTLS (`requestCert: true` with `rejectUnauthorized: false`), and encrypted private keys on rustls backends (OpenSSL only).
@@ -186,10 +182,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Missing `BroadcastChannel`, `SHARE_ENV`, `resourceLimits`, `Worker.prototype.getHeapSnapshot()`, `postMessageToThread()`, and piped worker stdio (`stdin: true`, `stdout: true`, `stderr: true`).
 
 ### Web Platform APIs
-
-#### `COMPRESSION`
-
-- Supports `CompressionStream` and `DecompressionStream` for `gzip`, `deflate`, and `deflate-raw` via `node:zlib`, inheriting `node:stream/web` streaming limitations.
 
 #### `DOM`
 
@@ -224,10 +216,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `navigator` exposes only `userAgent` (missing `hardwareConcurrency`, `language`/`languages`, `platform`).
 - `structuredClone()` does not clone `DOMException`, `Blob`, `File`, `MessagePort`, or `CryptoKey`.
 - `BroadcastChannel` is not implemented (and there are no browser `Window` or DOM globals).
-
-#### `STREAMS`
-
-- Same limitations as [`node:stream/web`](#nodestreamweb) (`TransformStream` rejects `readableType`/`writableType`, plus BYOB/transfer and piping WPT edge cases).
 
 #### `WASM-JS-API-2`
 

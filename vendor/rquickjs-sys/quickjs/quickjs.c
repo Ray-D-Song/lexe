@@ -870,6 +870,7 @@ typedef struct JSArrayBuffer {
     uint8_t detached;
     uint8_t immutable;
     uint8_t shared; /* if shared, the array buffer cannot be detached */
+    uint8_t non_detachable; /* if set, JS transfer/detach cannot detach it */
     uint8_t *data; /* NULL if detached */
     struct list_head array_list;
     void *opaque;
@@ -58207,6 +58208,7 @@ static JSValue js_array_buffer_constructor3(JSContext *ctx,
     abuf->detached = false;
     abuf->immutable = false;
     abuf->shared = (class_id == JS_CLASS_SHARED_ARRAY_BUFFER);
+    abuf->non_detachable = false;
     abuf->opaque = opaque;
     abuf->free_func = free_func;
     if (alloc_flag && buf)
@@ -58493,6 +58495,28 @@ int JS_SetImmutableArrayBuffer(JSValueConst obj, bool immutable)
     return 0;
 }
 
+int JS_IsNonDetachableArrayBuffer(JSValueConst obj)
+{
+    JSArrayBuffer *abuf = JS_GetOpaque(obj, JS_CLASS_ARRAY_BUFFER);
+    if (!abuf)
+        return -1;
+    return abuf->non_detachable;
+}
+
+int JS_SetNonDetachableArrayBuffer(JSValueConst obj, bool non_detachable)
+{
+    JSArrayBuffer *abuf = JS_GetOpaque(obj, JS_CLASS_ARRAY_BUFFER);
+    if (!abuf)
+        return -1;
+    abuf->non_detachable = non_detachable;
+    return 0;
+}
+
+bool JS_IsSharedArrayBuffer(JSValueConst obj)
+{
+    return JS_GetOpaque(obj, JS_CLASS_SHARED_ARRAY_BUFFER) != NULL;
+}
+
 /* get an ArrayBuffer or SharedArrayBuffer */
 static JSArrayBuffer *js_get_array_buffer(JSContext *ctx, JSValueConst obj)
 {
@@ -58589,6 +58613,8 @@ static JSValue js_array_buffer_transfer(JSContext *ctx, JSValueConst this_val,
         return JS_EXCEPTION;
     if (abuf->shared)
         return JS_ThrowTypeError(ctx, "cannot transfer a SharedArrayBuffer");
+    if (abuf->non_detachable)
+        return JS_ThrowTypeError(ctx, "ArrayBuffer is not detachable");
     if (magic == JS_ARRAY_BUFFER_TRANSFER_TO_IMMUTABLE && abuf->immutable)
         return JS_ThrowTypeErrorImmutableArrayBuffer(ctx);
     if (argc < 1 || JS_IsUndefined(argv[0]))

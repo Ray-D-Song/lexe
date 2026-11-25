@@ -376,7 +376,7 @@ impl<'js> ReadableStreamDefaultController<'js> {
         self.native_pull = None;
     }
 
-    fn readable_stream_default_controller_can_close_or_enqueue(
+    pub(crate) fn readable_stream_default_controller_can_close_or_enqueue(
         &self,
         stream: &ReadableStream<'js>,
     ) -> bool {

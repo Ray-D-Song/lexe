@@ -46,6 +46,18 @@ pub(super) struct IteratorRecord<'js> {
     sync_to_async_iterator: Function<'js>,
 }
 
+impl<'js> Trace<'js> for IteratorRecord<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        self.iterator.trace(tracer);
+        self.next_method.trace(tracer);
+        self.sync_to_async_iterator.trace(tracer);
+    }
+}
+
+unsafe impl<'js> JsLifetime<'js> for IteratorRecord<'js> {
+    type Changed<'to> = IteratorRecord<'to>;
+}
+
 impl<'js> IteratorRecord<'js> {
     pub(super) fn get_iterator(
         ctx: &Ctx<'js>,
@@ -610,21 +622,28 @@ fn get_v<'js>(
 
 // https://tc39.es/ecma262/multipage/abstract-operations.html#sec-toobject
 fn to_object<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<Object<'js>> {
-    let base_primordials = BasePrimordials::get(ctx)?;
-
     match value.type_of() {
         // Return a new Boolean object whose [[BooleanData]] internal slot is set to argument
-        Type::Bool => base_primordials.constructor_bool.construct((value,))?,
+        Type::Bool => {
+            let ctor = BasePrimordials::get(ctx)?.constructor_bool.clone();
+            ctor.construct((value,))?
+        },
         // Return a new Number object whose [[NumberData]] internal slot is set to argument
-        Type::Int | Type::Float => base_primordials.constructor_number.construct((value,))?,
+        Type::Int | Type::Float => {
+            let ctor = BasePrimordials::get(ctx)?.constructor_number.clone();
+            ctor.construct((value,))?
+        },
         // Return a new String object whose [[StringData]] internal slot is set to argument
-        Type::String => base_primordials.constructor_string.construct((value,))?,
+        Type::String => {
+            let ctor = BasePrimordials::get(ctx)?.constructor_string.clone();
+            ctor.construct((value,))?
+        },
         // Return a new Symbol object whose [[SymbolData]] internal slot is set to argument
         // `new Symbol` is invalid but we can use `Object(symbol)
-        Type::Symbol => base_primordials.constructor_object.call((value,))?,
-        // Return a new BigInt object whose [[BigIntData]] internal slot is set to argument
-        // `new BigInt` is invalid but we can use `Object(bigInt)
-        Type::BigInt => base_primordials.constructor_object.call((value,))?,
+        Type::Symbol | Type::BigInt => {
+            let ctor = BasePrimordials::get(ctx)?.constructor_object.clone();
+            ctor.call((value,))?
+        },
         // Return argument
         typ if typ.interpretable_as(Type::Object) => Ok(value.into_object().unwrap()),
         // Throw a TypeError exception.

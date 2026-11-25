@@ -14,7 +14,14 @@ use crate::{
     utils::promise::{promise_resolved_with, PromisePrimordials},
 };
 
-use super::tee::TeeState;
+use super::{
+    from_iterable_cancel_algorithm, from_iterable_pull_algorithm,
+    tee::{
+        byte_tee_cancel_algorithm, byte_tee_pull_algorithm, tee_cancel_algorithm,
+        tee_pull_algorithm, ByteTeeState, TeeState,
+    },
+    FromIterableState,
+};
 
 #[derive(Clone)]
 pub enum StartAlgorithm<'js> {
@@ -23,6 +30,7 @@ pub enum StartAlgorithm<'js> {
         f: Function<'js>,
         underlying_source: Null<Undefined<Object<'js>>>,
     },
+    Transform(Promise<'js>),
 }
 
 impl<'js> StartAlgorithm<'js> {
@@ -37,6 +45,7 @@ impl<'js> StartAlgorithm<'js> {
                 f,
                 underlying_source,
             } => f.call::<_, Value>((This(underlying_source.clone()), controller)),
+            StartAlgorithm::Transform(promise) => Ok(promise.clone().into_value()),
         }
     }
 }
@@ -54,6 +63,9 @@ pub enum PullAlgorithm<'js> {
     },
     RustFunction(Rc<PullRustFn<'js>>),
     Tee(Class<'js, TeeState<'js>>),
+    ByteTee1(Class<'js, ByteTeeState<'js>>),
+    ByteTee2(Class<'js, ByteTeeState<'js>>),
+    FromIterable(Class<'js, FromIterableState<'js>>),
     Transform(TransformStreamClass<'js>),
 }
 
@@ -70,6 +82,8 @@ impl<'js> Trace<'js> for PullAlgorithm<'js> {
             },
             Self::RustFunction(_) => {},
             Self::Tee(state) => state.trace(tracer),
+            Self::ByteTee1(state) | Self::ByteTee2(state) => state.trace(tracer),
+            Self::FromIterable(state) => state.trace(tracer),
             Self::Transform(stream) => stream.trace(tracer),
         }
     }
@@ -109,8 +123,11 @@ impl<'js> PullAlgorithm<'js> {
                 f.call::<_, Value>((This(underlying_source.clone()), controller)),
             ),
             PullAlgorithm::RustFunction(f) => f(ctx, controller),
-            PullAlgorithm::Tee(state) => {
-                crate::readable::stream::tee::tee_pull_algorithm(ctx, state.clone())
+            PullAlgorithm::Tee(state) => tee_pull_algorithm(ctx, state.clone()),
+            PullAlgorithm::ByteTee1(state) => byte_tee_pull_algorithm(ctx, state.clone(), false),
+            PullAlgorithm::ByteTee2(state) => byte_tee_pull_algorithm(ctx, state.clone(), true),
+            PullAlgorithm::FromIterable(state) => {
+                from_iterable_pull_algorithm(ctx, state.clone(), controller)
             },
             PullAlgorithm::Transform(stream) => {
                 transform_stream::source_pull_algorithm(ctx, stream)
@@ -131,6 +148,9 @@ pub enum CancelAlgorithm<'js> {
     RustFunction(Rc<RefCell<Option<CancelRustFn<'js>>>>),
     Tee1(Class<'js, TeeState<'js>>),
     Tee2(Class<'js, TeeState<'js>>),
+    ByteTee1(Class<'js, ByteTeeState<'js>>),
+    ByteTee2(Class<'js, ByteTeeState<'js>>),
+    FromIterable(Class<'js, FromIterableState<'js>>),
     Transform {
         stream: TransformStreamClass<'js>,
         controller: TransformStreamDefaultControllerClass<'js>,
@@ -151,6 +171,9 @@ impl<'js> Clone for CancelAlgorithm<'js> {
             Self::RustFunction(rc) => Self::RustFunction(rc.clone()),
             Self::Tee1(state) => Self::Tee1(state.clone()),
             Self::Tee2(state) => Self::Tee2(state.clone()),
+            Self::ByteTee1(state) => Self::ByteTee1(state.clone()),
+            Self::ByteTee2(state) => Self::ByteTee2(state.clone()),
+            Self::FromIterable(state) => Self::FromIterable(state.clone()),
             Self::Transform { stream, controller } => Self::Transform {
                 stream: stream.clone(),
                 controller: controller.clone(),
@@ -172,6 +195,8 @@ impl<'js> Trace<'js> for CancelAlgorithm<'js> {
             },
             Self::RustFunction(_) => {},
             Self::Tee1(state) | Self::Tee2(state) => state.trace(tracer),
+            Self::ByteTee1(state) | Self::ByteTee2(state) => state.trace(tracer),
+            Self::FromIterable(state) => state.trace(tracer),
             Self::Transform { stream, controller } => {
                 stream.trace(tracer);
                 controller.trace(tracer);
@@ -221,11 +246,16 @@ impl<'js> CancelAlgorithm<'js> {
                     .expect("cancel algorithm must only be called once");
                 f(reason)
             },
-            CancelAlgorithm::Tee1(state) => {
-                crate::readable::stream::tee::tee_cancel_algorithm(ctx, state.clone(), reason, 0)
+            CancelAlgorithm::Tee1(state) => tee_cancel_algorithm(ctx, state.clone(), reason, 0),
+            CancelAlgorithm::Tee2(state) => tee_cancel_algorithm(ctx, state.clone(), reason, 1),
+            CancelAlgorithm::ByteTee1(state) => {
+                byte_tee_cancel_algorithm(ctx, state.clone(), reason, 0)
             },
-            CancelAlgorithm::Tee2(state) => {
-                crate::readable::stream::tee::tee_cancel_algorithm(ctx, state.clone(), reason, 1)
+            CancelAlgorithm::ByteTee2(state) => {
+                byte_tee_cancel_algorithm(ctx, state.clone(), reason, 1)
+            },
+            CancelAlgorithm::FromIterable(state) => {
+                from_iterable_cancel_algorithm(ctx, state.clone(), reason)
             },
             CancelAlgorithm::Transform { stream, controller } => {
                 transform_stream::source_cancel_algorithm(ctx, stream, controller, reason)

@@ -453,6 +453,21 @@ mod imp {
         }
 
         fn process(&mut self, input: &[u8], flush: i32) -> io::Result<Vec<u8>> {
+            if self.reached_end {
+                if input.is_empty() {
+                    return Ok(Vec::new());
+                }
+                if matches!(self.mode, ZlibMode::Gunzip | ZlibMode::Unzip) {
+                    let rc = unsafe { z::inflateReset(self.strm) };
+                    if rc != z::Z_OK {
+                        return Err(unsafe { zlib_err(rc, self.strm) });
+                    }
+                    self.reached_end = false;
+                } else {
+                    return Ok(Vec::new());
+                }
+            }
+
             let mut out = Vec::new();
             let mut scratch = [0u8; 16 * 1024];
             let max_chunk = 1024 * 1024 * 1024;
@@ -490,6 +505,19 @@ mod imp {
 
                     match rc {
                         z::Z_STREAM_END => {
+                            if matches!(self.mode, ZlibMode::Gunzip | ZlibMode::Unzip)
+                                && (after_avail_in > 0 || !is_last)
+                            {
+                                let rrc = unsafe { z::inflateReset(self.strm) };
+                                if rrc != z::Z_OK {
+                                    return Err(unsafe { zlib_err(rrc, self.strm) });
+                                }
+                                self.reached_end = false;
+                                if after_avail_in > 0 {
+                                    continue;
+                                }
+                                break;
+                            }
                             self.reached_end = true;
                             break;
                         },
@@ -680,7 +708,7 @@ mod imp {
 
     enum RustDecInner {
         PendingUnzip(Vec<u8>),
-        Gzip(flate2::write::GzDecoder<Vec<u8>>),
+        Gzip(flate2::write::MultiGzDecoder<Vec<u8>>),
         Decompress(flate2::Decompress),
     }
 
@@ -702,7 +730,9 @@ mod imp {
                 ));
             }
             let inner = match mode {
-                ZlibMode::Gunzip => RustDecInner::Gzip(flate2::write::GzDecoder::new(Vec::new())),
+                ZlibMode::Gunzip => {
+                    RustDecInner::Gzip(flate2::write::MultiGzDecoder::new(Vec::new()))
+                },
                 ZlibMode::Inflate => RustDecInner::Decompress(flate2::Decompress::new(true)),
                 ZlibMode::InflateRaw => RustDecInner::Decompress(flate2::Decompress::new(false)),
                 ZlibMode::Unzip => RustDecInner::PendingUnzip(Vec::new()),
@@ -727,7 +757,9 @@ mod imp {
         }
 
         pub fn decompress_chunk(&mut self, input: &[u8]) -> io::Result<Vec<u8>> {
-            self.total_in = self.total_in.saturating_add(input.len() as u64);
+            if matches!(self.inner, RustDecInner::Decompress(_)) && self.reached_end {
+                return Ok(Vec::new());
+            }
             if let RustDecInner::PendingUnzip(buf) = &mut self.inner {
                 buf.extend_from_slice(input);
                 if buf.len() < 2 {
@@ -735,7 +767,7 @@ mod imp {
                 }
                 let buffered = std::mem::take(buf);
                 self.inner = if buffered.starts_with(&[0x1f, 0x8b]) {
-                    RustDecInner::Gzip(flate2::write::GzDecoder::new(Vec::new()))
+                    RustDecInner::Gzip(flate2::write::MultiGzDecoder::new(Vec::new()))
                 } else {
                     RustDecInner::Decompress(flate2::Decompress::new(true))
                 };
@@ -775,8 +807,19 @@ mod imp {
                     io::ErrorKind::UnexpectedEof,
                     "unexpected end of file",
                 )),
-                RustDecInner::Gzip(dec) => dec.finish(),
+                RustDecInner::Gzip(dec) => {
+                    if self.total_in == 0 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "unexpected end of file",
+                        ));
+                    }
+                    dec.finish()
+                },
                 RustDecInner::Decompress(..) => {
+                    if self.reached_end {
+                        return Ok(Vec::new());
+                    }
                     let out = self.feed_inner(&[], FlushDecompress::Finish)?;
                     if !self.reached_end {
                         return Err(io::Error::new(
@@ -793,6 +836,7 @@ mod imp {
             match &mut self.inner {
                 RustDecInner::PendingUnzip(_) => Ok(Vec::new()),
                 RustDecInner::Gzip(dec) => {
+                    self.total_in = self.total_in.saturating_add(input.len() as u64);
                     dec.write_all(input)?;
                     dec.flush()?;
                     Ok(std::mem::take(dec.get_mut()))
@@ -809,7 +853,9 @@ mod imp {
                             .map_err(|e| {
                                 io::Error::new(io::ErrorKind::InvalidData, e.to_string())
                             })?;
-                        consumed += (decomp.total_in() - before_in) as usize;
+                        let step_in = (decomp.total_in() - before_in) as usize;
+                        consumed += step_in;
+                        self.total_in = self.total_in.saturating_add(step_in as u64);
                         let written = (decomp.total_out() - before_out) as usize;
                         out.extend_from_slice(&scratch[..written]);
                         match status {
