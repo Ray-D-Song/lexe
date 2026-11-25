@@ -688,49 +688,6 @@ jobs:
             compat/better-sqlite3/compat.log
           if-no-files-found: ignore
 
-  macos-intel-v8:
-    needs: changes
-    if: needs.changes.outputs.full == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('macos-intel-v8 v8-hello', inputs.case_filter))
-    name: v8-hello (macos-15-intel)
-    runs-on: macos-15-intel
-    steps:
-      - uses: actions/checkout@v4
-      - name: Fetch Node 24.3 source
-        run: |
-          git submodule sync -- refs/node
-          git submodule update --init --depth 1 refs/node
-          test "$(git -C refs/node rev-parse HEAD)" = \
-            "741975041995a272ff7e378bcbb6d6fa4b93f38f"
-          grep -q '#define NODE_MAJOR_VERSION 24' refs/node/src/node_version.h
-          grep -q '#define NODE_MINOR_VERSION 3' refs/node/src/node_version.h
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.3.0
-          cache: yarn
-      - run: yarn install --frozen-lockfile
-      - run: make js JS_MINIFY=0
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          shared-key: compatibility
-          key: macos-15-intel-v8-compat
-      - run: cargo build -p lexe --features v8-compat
-      - name: Run v8-hello
-        run: |
-          export LEXE_BIN="$PWD/target/debug/lexe"
-          "$LEXE_BIN" --version
-          (cd compat/v8-hello && npm run build)
-          node compat/run.mjs v8-hello target/debug/lexe
-      - if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: compat-v8-hello-macos-15-intel-logs
-          path: compat/v8-hello/compat.log
-          if-no-files-found: ignore
-
   arm64-compat:
     needs: changes
     if: needs.changes.outputs.full == 'true' && (github.event_name != 'workflow_dispatch' || inputs.case_filter == '' || contains('arm64-compat v8-hello better-sqlite3', inputs.case_filter))
