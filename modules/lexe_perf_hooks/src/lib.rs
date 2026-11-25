@@ -9,6 +9,7 @@ use rquickjs::{
 
 use crate::performance::Performance;
 
+mod histogram;
 mod observer;
 mod performance;
 
@@ -55,20 +56,11 @@ impl From<PerfHooksModule> for ModuleInfo<PerfHooksModule> {
 }
 
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
-    let globals = ctx.globals();
-
-    // The observation layer reads the monotonic clock through this hook; it is
-    // the same clock `performance.now()` uses, so entry timestamps and `now()`
-    // are always on one timeline.
-    globals.set(
-        "__lexePerfNow",
-        rquickjs::Function::new(ctx.clone(), || -> f64 { Performance::now() })?,
-    )?;
-
     let instance = Class::instance(ctx.clone(), Performance::new())?;
     Performance::add_event_target_prototype(ctx)?;
 
-    globals.set("performance", instance)?;
+    ctx.globals().set("performance", instance)?;
+    observer::install_globals(ctx)?;
     Ok(())
 }
 

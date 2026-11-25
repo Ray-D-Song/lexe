@@ -1132,6 +1132,9 @@ typedef void JSPromiseHook(JSContext *ctx, JSPromiseHookType type,
 JS_EXTERN void JS_SetPromiseHook(JSRuntime *rt, JSPromiseHook promise_hook,
                                  void *opaque);
 
+typedef void JSGCHook(JSRuntime *rt, int phase, int flags, void *opaque);
+JS_EXTERN void JS_SetGCHook(JSRuntime *rt, JSGCHook *gc_hook, void *opaque);
+
 /* is_handled = true means that the rejection is handled */
 typedef void JSHostPromiseRejectionTracker(JSContext *ctx, JSValueConst promise,
                                            JSValueConst reason,

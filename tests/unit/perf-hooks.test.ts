@@ -303,7 +303,8 @@ it("histogram percentiles are ordered", () => {
   const histogram = createHistogram();
   for (let i = 1; i <= 100; i++) histogram.record(i);
 
-  expect(histogram.percentile(0)).toBe(1);
+  expect(() => histogram.percentile(0)).toThrow();
+  expect(histogram.percentile(1)).toBe(1);
   expect(histogram.percentile(50)).toBeLessThan(histogram.percentile(90));
   expect(histogram.percentile(100)).toBe(100);
   expect(() => histogram.percentile(101)).toThrow();

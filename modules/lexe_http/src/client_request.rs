@@ -24,8 +24,9 @@ use lexe_timers::resume_timer_loop_if_idle;
 use lexe_utils::{
     event_loop::{self, EventLoopRef},
     object::ObjectExt,
+    perf::{self, PerfEntryKind},
     result::ResultExt,
-    VERSION,
+    time, VERSION,
 };
 use rquickjs::{
     class::{Trace, Tracer},
@@ -809,6 +810,10 @@ impl<'js> ClientRequest<'js> {
     ) -> Result<()> {
         let _ = resume_timer_loop_if_idle(&ctx);
 
+        let perf_start_ms = perf::has_observers(perf::rt_key_for_ctx(&ctx), PerfEntryKind::Http)
+            .then(time::monotonic_elapsed_ms);
+        let perf_method = method.to_string();
+        let perf_url = uri.to_string();
         let mut builder = Request::builder().method(method).uri(uri);
         let mut has_user_agent = false;
         let mut has_accept = false;
@@ -879,6 +884,7 @@ impl<'js> ClientRequest<'js> {
             .map(|(k, v)| (k.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
             .collect();
         let (headers_obj, raw_headers) = build_incoming_headers_js(&ctx, pairs)?;
+        let perf_res_headers = perf_start_ms.map(|_| headers_obj.clone());
 
         let message = Class::instance(
             ctx.clone(),
@@ -917,6 +923,36 @@ impl<'js> ClientRequest<'js> {
             msg.set("response", message.clone().into_value())?;
             Ok(msg)
         });
+        if let Some(start_ms) = perf_start_ms {
+            let dur = (time::monotonic_elapsed_ms() - start_ms).max(0.0);
+            perf::emit_node_entry(
+                &ctx,
+                PerfEntryKind::Http,
+                "HttpClient",
+                start_ms,
+                dur,
+                |ctx| {
+                    let detail = Object::new(ctx.clone())?;
+                    let req_obj = Object::new(ctx.clone())?;
+                    req_obj.set("method", perf_method.as_str())?;
+                    req_obj.set("url", perf_url.as_str())?;
+                    let req_headers = this.borrow().headers.borrow().get_headers_object(ctx)?;
+                    req_obj.set("headers", req_headers)?;
+
+                    let res_obj = Object::new(ctx.clone())?;
+                    res_obj.set("statusCode", status.as_u16())?;
+                    res_obj.set("statusMessage", status.canonical_reason().unwrap_or(""))?;
+                    if let Some(h) = &perf_res_headers {
+                        res_obj.set("headers", h.clone())?;
+                    } else {
+                        res_obj.set("headers", Object::new(ctx.clone())?)?;
+                    }
+                    detail.set("req", req_obj)?;
+                    detail.set("res", res_obj)?;
+                    Ok(detail.into_value())
+                },
+            );
+        }
         // Node marks the request destroyed once the response is fully read.
         {
             let borrow = this.borrow();

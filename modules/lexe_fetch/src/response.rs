@@ -23,7 +23,12 @@ use lexe_stream_web::{
     ReadableStreamControllerClass, ReadableStreamDefaultControllerClass,
 };
 use lexe_url::{url_class::URL, url_search_params::URLSearchParams};
-use lexe_utils::{bytes::ObjectBytes, mc_oneshot};
+use lexe_utils::{
+    bytes::ObjectBytes,
+    mc_oneshot,
+    perf::{self, ResourceTimingRecord},
+    time,
+};
 use once_cell::sync::Lazy;
 use rquickjs::{
     atom::PredefinedAtom,
@@ -36,10 +41,79 @@ use std::{
     collections::{BTreeMap, HashMap},
     pin::Pin,
     rc::Rc,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, RwLock,
+    },
     task::{Context, Poll, Waker},
     time::Instant,
 };
+
+pub struct FetchTiming {
+    pub url: String,
+    pub fetch_start_ms: f64,
+    pub redirect_start_ms: f64,
+    pub redirect_end_ms: f64,
+    pub request_start_ms: f64,
+    pub response_start_ms: f64,
+    pub next_hop_protocol: String,
+    pub status_code: u16,
+    pub header_bytes: u64,
+    pub encoded_bytes: AtomicU64,
+    pub decoded_bytes: AtomicU64,
+    pub emitted: AtomicBool,
+}
+
+impl FetchTiming {
+    pub fn add_encoded(&self, n: u64) {
+        if n > 0 {
+            self.encoded_bytes.fetch_add(n, Ordering::AcqRel);
+        }
+    }
+
+    pub fn add_decoded(&self, n: u64) {
+        if n > 0 {
+            self.decoded_bytes.fetch_add(n, Ordering::AcqRel);
+        }
+    }
+
+    pub fn emit_once(&self, ctx: &Ctx<'_>) {
+        if self.emitted.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let end_ms = time::monotonic_elapsed_ms();
+        let encoded = self.encoded_bytes.load(Ordering::Acquire);
+        let decoded = self.decoded_bytes.load(Ordering::Acquire);
+        let transfer_size = encoded.saturating_add(self.header_bytes);
+        perf::emit_resource_timing(
+            ctx,
+            ResourceTimingRecord {
+                name: self.url.clone(),
+                initiator_type: "fetch".to_string(),
+                next_hop_protocol: self.next_hop_protocol.clone(),
+                start_time: self.fetch_start_ms,
+                duration: (end_ms - self.fetch_start_ms).max(0.0),
+                worker_start: 0.0,
+                redirect_start: self.redirect_start_ms,
+                redirect_end: self.redirect_end_ms,
+                fetch_start: self.fetch_start_ms,
+                domain_lookup_start: self.fetch_start_ms,
+                domain_lookup_end: self.fetch_start_ms,
+                connect_start: self.fetch_start_ms,
+                connect_end: self.fetch_start_ms,
+                secure_connection_start: self.fetch_start_ms,
+                request_start: self.request_start_ms,
+                response_start: self.response_start_ms,
+                response_end: end_ms,
+                transfer_size,
+                encoded_body_size: encoded,
+                decoded_body_size: decoded,
+                response_status: self.status_code,
+                delivery_type: String::new(),
+            },
+        );
+    }
+}
 
 static STATUS_TEXTS: Lazy<HashMap<u16, &'static str>> = Lazy::new(|| {
     let mut map = HashMap::new();
@@ -160,6 +234,7 @@ pub struct Response<'js> {
     redirected: bool,
     headers: Class<'js, Headers>,
     abort_receiver: Option<mc_oneshot::Receiver<Value<'js>>>,
+    timing: Option<Arc<FetchTiming>>,
 }
 
 impl<'js> Trace<'js> for Response<'js> {
@@ -298,6 +373,7 @@ impl<'js> Response<'js> {
             redirected: false,
             headers,
             abort_receiver,
+            timing: None,
         })
     }
 
@@ -333,8 +409,9 @@ impl<'js> Response<'js> {
             BodyVariant::Incoming(incoming, content_encoding) => {
                 let incoming = incoming.clone();
                 let content_encoding = content_encoding.clone();
+                let timing = self.timing.clone();
                 drop(body_guard);
-                let stream = create_body_stream(&ctx, incoming, content_encoding)?;
+                let stream = create_body_stream(&ctx, incoming, content_encoding, timing)?;
                 *self.body_stream.write().unwrap() = Some(stream.clone());
                 Ok(stream)
             },
@@ -470,8 +547,12 @@ impl<'js> Response<'js> {
                 }
 
                 // Convert to stream first, then tee
-                let stream_val =
-                    create_body_stream(&ctx, incoming.clone(), content_encoding.clone())?;
+                let stream_val = create_body_stream(
+                    &ctx,
+                    incoming.clone(),
+                    content_encoding.clone(),
+                    self.timing.clone(),
+                )?;
                 let stream = Class::<ReadableStream>::from_value(&stream_val)?;
                 let (branch1, branch2) =
                     lexe_stream_web::tee_readable_stream(ctx.clone(), stream.clone())?;
@@ -493,6 +574,7 @@ impl<'js> Response<'js> {
                     redirected: self.redirected,
                     headers: Class::<Headers>::instance(ctx, self.headers.borrow().clone())?,
                     abort_receiver: self.abort_receiver.clone(),
+                    timing: self.timing.clone(),
                 });
             },
             BodyVariant::Provided(provided) => {
@@ -527,6 +609,7 @@ impl<'js> Response<'js> {
                         redirected: self.redirected,
                         headers: Class::<Headers>::instance(ctx, self.headers.borrow().clone())?,
                         abort_receiver: self.abort_receiver.clone(),
+                        timing: self.timing.clone(),
                     });
                 }
                 BodyVariant::Provided(Some(provided.clone()))
@@ -546,6 +629,7 @@ impl<'js> Response<'js> {
             redirected: self.redirected,
             headers: Class::<Headers>::instance(ctx, self.headers.borrow().clone())?,
             abort_receiver: self.abort_receiver.clone(),
+            timing: self.timing.clone(),
         })
     }
 
@@ -562,6 +646,7 @@ impl<'js> Response<'js> {
             redirected: false,
             headers: Class::instance(ctx.clone(), Headers::default())?,
             abort_receiver: None,
+            timing: None,
         })
     }
 
@@ -617,6 +702,7 @@ impl<'js> Response<'js> {
             redirected: false,
             headers,
             abort_receiver: None,
+            timing: None,
         })
     }
 
@@ -657,6 +743,7 @@ impl<'js> Response<'js> {
             redirected: false,
             headers,
             abort_receiver: None,
+            timing: None,
         })
     }
 }
@@ -672,6 +759,7 @@ impl<'js> Response<'js> {
         redirected: bool,
         abort_receiver: Option<mc_oneshot::Receiver<Value<'js>>>,
         guard: HeadersGuard,
+        timing: Option<Arc<FetchTiming>>,
     ) -> Result<Self> {
         let response_headers = response.headers();
 
@@ -688,6 +776,11 @@ impl<'js> Response<'js> {
         let headers = Class::instance(ctx.clone(), headers)?;
 
         let status = response.status();
+        if status.as_u16() == 204 || status.as_u16() == 304 || method == "HEAD" {
+            if let Some(t) = &timing {
+                t.emit_once(&ctx);
+            }
+        }
 
         Ok(Self {
             body: RwLock::new(BodyVariant::Incoming(
@@ -703,6 +796,7 @@ impl<'js> Response<'js> {
             redirected,
             headers,
             abort_receiver,
+            timing,
         })
     }
 
@@ -734,7 +828,13 @@ impl<'js> Response<'js> {
                             .collect()
                             .await
                             .map_err(|e| Exception::throw_message(ctx, &e.to_string()))?;
-                        return Ok(Some(collected.to_bytes().into()));
+                        let bytes: Vec<u8> = collected.to_bytes().into();
+                        if let Some(t) = &self.timing {
+                            t.add_encoded(bytes.len() as u64);
+                            t.add_decoded(bytes.len() as u64);
+                            t.emit_once(ctx);
+                        }
+                        return Ok(Some(bytes));
                     }
 
                     let collected = body
@@ -742,6 +842,9 @@ impl<'js> Response<'js> {
                         .await
                         .map_err(|e| Exception::throw_message(ctx, &e.to_string()))?;
                     let raw = collected.to_bytes();
+                    if let Some(t) = &self.timing {
+                        t.add_encoded(raw.len() as u64);
+                    }
                     if let Some(mut dec) = encoding
                         .as_deref()
                         .and_then(|enc| StreamingDecoder::new(enc).ok())
@@ -755,9 +858,18 @@ impl<'js> Response<'js> {
                         if !remaining.is_empty() {
                             decompressed.extend_from_slice(&remaining);
                         }
+                        if let Some(t) = &self.timing {
+                            t.add_decoded(decompressed.len() as u64);
+                            t.emit_once(ctx);
+                        }
                         return Ok(Some(decompressed));
                     }
-                    return Ok(Some(raw.into()));
+                    let bytes: Vec<u8> = raw.into();
+                    if let Some(t) = &self.timing {
+                        t.add_decoded(bytes.len() as u64);
+                        t.emit_once(ctx);
+                    }
+                    return Ok(Some(bytes));
                 },
                 BodyVariant::Empty => return Ok(None),
                 BodyVariant::Provided(None) => {
@@ -794,7 +906,13 @@ impl<'js> Response<'js> {
         };
 
         if let Some((incoming, content_encoding)) = incoming_data {
-            return take_incoming(ctx, &incoming, content_encoding.as_deref()).await;
+            return take_incoming(
+                ctx,
+                &incoming,
+                content_encoding.as_deref(),
+                self.timing.as_deref(),
+            )
+            .await;
         }
 
         take_provided(ctx, &self.body).await
@@ -817,6 +935,7 @@ async fn take_incoming<'js>(
     ctx: &Ctx<'js>,
     incoming: &Arc<RwLock<Option<Incoming>>>,
     content_encoding: Option<&str>,
+    timing: Option<&FetchTiming>,
 ) -> Result<Option<Vec<u8>>> {
     let body = incoming
         .write()
@@ -833,7 +952,13 @@ async fn take_incoming<'js>(
             .collect()
             .await
             .map_err(|e| Exception::throw_message(ctx, &e.to_string()))?;
-        return Ok(Some(collected.to_bytes().into()));
+        let bytes: Vec<u8> = collected.to_bytes().into();
+        if let Some(t) = timing {
+            t.add_encoded(bytes.len() as u64);
+            t.add_decoded(bytes.len() as u64);
+            t.emit_once(ctx);
+        }
+        return Ok(Some(bytes));
     }
 
     // Decompression path: collect raw bytes then decompress in one shot
@@ -842,6 +967,9 @@ async fn take_incoming<'js>(
         .await
         .map_err(|e| Exception::throw_message(ctx, &e.to_string()))?;
     let raw = collected.to_bytes();
+    if let Some(t) = timing {
+        t.add_encoded(raw.len() as u64);
+    }
     if let Some(mut dec) = content_encoding.and_then(|enc| StreamingDecoder::new(enc).ok()) {
         let mut decompressed = dec
             .decompress_chunk(&raw)
@@ -852,10 +980,19 @@ async fn take_incoming<'js>(
         if !remaining.is_empty() {
             decompressed.extend_from_slice(&remaining);
         }
+        if let Some(t) = timing {
+            t.add_decoded(decompressed.len() as u64);
+            t.emit_once(ctx);
+        }
         return Ok(Some(decompressed));
     }
 
-    Ok(Some(raw.into()))
+    let bytes: Vec<u8> = raw.into();
+    if let Some(t) = timing {
+        t.add_decoded(bytes.len() as u64);
+        t.emit_once(ctx);
+    }
+    Ok(Some(bytes))
 }
 
 /// Consume a user-provided body value.
@@ -897,6 +1034,7 @@ async fn read_body_chunk(
     body: &mut Incoming,
     decoder: &RwLock<Option<StreamingDecoder>>,
     has_decoder: bool,
+    timing: Option<&FetchTiming>,
 ) -> std::result::Result<Option<Vec<u8>>, String> {
     // 1. Get the first frame (the only async part)
     let first_frame = match body.frame().await {
@@ -907,6 +1045,9 @@ async fn read_body_chunk(
                 let r = dec.finish().unwrap_or_default();
                 (!r.is_empty()).then_some(r)
             });
+            if let (Some(t), Some(r)) = (timing, &remaining) {
+                t.add_decoded(r.len() as u64);
+            }
             return Ok(remaining);
         },
     };
@@ -925,6 +1066,9 @@ async fn read_body_chunk(
     macro_rules! process {
         ($data:expr) => {
             if error.is_none() {
+                if let Some(t) = timing {
+                    t.add_encoded($data.len() as u64);
+                }
                 if let Some(Some(dec)) = dec_guard.as_mut().map(|g| g.as_mut()) {
                     match dec.decompress_chunk(&$data) {
                         Ok(decompressed) => result_buffer.extend_from_slice(&decompressed),
@@ -949,6 +1093,9 @@ async fn read_body_chunk(
     Ok(if result_buffer.is_empty() {
         None
     } else {
+        if let Some(t) = timing {
+            t.add_decoded(result_buffer.len() as u64);
+        }
         Some(result_buffer)
     })
 }
@@ -956,6 +1103,7 @@ fn create_body_stream<'js>(
     ctx: &Ctx<'js>,
     incoming: Arc<RwLock<Option<Incoming>>>,
     content_encoding: Option<String>,
+    timing: Option<Arc<FetchTiming>>,
 ) -> Result<Value<'js>> {
     let has_decoder = content_encoding
         .as_ref()
@@ -963,16 +1111,19 @@ fn create_body_stream<'js>(
     let decoder = content_encoding
         .as_ref()
         .and_then(|enc| StreamingDecoder::new(enc).ok());
+    #[allow(clippy::arc_with_non_send_sync)]
     let decoder_state: Arc<RwLock<Option<StreamingDecoder>>> = Arc::new(RwLock::new(decoder));
 
     // Clones for native_pull (pull closure moves the originals)
     let incoming_for_native = incoming.clone();
     let decoder_for_native = decoder_state.clone();
+    let timing_for_native = timing.clone();
 
     let pull = PullAlgorithm::from_fn(
         move |ctx: Ctx<'js>, controller: ReadableStreamControllerClass<'js>| {
             let incoming = incoming.clone();
             let decoder_state = decoder_state.clone();
+            let timing = timing.clone();
 
             let ctrl_class: ReadableStreamDefaultControllerClass = match controller {
                 ReadableStreamControllerClass::ReadableStreamDefaultController(c) => c,
@@ -996,12 +1147,17 @@ fn create_body_stream<'js>(
                 let mut body = match incoming.write().unwrap().take() {
                     Some(b) => b,
                     None => {
+                        if let Some(t) = &timing {
+                            t.emit_once(&ctx2);
+                        }
                         resolveable.resolve_undefined()?;
                         return Ok(());
                     },
                 };
 
-                match read_body_chunk(&mut body, &decoder_state, has_decoder).await {
+                match read_body_chunk(&mut body, &decoder_state, has_decoder, timing.as_deref())
+                    .await
+                {
                     Ok(Some(bytes)) => {
                         // Put the body back for the next pull, then enqueue the chunk
                         *incoming.write().unwrap() = Some(body);
@@ -1014,6 +1170,9 @@ fn create_body_stream<'js>(
                     },
                     Ok(None) => {
                         // EOF — close the stream
+                        if let Some(t) = &timing {
+                            t.emit_once(&ctx2);
+                        }
                         readable_stream_default_controller_close_stream(ctx2, ctrl_class)?;
                     },
                     Err(msg) => {
@@ -1040,9 +1199,13 @@ fn create_body_stream<'js>(
     {
         let incoming2 = incoming_for_native;
         let state2 = decoder_for_native;
+        let timing2 = timing_for_native;
         let np: Rc<lexe_stream_web::NativePullFn> = Rc::new(move |ctx: &rquickjs::Ctx<'js>| {
             let mut guard = incoming2.write().unwrap();
             let Some(body) = guard.as_mut() else {
+                if let Some(t) = &timing2 {
+                    t.emit_once(ctx);
+                }
                 return Ok(lexe_stream_web::NativePullResult::Eof);
             };
 
@@ -1063,6 +1226,9 @@ fn create_body_stream<'js>(
                             total_len += data.len();
                             extras.push(data);
                         });
+                        if let Some(t) = &timing2 {
+                            t.add_encoded(total_len as u64);
+                        }
 
                         drop(guard);
 
@@ -1089,6 +1255,11 @@ fn create_body_stream<'js>(
                             }
                         }
 
+                        let decoded_len =
+                            chunk.as_ref().map(|b| b.len()).unwrap_or(first_data.len());
+                        if let Some(t) = &timing2 {
+                            t.add_decoded(decoded_len as u64);
+                        }
                         let val = match chunk {
                             Some(buf) => TypedArray::<u8>::new(ctx.clone(), buf)?.into_value(),
                             None => {
@@ -1109,6 +1280,9 @@ fn create_body_stream<'js>(
                             if let Some(dec) = state2.write().unwrap().take() {
                                 match dec.finish() {
                                     Ok(remaining) if !remaining.is_empty() => {
+                                        if let Some(t) = &timing2 {
+                                            t.add_decoded(remaining.len() as u64);
+                                        }
                                         let val = TypedArray::<u8>::new(ctx.clone(), remaining)?
                                             .into_value();
                                         return Ok(NativePullResult::Ready(val));
@@ -1120,6 +1294,9 @@ fn create_body_stream<'js>(
                                 }
                             }
                         }
+                        if let Some(t) = &timing2 {
+                            t.emit_once(ctx);
+                        }
                         return Ok(NativePullResult::Eof);
                     },
                     Poll::Pending => {
@@ -1127,19 +1304,35 @@ fn create_body_stream<'js>(
 
                         let incoming = incoming2.clone();
                         let state = state2.clone();
+                        let timing_pending = timing2.clone();
                         let ctx = ctx.clone();
 
                         let fut = async move {
                             let Some(mut body) = incoming.write().unwrap().take() else {
+                                if let Some(t) = &timing_pending {
+                                    t.emit_once(&ctx);
+                                }
                                 return Ok(None);
                             };
 
-                            match read_body_chunk(&mut body, &state, has_decoder).await {
+                            match read_body_chunk(
+                                &mut body,
+                                &state,
+                                has_decoder,
+                                timing_pending.as_deref(),
+                            )
+                            .await
+                            {
                                 Ok(Some(chunk)) => {
                                     *incoming.write().unwrap() = Some(body);
                                     Ok(Some(TypedArray::<u8>::new(ctx, chunk)?.into_value()))
                                 },
-                                Ok(None) => Ok(None),
+                                Ok(None) => {
+                                    if let Some(t) = &timing_pending {
+                                        t.emit_once(&ctx);
+                                    }
+                                    Ok(None)
+                                },
                                 Err(msg) => Err(Exception::throw_message(&ctx, &msg)),
                             }
                         };

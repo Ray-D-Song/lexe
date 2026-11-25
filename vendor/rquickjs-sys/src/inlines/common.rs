@@ -115,3 +115,13 @@ pub fn JS_NewFloat64(d: f64) -> JSValue {
         __JS_NewFloat64(d)
     }
 }
+
+#[cfg(not(feature = "bindgen"))]
+pub type JSGCHook = ::core::option::Option<
+    unsafe extern "C" fn(rt: *mut JSRuntime, phase: c_int, flags: c_int, opaque: *mut c_void),
+>;
+
+#[cfg(not(feature = "bindgen"))]
+extern "C" {
+    pub fn JS_SetGCHook(rt: *mut JSRuntime, gc_hook: JSGCHook, opaque: *mut c_void);
+}

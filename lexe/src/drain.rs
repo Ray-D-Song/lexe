@@ -29,6 +29,7 @@ pub async fn run_until_process_exit(
     vm: &Vm,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let rt_key = vm.js_runtime_key();
+    lexe_utils::perf::mark_loop_start_once(rt_key);
 
     loop {
         if schedule_signals(vm).await? {
@@ -79,8 +80,12 @@ pub async fn run_until_process_exit(
         run_event_loop(vm, rt_key).await?;
         poll_drivers(vm).await;
 
+        lexe_utils::perf::mark_loop_exit(rt_key);
         vm.ctx
-            .with(|ctx| emit_process_exit(&ctx))
+            .with(|ctx| {
+                let _active = lexe_utils::perf::ActiveTurnGuard::enter(rt_key);
+                emit_process_exit(&ctx)
+            })
             .await
             .map_err(|e: rquickjs::Error| e.to_string())?;
 
@@ -239,10 +244,11 @@ fn dispatch_signal(ctx: &Ctx<'_>, name: &str) -> rquickjs::Result<()> {
 
     let code = default_exit_code_for_signal(name);
     EXIT_CODE.store(code, Ordering::Relaxed);
+    let rt = unsafe { qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
+    lexe_utils::perf::mark_loop_exit(rt as usize);
     emit_process_exit(ctx)?;
     // Pending timer callbacks would outlive runtime teardown; the process is
     // terminating by signal default, so drop them like Node's exit does.
-    let rt = unsafe { qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
     let _ = lexe_timers::discard_all_timers_on_process_exit(ctx, rt);
     // The runtime lock is held here, so unwinding is the drain loop's job.
     SIGNAL_EXIT_REQUESTED.store(true, Ordering::SeqCst);
@@ -264,12 +270,15 @@ fn report_signal_error(ctx: &Ctx<'_>, err: rquickjs::Error) {
 }
 
 async fn poll_drivers(vm: &Vm) {
+    let rt_key = vm.js_runtime_key();
     let _ = vm
         .ctx
         .with(|ctx| {
+            let _active = lexe_utils::perf::ActiveTurnGuard::enter(rt_key);
             let rt = unsafe { qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
             lexe_timers::resume_timer_loop_if_idle(&ctx)?;
             driver_poll::poll_native_drivers(rt);
+            lexe_utils::perf::flush_pending_gc(&ctx);
             Ok::<_, rquickjs::Error>(())
         })
         .await;

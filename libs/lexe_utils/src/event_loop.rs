@@ -52,6 +52,7 @@ fn state_for(rt: RtKey) -> Arc<RuntimeLoopState> {
 
 pub fn unregister_runtime(rt: RtKey) {
     RUNTIMES.lock().unwrap().remove(&rt);
+    crate::perf::unregister_runtime(rt);
 }
 
 pub fn rt_key_from_ptr(rt: *mut std::ffi::c_void) -> RtKey {

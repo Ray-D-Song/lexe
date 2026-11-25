@@ -7,7 +7,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use either::Either;
 use lexe_context::CtxExtension;
 use lexe_hooking::{invoke_async_hook, register_finalization_registry, HookType};
-use lexe_utils::{provider::ProviderType, result::ResultExt};
+use lexe_utils::{
+    perf::{self, PerfEntryKind},
+    provider::ProviderType,
+    result::ResultExt,
+    time,
+};
 use rquickjs::{
     prelude::Opt, qjs, Ctx, Error, Exception, FromJs, Function, IntoJs, Null, Object, Result, Value,
 };
@@ -91,6 +96,33 @@ fn create_lookup_error<'js>(
     Ok(exc)
 }
 
+fn emit_dns_perf_entry(
+    ctx: &Ctx<'_>,
+    start_ms: f64,
+    hostname: &str,
+    options: LookupOptions,
+    addrs: &[LookupValue],
+) {
+    let dur = (time::monotonic_elapsed_ms() - start_ms).max(0.0);
+    let order = match options.order {
+        LookupOrder::Verbatim => "verbatim",
+        LookupOrder::Ipv4First => "ipv4first",
+        LookupOrder::Ipv6First => "ipv6first",
+    };
+    let verbatim = matches!(options.order, LookupOrder::Verbatim);
+    perf::emit_node_entry(ctx, PerfEntryKind::Dns, "lookup", start_ms, dur, |ctx| {
+        let detail = Object::new(ctx.clone())?;
+        detail.set("hostname", hostname)?;
+        detail.set("family", options.family)?;
+        detail.set("hints", options.hints)?;
+        detail.set("verbatim", verbatim)?;
+        detail.set("order", order)?;
+        let list: Vec<String> = addrs.iter().map(|a| a.address.clone()).collect();
+        detail.set("addresses", list)?;
+        Ok(detail.into_value())
+    });
+}
+
 pub fn lookup<'js>(
     ctx: Ctx<'js>,
     hostname: String,
@@ -111,10 +143,15 @@ pub fn lookup<'js>(
     let uid = unsafe { qjs::JS_VALUE_GET_PTR(cb.as_raw()) } as usize;
     register_finalization_registry(&ctx, cb.clone().into_value(), uid, None)?;
     invoke_async_hook(&ctx, HookType::Init, ProviderType::GetAddrInfoReqWrap, uid)?;
+    let perf_start_ms = perf::has_observers(perf::rt_key_for_ctx(&ctx), PerfEntryKind::Dns)
+        .then(time::monotonic_elapsed_ms);
 
     ctx.clone().spawn_exit(async move {
         match lookup_records(&hostname, options).await {
             Ok(addrs) => {
+                if let Some(start_ms) = perf_start_ms {
+                    emit_dns_perf_entry(&ctx, start_ms, &hostname, options, &addrs);
+                }
                 invoke_async_hook(&ctx, HookType::Before, ProviderType::None, uid)?;
                 if options.all {
                     () = cb.call((Null.into_js(&ctx), addrs))?;
@@ -152,12 +189,22 @@ pub async fn lookup_promise<'js>(
         Some(value) => LookupOptions::from_js(&ctx, value)?,
         None => LookupOptions::default(),
     };
+    let perf_start_ms = perf::has_observers(perf::rt_key_for_ctx(&ctx), PerfEntryKind::Dns)
+        .then(time::monotonic_elapsed_ms);
 
     match lookup_records(&hostname, options).await {
-        Ok(addrs) if options.all => addrs.into_js(&ctx),
-        Ok(addrs) => match addrs.into_iter().next() {
-            Some(addr) => addr.into_js(&ctx),
-            None => Err(create_lookup_error(&ctx, "No address found", &hostname)?.throw()),
+        Ok(addrs) => {
+            if let Some(start_ms) = perf_start_ms {
+                emit_dns_perf_entry(&ctx, start_ms, &hostname, options, &addrs);
+            }
+            if options.all {
+                addrs.into_js(&ctx)
+            } else {
+                match addrs.into_iter().next() {
+                    Some(addr) => addr.into_js(&ctx),
+                    None => Err(create_lookup_error(&ctx, "No address found", &hostname)?.throw()),
+                }
+            }
         },
         Err(err) => Err(create_lookup_error(&ctx, &err.to_string(), &hostname)?.throw()),
     }

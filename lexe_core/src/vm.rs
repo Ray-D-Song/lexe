@@ -73,6 +73,7 @@ impl Vm {
         vm_options: VmOptions,
     ) -> StdResult<Self, Box<dyn std::error::Error + Send + Sync>> {
         time::init();
+        let node_start_ns = time::monotonic_elapsed_nanos();
         http::init()?;
         security::init()?;
 
@@ -111,21 +112,33 @@ impl Vm {
         );
         let loader = (module_loader, EmbeddedLoader, PackageLoader);
 
+        let v8_start_ns = time::monotonic_elapsed_nanos();
         let runtime = AsyncRuntime::new()?;
         runtime.set_max_stack_size(vm_options.max_stack_size).await;
         runtime.set_gc_threshold(vm_options.gc_threshold_mb).await;
         runtime.set_loader(resolver, loader).await;
 
+        let environment_ns = time::monotonic_elapsed_nanos();
         let ctx = AsyncContext::full(&runtime).await?;
         ctx.with(|ctx| {
-            unsafe {
+            let rt = unsafe {
                 let rt = rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr());
                 lexe_utils::shared_array_buffer::install_on_runtime(rt);
-            }
+                lexe_utils::perf::install_gc_hook(rt);
+                rt
+            };
             (|| {
                 BasePrimordials::init(&ctx)?;
                 global_attachment.attach(&ctx)?;
                 self::init(&ctx)?;
+                let bootstrap_complete_ns = time::monotonic_elapsed_nanos();
+                lexe_utils::perf::set_boot_milestones(
+                    rt as usize,
+                    node_start_ns,
+                    v8_start_ns,
+                    environment_ns,
+                    bootstrap_complete_ns,
+                );
                 Ok(())
             })()
             .catch(&ctx)
@@ -180,8 +193,10 @@ impl Vm {
     where
         F: for<'js> FnOnce(&Ctx<'js>) -> Result<()> + std::marker::Send,
     {
+        let rt_key = self.rt_key;
         self.ctx
             .with(|ctx| {
+                let _active = lexe_utils::perf::ActiveTurnGuard::enter(rt_key);
                 if let Err(err) = f(&ctx).catch(&ctx) {
                     handle_uncaught_error(&ctx, err);
                 }
@@ -236,15 +251,20 @@ impl Vm {
 
     pub async fn run_bytecode(&self, bytecode: &[u8]) {
         let bytecode = bytecode.to_vec();
+        let rt_key = self.rt_key;
         self.ctx
             .async_with(async move |ctx| {
                 let result = async {
-                    let module = EmbeddedLoader::load_bytecode_module(ctx.clone(), &bytecode)
-                        .map_err(|err| {
+                    let promise = {
+                        let _active = lexe_utils::perf::ActiveTurnGuard::enter(rt_key);
+                        let module = EmbeddedLoader::load_bytecode_module(ctx.clone(), &bytecode)
+                            .map_err(|err| {
                             eprintln!("Failed to evaluate module: {err:?}");
                             err
                         })?;
-                    let (_module, promise) = module.eval()?;
+                        let (_module, promise) = module.eval()?;
+                        promise
+                    };
                     promise.into_future::<()>().await?;
                     Ok::<_, Error>(())
                 }
@@ -259,7 +279,12 @@ impl Vm {
     }
 
     pub async fn idle(&self) -> StdResult<(), Box<dyn std::error::Error + Sync + Send>> {
-        self.runtime.idle().await;
+        IdleInstrumentedFuture {
+            rt_key: self.rt_key,
+            inner: self.runtime.idle(),
+            pending_since: None,
+        }
+        .await;
         Ok(())
     }
 
@@ -271,9 +296,15 @@ impl Vm {
     /// context must be dropped before the runtime. Field order alone would drop
     /// the runtime first.
     pub async fn shutdown(self) {
+        let rt_key = self.rt_key;
         let _ = self
             .ctx
             .with(|ctx| {
+                unsafe {
+                    let rt = rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr());
+                    lexe_utils::perf::uninstall_gc_hook(rt);
+                }
+                lexe_utils::event_loop::unregister_runtime(rt_key);
                 let _ = shutdown_module_state(&ctx);
                 let _ = shutdown_context_userdata(&ctx);
                 Ok::<(), Error>(())
@@ -283,6 +314,48 @@ impl Vm {
         let Vm { ctx, runtime, .. } = self;
         drop(ctx);
         drop(runtime);
+    }
+}
+
+struct IdleInstrumentedFuture<F> {
+    rt_key: usize,
+    inner: F,
+    pending_since: Option<u64>,
+}
+
+impl<F> Drop for IdleInstrumentedFuture<F> {
+    fn drop(&mut self) {
+        if let Some(since) = self.pending_since.take() {
+            let elapsed = time::monotonic_elapsed_nanos().saturating_sub(since);
+            lexe_utils::perf::add_idle_ns(self.rt_key, elapsed);
+        }
+    }
+}
+
+impl<F: std::future::Future<Output = ()>> std::future::Future for IdleInstrumentedFuture<F> {
+    type Output = ();
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        // SAFETY: `rt_key` and `pending_since` are Unpin; `inner` remains pinned in place.
+        let this = unsafe { self.get_unchecked_mut() };
+        lexe_utils::perf::mark_loop_start_once(this.rt_key);
+        if let Some(since) = this.pending_since.take() {
+            let elapsed = time::monotonic_elapsed_nanos().saturating_sub(since);
+            lexe_utils::perf::add_idle_ns(this.rt_key, elapsed);
+        }
+        lexe_utils::perf::inc_loop_count(this.rt_key);
+        let poll_res = {
+            let _active = lexe_utils::perf::ActiveTurnGuard::enter(this.rt_key);
+            let inner = unsafe { std::pin::Pin::new_unchecked(&mut this.inner) };
+            inner.poll(cx)
+        };
+        if poll_res.is_pending() {
+            this.pending_since = Some(time::monotonic_elapsed_nanos());
+        }
+        poll_res
     }
 }
 
@@ -396,7 +469,13 @@ fn init(ctx: &Ctx<'_>) -> Result<()> {
 
     let globals = ctx.globals();
 
-    globals.set("__gc", Func::from(|ctx: Ctx| ctx.run_gc()))?;
+    globals.set(
+        "__gc",
+        Func::from(|ctx: Ctx| {
+            ctx.run_gc();
+            lexe_utils::perf::flush_pending_gc(&ctx);
+        }),
+    )?;
     globals.set("global", ctx.globals())?;
     globals.set("self", ctx.globals())?;
     globals.set(

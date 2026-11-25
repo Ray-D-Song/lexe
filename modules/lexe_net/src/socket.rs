@@ -16,7 +16,13 @@ use lexe_stream::{
     writable::{WritableStream, WritableStreamInner},
     SteamEvents,
 };
-use lexe_utils::{event_loop::EventLoopRef, object::ObjectExt, result::ResultExt};
+use lexe_utils::{
+    event_loop::EventLoopRef,
+    object::ObjectExt,
+    perf::{self, PerfEntryKind},
+    result::ResultExt,
+    time,
+};
 use rquickjs::{
     class::{Trace, Tracer},
     function::Constructor,
@@ -689,6 +695,9 @@ impl<'js> Socket<'js> {
             Socket::add_event_listener_str(this.clone(), &ctx, "connect", listener, false, true)?;
         }
 
+        let perf_start_ms = perf::has_observers(perf::rt_key_for_ctx(&ctx), PerfEntryKind::Net)
+            .then(time::monotonic_elapsed_ms);
+
         ctx.clone().spawn_exit(async move {
             let ctx2 = ctx.clone();
             let ctx3 = ctx.clone();
@@ -697,6 +706,9 @@ impl<'js> Socket<'js> {
                 Socket::emit_close(this3.clone(), &ctx3, false)?;
                 return Ok(());
             }
+            let detail_path = perf_start_ms.as_ref().and_then(|_| path.clone());
+            let detail_host = perf_start_ms.as_ref().map(|_| host.clone());
+            let detail_port = port;
             let connect = async move {
                 let (readable_done, writable_done) = if let Some(path) = path {
                     #[cfg(unix)]
@@ -767,6 +779,31 @@ impl<'js> Socket<'js> {
                     .await;
                     Ok(())
                 });
+
+                if let Some(start_ms) = perf_start_ms {
+                    let dur = (time::monotonic_elapsed_ms() - start_ms).max(0.0);
+                    perf::emit_node_entry(
+                        &ctx3,
+                        PerfEntryKind::Net,
+                        "connect",
+                        start_ms,
+                        dur,
+                        |ctx| {
+                            let detail = Object::new(ctx.clone())?;
+                            if let Some(p) = &detail_path {
+                                detail.set("path", p.as_str())?;
+                            } else {
+                                if let Some(h) = &detail_host {
+                                    detail.set("host", h.as_str())?;
+                                }
+                                if let Some(port_num) = detail_port {
+                                    detail.set("port", port_num)?;
+                                }
+                            }
+                            Ok(detail.into_value())
+                        },
+                    );
+                }
 
                 Socket::emit_str(this2.clone(), &ctx3, "connect", vec![], false)?;
 

@@ -29,7 +29,7 @@
 | node:net | ✔︎ | ✔︎ | — |
 | node:os | ✔︎ | ✔︎ | — |
 | node:path | ✔︎ | ✔︎ | — |
-| node:perf_hooks | ✔︎ | ✔︎⚠️ | Static `nodeTiming` stub; no automatic GC/resource entries; timer-based ms `monitorEventLoopDelay`; fallback `eventLoopUtilization` ([details](#nodeperf_hooks)) |
+| node:perf_hooks | ✔︎ | ✔︎ | — |
 | node:process | ✔︎ | ✔︎ | Runtime identity ([notes](#nodeprocess)) |
 | node:querystring | ✔︎ | ✔︎ | — |
 | node:readline | ✔︎ | ✔︎ | — |
@@ -152,14 +152,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Not implemented: `module.register`, `stripTypeScriptTypes`, and `Module._load`.
 - Extension hooks apply to the CommonJS loader only; they do not change static ESM import semantics.
 - Native `.node` addon loading requires building with `--features napi` or `--features v8-compat` (see [Native addons](#native-addons)).
-
-#### `node:perf_hooks`
-
-- `performance.nodeTiming` is a static stub with placeholder values (`nodeStart: 0`, `v8Start: 0`, `bootstrapComplete: 0`, `environment: 0`, `loopStart: 0`, `loopExit: -1`, `idleTime: 0`).
-- `PerformanceObserver.supportedEntryTypes` includes `"gc"` and `"resource"`, but Lexe does not automatically emit GC or HTTP/fetch resource timing entries (resource entries are only recorded by manual `performance.markResourceTiming()` calls); `performance.setResourceTimingBufferSize()` is a no-op.
-- `monitorEventLoopDelay()` uses a JS `setInterval` measured in milliseconds instead of Node's native nanosecond libuv histogram.
-- `createHistogram()` ignores `lowest`/`highest`/`figures` bucketing parameters and stores exact samples in an array.
-- `performance.eventLoopUtilization()` falls back to `{ active: elapsed, idle: 0 }` because native active/idle event-loop counters are not wired in.
 
 #### `node:stream/web`
 

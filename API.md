@@ -662,9 +662,13 @@ CommonJS loader facade (also on the default `Module` export):
 
 ## perf_hooks
 
-_performance is available globally_
+_performance, Performance, PerformanceEntry, PerformanceMark, PerformanceMeasure, PerformanceObserver, PerformanceObserverEntryList, and PerformanceResourceTiming are available globally_
 
-[performance.now](https://nodejs.org/api/perf_hooks.html#performancenow)
+- `performance.now()`, `performance.timeOrigin`, `performance.toJSON()`, `performance.mark()`, `performance.measure()`, `performance.getEntries()`, `performance.getEntriesByType()`, `performance.getEntriesByName()`, `performance.clearMarks()`, `performance.clearMeasures()`, `performance.clearResourceTimings()`, `performance.setResourceTimingBufferSize()`, `performance.markResourceTiming()`, `performance.onresourcetimingbufferfull`, `performance.nodeTiming`, `performance.eventLoopUtilization()`, and `performance.timerify()`
+- `createHistogram()` (log-linear `HdrHistogram` with `lowest`/`highest`/`figures`, `BigInt` accessors, `recordDelta()`, `add()`, `percentiles`, `toJSON()`)
+- `monitorEventLoopDelay()` (`ELDHistogram` measuring nanosecond event-loop delay without keeping the loop alive)
+- `PerformanceObserver` supporting `"dns"`, `"function"`, `"gc"`, `"http"`, `"http2"`, `"mark"`, `"measure"`, `"net"`, and `"resource"` entries
+- `constants` (`NODE_PERFORMANCE_GC_*`)
 
 ## process
 

@@ -28,6 +28,8 @@ use lexe_tls::{
 use lexe_utils::{
     event_loop::{self, EventLoopRef},
     object::ObjectExt,
+    perf::{self, PerfEntryKind},
+    time,
 };
 use rquickjs::{
     class::Trace,
@@ -311,8 +313,13 @@ where
         let (request, mut respond) =
             result.map_err(|e| Exception::throw_message(&ctx, &e.to_string()))?;
         let (parts, mut recv) = request.into_parts();
+        let perf_start_ms = perf::has_observers(perf::rt_key_for_ctx(&ctx), PerfEntryKind::Http2)
+            .then(time::monotonic_elapsed_ms);
+        let perf_method = parts.method.to_string();
+        let perf_url = parts.uri.to_string();
         let response = dispatch_h2(ctx.clone(), server.clone(), parts).await;
         let (resp_parts, resp_body) = response.into_parts();
+        let resp_status = resp_parts.status.as_u16();
         let mut send = respond
             .send_response(
                 http::Response::builder()
@@ -326,8 +333,32 @@ where
             .await
             .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))?
             .to_bytes();
+        let bytes_sent = body_bytes.len() as u64;
         send.send_data(body_bytes, true)
             .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))?;
+        if let Some(start_ms) = perf_start_ms {
+            let dur = (time::monotonic_elapsed_ms() - start_ms).max(0.0);
+            perf::emit_node_entry(
+                &ctx,
+                PerfEntryKind::Http2,
+                "Http2Stream",
+                start_ms,
+                dur,
+                |ctx| {
+                    let detail = Object::new(ctx.clone())?;
+                    detail.set("bytesRead", 0)?;
+                    detail.set("bytesWritten", bytes_sent as f64)?;
+                    let req_obj = Object::new(ctx.clone())?;
+                    req_obj.set("method", perf_method.as_str())?;
+                    req_obj.set("url", perf_url.as_str())?;
+                    let res_obj = Object::new(ctx.clone())?;
+                    res_obj.set("statusCode", resp_status)?;
+                    detail.set("req", req_obj)?;
+                    detail.set("res", res_obj)?;
+                    Ok(detail.into_value())
+                },
+            );
+        }
         tokio::spawn(async move { while recv.data().await.is_some() {} });
     }
     Ok(())

@@ -925,7 +925,7 @@ async fn dispatch_lenient_request<'js, R: AsyncRead + Unpin>(
     let (tx, mut rx) = oneshot::channel();
     let req_value = req.clone().into_value();
     let track_finish = diagnostics::has_subscribers(ctx, "http.server.response.finish");
-    let res_inner = ServerResponse::new_internal(
+    let mut res_inner = ServerResponse::new_internal(
         ResponseSink::Raw(tx),
         Some(write_tx.clone()),
         parsed.method.eq_ignore_ascii_case("HEAD"),
@@ -933,6 +933,13 @@ async fn dispatch_lenient_request<'js, R: AsyncRead + Unpin>(
         connection_socket.clone(),
         track_finish.then(|| server.clone().into_value()),
         track_finish,
+    );
+    res_inner.set_perf_start_ms(
+        lexe_utils::perf::has_observers(
+            lexe_utils::perf::rt_key_for_ctx(ctx),
+            lexe_utils::perf::PerfEntryKind::Http,
+        )
+        .then(lexe_utils::time::monotonic_elapsed_ms),
     );
     let Ok(res) = Class::instance(ctx.clone(), res_inner) else {
         return DispatchControl::Close;

@@ -34,6 +34,8 @@ use lexe_utils::{
     event_loop::{self, EventLoopRef},
     module::{export_default, ModuleInfo},
     object::ObjectExt,
+    perf::{self, PerfEntryKind},
+    time,
 };
 use rquickjs::{
     class::{Trace, Tracer},
@@ -844,6 +846,7 @@ pub struct ServerResponse<'js> {
     socket_value: Value<'js>,
     diag_server: Option<Value<'js>>,
     track_finish_diag: bool,
+    perf_start_ms: Option<f64>,
 }
 
 unsafe impl<'js> JsLifetime<'js> for ServerResponse<'js> {
@@ -899,7 +902,12 @@ impl<'js> ServerResponse<'js> {
             socket_value,
             diag_server,
             track_finish_diag,
+            perf_start_ms: None,
         }
+    }
+
+    pub(crate) fn set_perf_start_ms(&mut self, start_ms: Option<f64>) {
+        self.perf_start_ms = start_ms;
     }
 
     pub(crate) fn is_bodyless(&self) -> bool {
@@ -1016,6 +1024,7 @@ impl<'js> ServerResponse<'js> {
             socket_value,
             diag_server: None,
             track_finish_diag: false,
+            perf_start_ms: None,
         })
     }
 
@@ -1206,7 +1215,17 @@ impl<'js> ServerResponse<'js> {
         args: Rest<Value<'js>>,
     ) -> Result<Class<'js, Self>> {
         let (raw_bytes, cb) = parse_write_or_end_args(&ctx, &args.0, true)?;
-        let (diag_request, diag_socket, diag_server, track_finish) = {
+        let (
+            diag_request,
+            diag_socket,
+            diag_server,
+            track_finish,
+            perf_start_ms,
+            perf_req_val,
+            perf_status_code,
+            perf_status_msg,
+            perf_res_headers,
+        ) = {
             let mut res = this.borrow_mut();
             if res.writable_finished || res.destroyed {
                 drop(res);
@@ -1247,11 +1266,22 @@ impl<'js> ServerResponse<'js> {
                 }
             }
             res.finish();
+            let perf_start_ms = res.perf_start_ms.take();
+            let perf_res_headers = if perf_start_ms.is_some() {
+                res.headers.get_headers_object(&ctx).ok()
+            } else {
+                None
+            };
             (
                 res.track_finish_diag.then(|| res.req_value.clone()),
                 res.track_finish_diag.then(|| res.socket_value.clone()),
                 res.diag_server.take(),
                 res.track_finish_diag,
+                perf_start_ms,
+                perf_start_ms.map(|_| res.req_value.clone()),
+                res.status_code,
+                res.status_message.clone(),
+                perf_res_headers,
             )
         };
         // Node emits `finish` after the response has been fully handed off.
@@ -1275,6 +1305,49 @@ impl<'js> ServerResponse<'js> {
                 }
                 Ok(msg)
             });
+        }
+        if let Some(start_ms) = perf_start_ms {
+            let dur = (time::monotonic_elapsed_ms() - start_ms).max(0.0);
+            perf::emit_node_entry(
+                &ctx,
+                PerfEntryKind::Http,
+                "HttpRequest",
+                start_ms,
+                dur,
+                |ctx| {
+                    let detail = Object::new(ctx.clone())?;
+                    let req_obj = Object::new(ctx.clone())?;
+                    if let Some(req_o) = perf_req_val.as_ref().and_then(|v| v.as_object()) {
+                        if let Ok(m) = req_o.get::<_, Value>("method") {
+                            req_obj.set("method", m)?;
+                        }
+                        if let Ok(u) = req_o.get::<_, Value>("url") {
+                            req_obj.set("url", u)?;
+                        }
+                        if let Ok(h) = req_o.get::<_, Value>("headers") {
+                            req_obj.set("headers", h)?;
+                        }
+                    }
+                    let res_obj = Object::new(ctx.clone())?;
+                    res_obj.set("statusCode", perf_status_code)?;
+                    let status_msg = perf_status_msg.unwrap_or_else(|| {
+                        StatusCode::from_u16(perf_status_code)
+                            .ok()
+                            .and_then(|s| s.canonical_reason())
+                            .unwrap_or("")
+                            .to_string()
+                    });
+                    res_obj.set("statusMessage", status_msg)?;
+                    if let Some(h) = perf_res_headers {
+                        res_obj.set("headers", h)?;
+                    } else {
+                        res_obj.set("headers", Object::new(ctx.clone())?)?;
+                    }
+                    detail.set("req", req_obj)?;
+                    detail.set("res", res_obj)?;
+                    Ok(detail.into_value())
+                },
+            );
         }
         let _ = ServerResponse::emit_str(this.0.clone(), &ctx, "close", vec![], false);
         Ok(this.0)
@@ -2636,6 +2709,10 @@ async fn dispatch<'js>(
         connection_socket.clone(),
         track_finish.then(|| server.clone().into_value()),
         track_finish,
+    );
+    response_inner.set_perf_start_ms(
+        perf::has_observers(perf::rt_key_for_ctx(&ctx), PerfEntryKind::Http)
+            .then(time::monotonic_elapsed_ms),
     );
     if max_req > 0 && req_num < max_req {
         let secs = keep_alive_timeout / 1000;

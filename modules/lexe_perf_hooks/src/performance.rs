@@ -56,11 +56,7 @@ impl<'js> Performance<'js> {
     }
 
     pub fn now() -> f64 {
-        let now = time::now_nanos();
-        let started = time::origin_nanos();
-        let elapsed = now.saturating_sub(started);
-
-        (elapsed as f64) / 1e6
+        time::monotonic_elapsed_ms()
     }
 
     #[qjs(rename = PredefinedAtom::ToJSON)]

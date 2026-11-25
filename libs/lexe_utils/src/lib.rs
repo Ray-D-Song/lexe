@@ -23,6 +23,7 @@ pub mod mc_oneshot;
 pub mod module;
 pub mod object;
 pub mod option;
+pub mod perf;
 pub mod permissions;
 pub mod primordials;
 pub mod provider;

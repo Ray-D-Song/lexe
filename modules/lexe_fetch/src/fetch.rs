@@ -12,8 +12,9 @@ use lexe_stream_web::ReadableStream;
 use lexe_utils::{
     bytes::{bytes_to_typed_array, ObjectBytes},
     mc_oneshot,
+    perf::{self, ResourceTimingRecord},
     result::ResultExt,
-    VERSION,
+    time, VERSION,
 };
 use percent_encoding::percent_decode_str;
 use rquickjs::{
@@ -27,7 +28,10 @@ use std::{
     collections::HashSet,
     convert::Infallible,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, AtomicU64},
+        Arc,
+    },
     task::{Context, Poll},
     time::Instant,
 };
@@ -35,7 +39,7 @@ use tokio::{select, sync::Semaphore};
 
 use super::{
     headers::{Headers, HeadersGuard},
-    response::Response,
+    response::{FetchTiming, Response},
     security::ensure_url_access,
     Blob,
 };
@@ -51,6 +55,46 @@ const BLOCKED_PORTS: [u16; 83] = [
 
 const MAX_REDIRECT_COUNT: u32 = 20;
 
+fn build_fetch_timing(
+    url: String,
+    res: &hyper::Response<hyper::body::Incoming>,
+    fetch_start_ms: f64,
+    redirect_start_ms: f64,
+    redirect_end_ms: f64,
+    request_start_ms: f64,
+    response_start_ms: f64,
+) -> Arc<FetchTiming> {
+    let header_bytes: u64 = res
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.as_str().len() + v.as_bytes().len() + 4) as u64)
+        .sum::<u64>()
+        .saturating_add(17);
+    let next_hop_protocol = match res.version() {
+        hyper::Version::HTTP_10 => "http/1.0",
+        hyper::Version::HTTP_11 => "http/1.1",
+        hyper::Version::HTTP_2 => "h2",
+        hyper::Version::HTTP_3 => "h3",
+        _ => "",
+    }
+    .to_string();
+
+    Arc::new(FetchTiming {
+        url,
+        fetch_start_ms,
+        redirect_start_ms,
+        redirect_end_ms,
+        request_start_ms,
+        response_start_ms,
+        next_hop_protocol,
+        status_code: res.status().as_u16(),
+        header_bytes,
+        encoded_bytes: AtomicU64::new(0),
+        decoded_bytes: AtomicU64::new(0),
+        emitted: AtomicBool::new(false),
+    })
+}
+
 pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
     let connections = Arc::new(Semaphore::new(500));
 
@@ -60,6 +104,7 @@ pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
             let global_client = global_client.clone();
             let connections = connections.clone();
             let start = Instant::now();
+            let fetch_start_ms = time::monotonic_elapsed_ms();
             let options = get_fetch_options(&ctx, resource, args);
 
             async move {
@@ -75,7 +120,9 @@ pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
                 if let Some((scheme, fragment)) = options.url.split_once(':') {
                     match scheme {
                         "http" | "https" => {},
-                        "data" => return parse_data_url(&ctx, fragment, &options.method),
+                        "data" => {
+                            return parse_data_url(&ctx, fragment, &options.method, fetch_start_ms)
+                        },
                         "about" | "blob" | "file" => {
                             return Err(Exception::throw_type(&ctx, "Unsupported scheme"));
                         },
@@ -105,6 +152,7 @@ pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
                         uri,
                         options.headers.as_ref(),
                         start,
+                        fetch_start_ms,
                         abort_receiver,
                     )
                     .await;
@@ -125,7 +173,18 @@ pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
                 )
                 .await?;
 
-                let (res, redirected, guard) = res;
+                let (res, redirected, guard, timing) = res;
+                let _ = &timing;
+                let response_start_ms = timing.response_start_ms;
+                let fetch_timing = build_fetch_timing(
+                    uri.to_string(),
+                    &res,
+                    fetch_start_ms,
+                    timing.redirect_start_ms,
+                    timing.redirect_end_ms,
+                    timing.request_start_ms,
+                    response_start_ms,
+                );
 
                 Response::from_incoming(
                     ctx,
@@ -136,11 +195,19 @@ pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
                     redirected,
                     abort_receiver,
                     guard,
+                    Some(fetch_timing),
                 )
             }
         })),
     )?;
     Ok(())
+}
+
+struct SendTiming {
+    redirect_start_ms: f64,
+    redirect_end_ms: f64,
+    request_start_ms: f64,
+    response_start_ms: f64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -153,6 +220,7 @@ async fn send_stream<'js>(
     uri: Uri,
     headers: Option<&Headers>,
     start: Instant,
+    fetch_start_ms: f64,
     abort_receiver: Option<mc_oneshot::Receiver<Value<'js>>>,
 ) -> Result<Response<'js>> {
     let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(128);
@@ -232,6 +300,7 @@ async fn send_stream<'js>(
     let request = req.body(box_body).or_throw(ctx)?;
 
     // Race request against stream error
+    let request_start_ms = time::monotonic_elapsed_ms();
     let request_fut = client.request(request);
     tokio::pin!(request_fut);
     let mut err_rx = std::pin::pin!(err_rx);
@@ -249,6 +318,16 @@ async fn send_stream<'js>(
             res = &mut request_fut => break res.or_throw(ctx)?,
         }
     };
+    let response_start_ms = time::monotonic_elapsed_ms();
+    let fetch_timing = build_fetch_timing(
+        uri.to_string(),
+        &res,
+        fetch_start_ms,
+        0.0,
+        0.0,
+        request_start_ms,
+        response_start_ms,
+    );
 
     Response::from_incoming(
         ctx.clone(),
@@ -259,6 +338,7 @@ async fn send_stream<'js>(
         false,
         abort_receiver,
         HeadersGuard::Response,
+        Some(fetch_timing),
     )
 }
 
@@ -273,11 +353,18 @@ async fn send<'js>(
     body: Option<&RequestBody<'js>>,
     abort_receiver: Option<&mc_oneshot::Receiver<Value<'js>>>,
     redirect: &str,
-) -> Result<(hyper::Response<hyper::body::Incoming>, bool, HeadersGuard)> {
+) -> Result<(
+    hyper::Response<hyper::body::Incoming>,
+    bool,
+    HeadersGuard,
+    SendTiming,
+)> {
     let mut redirect_count = 0;
     let mut response_status = 0;
+    let mut redirect_start_ms = 0.0;
+    let mut redirect_end_ms = 0.0;
 
-    let (res, guard) = loop {
+    let (res, guard, request_start_ms, response_start_ms) = loop {
         let (req, guard) = build_request(
             ctx,
             &method,
@@ -288,6 +375,7 @@ async fn send<'js>(
             initial_uri,
         )?;
 
+        let req_start = time::monotonic_elapsed_ms();
         let res = if let Some(abort_receiver) = abort_receiver {
             select! {
                 res = client.request(req) => res.or_throw(ctx)?,
@@ -296,6 +384,7 @@ async fn send<'js>(
         } else {
             client.request(req).await.or_throw(ctx)?
         };
+        let resp_start = time::monotonic_elapsed_ms();
 
         let status = res.status();
         if status.is_redirection() {
@@ -306,18 +395,22 @@ async fn send<'js>(
                         ensure_url_access(ctx, uri)?;
                     }
                 },
-                None => break (res, guard),
+                None => break (res, guard, req_start, resp_start),
             };
         } else {
-            break (res, guard);
+            break (res, guard, req_start, resp_start);
         };
 
         if redirect == "manual" {
-            break (res, guard);
+            break (res, guard, req_start, resp_start);
         } else if redirect == "error" {
             return Err(Exception::throw_message(ctx, "Unexpected redirect"));
         }
 
+        if redirect_count == 0 {
+            redirect_start_ms = req_start;
+        }
+        redirect_end_ms = resp_start;
         redirect_count += 1;
         if redirect_count >= MAX_REDIRECT_COUNT {
             return Err(Exception::throw_message(ctx, "Max retries exceeded"));
@@ -326,7 +419,17 @@ async fn send<'js>(
         response_status = res.status().as_u16();
     };
 
-    Ok((res, redirect_count > 0, guard))
+    Ok((
+        res,
+        redirect_count > 0,
+        guard,
+        SendTiming {
+            redirect_start_ms,
+            redirect_end_ms,
+            request_start_ms,
+            response_start_ms,
+        },
+    ))
 }
 
 fn apply_default_headers(
@@ -347,7 +450,12 @@ fn apply_default_headers(
     }
 }
 
-fn parse_data_url<'js>(ctx: &Ctx<'js>, data_url: &str, method: &Method) -> Result<Response<'js>> {
+fn parse_data_url<'js>(
+    ctx: &Ctx<'js>,
+    data_url: &str,
+    method: &Method,
+    fetch_start_ms: f64,
+) -> Result<Response<'js>> {
     let (mime_type, data) = data_url
         .split_once(',')
         .ok_or_else(|| Exception::throw_type(ctx, "Invalid data URL format"))?;
@@ -383,6 +491,7 @@ fn parse_data_url<'js>(ctx: &Ctx<'js>, data_url: &str, method: &Method) -> Resul
         data.as_bytes().into()
     };
 
+    let body_len = body.len() as u64;
     let blob = Blob::from_bytes(body, Some(content_type.clone())).into_js(ctx)?;
 
     let headers = Object::new(ctx.clone())?;
@@ -392,7 +501,36 @@ fn parse_data_url<'js>(ctx: &Ctx<'js>, data_url: &str, method: &Method) -> Resul
     options.set("url", data_url)?;
     options.set("headers", headers)?;
 
-    Response::new(ctx.clone(), Opt(Some(blob)), Opt(Some(options)))
+    let response = Response::new(ctx.clone(), Opt(Some(blob)), Opt(Some(options)))?;
+    let end_ms = time::monotonic_elapsed_ms();
+    perf::emit_resource_timing(
+        ctx,
+        ResourceTimingRecord {
+            name: ["data:", data_url].concat(),
+            initiator_type: "fetch".to_string(),
+            next_hop_protocol: String::new(),
+            start_time: fetch_start_ms,
+            duration: (end_ms - fetch_start_ms).max(0.0),
+            worker_start: 0.0,
+            redirect_start: 0.0,
+            redirect_end: 0.0,
+            fetch_start: fetch_start_ms,
+            domain_lookup_start: fetch_start_ms,
+            domain_lookup_end: fetch_start_ms,
+            connect_start: fetch_start_ms,
+            connect_end: fetch_start_ms,
+            secure_connection_start: fetch_start_ms,
+            request_start: fetch_start_ms,
+            response_start: end_ms,
+            response_end: end_ms,
+            transfer_size: body_len,
+            encoded_body_size: body_len,
+            decoded_body_size: body_len,
+            response_status: 200,
+            delivery_type: String::new(),
+        },
+    );
+    Ok(response)
 }
 
 fn build_request<'js>(

@@ -546,8 +546,9 @@ fn get_timer_state<'a>(
 }
 
 fn should_keep_timer_loop(state: &RuntimeTimerState, rt_key: RtKey) -> bool {
-    let pending = state.timers.iter().any(|t| t.callback.is_some());
-    if !pending {
+    let has_timers = state.timers.iter().any(|t| t.callback.is_some());
+    let has_eld = lexe_utils::perf::has_active_eld_samplers(rt_key);
+    if !has_timers && !has_eld {
         return false;
     }
     if event_loop::has_http_inflight(rt_key) {
@@ -1082,6 +1083,8 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     rt_timers.push(RuntimeTimerState::new(rt_ptr));
     drop(rt_timers);
 
+    lexe_utils::perf::set_timer_loop_resume_hook(resume_timer_loop_if_idle);
+
     let native_set_timeout = Function::new(ctx.clone(), move |ctx, cb, delay: Opt<f64>| {
         let delay = delay.unwrap_or(0.).max(0.) as u64;
         set_timeout_interval(&ctx, cb, delay, ProviderType::Timeout, true)
@@ -1274,9 +1277,26 @@ pub fn poll_timers(
         true
     });
 
+    let rt_key = event_loop::rt_key_from_ptr(rt as *mut std::ffi::c_void);
+    let std_now = std::time::Instant::now();
+    let eld_next_delay = lexe_utils::perf::poll_eld_samplers(rt_key, std_now)
+        .map(|dl| dl.saturating_duration_since(std_now));
+    if let Some(rem) = eld_next_delay {
+        had_items = true;
+        let eld_dl = now + rem;
+        if eld_dl < lowest {
+            lowest = eld_dl;
+        }
+    }
+
     if had_items {
-        if lowest - now < MIN_SLEEP {
-            lowest = now + MIN_SLEEP;
+        let min_sleep = if eld_next_delay.is_some() {
+            Duration::from_millis(1)
+        } else {
+            MIN_SLEEP
+        };
+        if lowest - now < min_sleep {
+            lowest = now + min_sleep;
         }
         if let Some(sleep) = sleep {
             sleep.as_mut().reset(lowest);
@@ -1295,6 +1315,7 @@ pub fn poll_timers(
     for item in call_vec.iter_mut() {
         if let Some(ExecutingTimer(_, ctx, timeout, hook_id)) = item.take() {
             let ctx2 = unsafe { Ctx::from_raw(ctx) };
+            lexe_utils::perf::add_events(rt_key, 1);
 
             if is_first_time {
                 while ctx2.execute_pending_job() {}
@@ -1324,6 +1345,7 @@ pub fn poll_timers(
                     // (e.g. Promise reactions) before destroy so async_hooks/ALS
                     // can inherit from this timer's executionAsyncId.
                     while ctx2.execute_pending_job() {}
+                    lexe_utils::perf::flush_pending_gc(&ctx2);
 
                     // Destroy after After when the timer left the list
                     // (one-shot completed) or was cleared inside its own
@@ -1362,11 +1384,10 @@ pub fn poll_timers(
     // from such a snapshot drops a freshly registered timer and stops the loop
     // with work still queued, which strands the process when the drain is
     // parked and cannot restart the loop.
-    let rt_key = event_loop::rt_key_from_ptr(rt as *mut std::ffi::c_void);
     let mut rt_timers = RT_TIMER_STATE.lock().unwrap();
     let state = get_timer_state(&mut rt_timers, rt);
 
-    let has_items = !state.timers.is_empty();
+    let has_items = !state.timers.is_empty() || lexe_utils::perf::has_active_eld_samplers(rt_key);
 
     if !should_keep_timer_loop(state, rt_key) || !has_items {
         state.running = false;

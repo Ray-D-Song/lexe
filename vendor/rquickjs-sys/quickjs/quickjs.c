@@ -316,6 +316,9 @@ struct JSRuntime {
 
     JSPromiseHook *promise_hook;
     void *promise_hook_opaque;
+    JSGCHook *gc_hook;
+    void *gc_hook_opaque;
+    int gc_in_trigger;
     // for smuggling the parent promise from js_promise_then
     // to js_promise_constructor
     JSValueLink *parent_promise;
@@ -1595,7 +1598,9 @@ static void js_trigger_gc(JSRuntime *rt, size_t size)
             printf("GC: size=%zd\n", rt->malloc_state.malloc_size);
         }
 #endif
+        rt->gc_in_trigger = 1;
         JS_RunGC(rt);
+        rt->gc_in_trigger = 0;
         rt->malloc_gc_threshold = rt->malloc_state.malloc_size +
             (rt->malloc_state.malloc_size >> 1);
     }
@@ -7116,9 +7121,14 @@ static void gc_free_cycles(JSRuntime *rt)
 
 void JS_RunGC(JSRuntime *rt)
 {
+    int flags = rt->gc_in_trigger ? 0 : 4;
+    if (!rt->in_free && rt->gc_hook)
+        rt->gc_hook(rt, 0, flags, rt->gc_hook_opaque);
     gc_decref(rt);
     gc_scan(rt);
     gc_free_cycles(rt);
+    if (!rt->in_free && rt->gc_hook)
+        rt->gc_hook(rt, 1, flags, rt->gc_hook_opaque);
 }
 
 
@@ -54457,6 +54467,12 @@ void JS_SetPromiseHook(JSRuntime *rt, JSPromiseHook promise_hook, void *opaque)
 {
     rt->promise_hook = promise_hook;
     rt->promise_hook_opaque = opaque;
+}
+
+void JS_SetGCHook(JSRuntime *rt, JSGCHook *gc_hook, void *opaque)
+{
+    rt->gc_hook = gc_hook;
+    rt->gc_hook_opaque = opaque;
 }
 
 void JS_SetHostPromiseRejectionTracker(JSRuntime *rt,

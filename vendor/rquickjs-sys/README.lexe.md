@@ -35,7 +35,13 @@ In `JS_DetachArrayBuffer`, after calling `free_func` on the backing store,
 clear `free_func` and `opaque` to `NULL` so the ArrayBuffer finalizer does not
 release the same backing store again after `transfer` / detach.
 
-### 3. Historical note
+### 3. `JS_SetGCHook` prologue/epilogue notifications
+
+`JS_SetGCHook(rt, gc_hook, opaque)` exposes phase `0` (before) / `1` (after)
+notifications around `JS_RunGC(rt)` (distinguishing allocation-triggered GCs
+from forced calls via `flags`), used by `node:perf_hooks` GC observers.
+
+### 4. Historical note
 
 An earlier Lexe approach forced a wrapper Promise on every `await`. That was
 removed in favor of reaction-resource hooks, which also cover plain `.then()`

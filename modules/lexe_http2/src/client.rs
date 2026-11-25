@@ -22,7 +22,11 @@ use lexe_tls::{
     options::parse_connect_options,
     secure_context::SecureContext,
 };
-use lexe_utils::event_loop::EventLoopRef;
+use lexe_utils::{
+    event_loop::EventLoopRef,
+    perf::{self, PerfEntryKind},
+    time,
+};
 use rquickjs::{
     class::Trace,
     prelude::{Rest, This},
@@ -117,9 +121,14 @@ impl<'js> ClientHttp2Session<'js> {
         let ctx2 = ctx.clone();
         let stream = req_stream.clone();
         ctx.spawn_exit_simple(async move {
+            let perf_start_ms =
+                perf::has_observers(perf::rt_key_for_ctx(&ctx2), PerfEntryKind::Http2)
+                    .then(time::monotonic_elapsed_ms);
             let uri: Uri = format!("{scheme}://{authority}{path}")
                 .parse()
                 .unwrap_or_else(|_| Uri::from_static("/"));
+            let perf_method = method.clone();
+            let perf_url = uri.to_string();
             let mut builder = Request::builder().uri(uri).method(method.as_str());
             for (key, val) in extra_headers {
                 if let Ok(name) = HeaderName::from_bytes(key.as_bytes()) {
@@ -159,6 +168,7 @@ impl<'js> ClientHttp2Session<'js> {
                 .await
                 .map_err(|e| Exception::throw_message(&ctx2, &e.to_string()))?
                 .to_bytes();
+            let bytes_read = body_bytes.len() as u64;
             if !body_bytes.is_empty() {
                 let chunk = lexe_buffer::Buffer(body_bytes.to_vec())
                     .into_js(&ctx2)
@@ -166,6 +176,29 @@ impl<'js> ClientHttp2Session<'js> {
                 let _ = Http2Stream::emit_str(stream.clone(), &ctx2, "data", vec![chunk], false);
             }
             let _ = Http2Stream::emit_str(stream, &ctx2, "end", vec![], false);
+            if let Some(start_ms) = perf_start_ms {
+                let dur = (time::monotonic_elapsed_ms() - start_ms).max(0.0);
+                perf::emit_node_entry(
+                    &ctx2,
+                    PerfEntryKind::Http2,
+                    "Http2Stream",
+                    start_ms,
+                    dur,
+                    |ctx| {
+                        let detail = Object::new(ctx.clone())?;
+                        detail.set("bytesRead", bytes_read as f64)?;
+                        detail.set("bytesWritten", 0)?;
+                        let req_obj = Object::new(ctx.clone())?;
+                        req_obj.set("method", perf_method.as_str())?;
+                        req_obj.set("url", perf_url.as_str())?;
+                        let res_obj = Object::new(ctx.clone())?;
+                        res_obj.set("statusCode", parts.status.as_u16())?;
+                        detail.set("req", req_obj)?;
+                        detail.set("res", res_obj)?;
+                        Ok(detail.into_value())
+                    },
+                );
+            }
             Ok(())
         });
         Ok(req_stream)
