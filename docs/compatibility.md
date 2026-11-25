@@ -15,8 +15,8 @@
 | node:crypto | ✔︎ | ✔︎⚠️ | Missing classic Cipher/Decipher, top-level Sign/Verify, `KeyObject`, X509, DH/ECDH, and KDF sync/async exports; depends on WebCrypto `subtle` ([details](#nodecrypto)) |
 | node:dgram | ✔︎ | ✔︎ | — |
 | node:diagnostics_channel | ✔︎ | ✔︎ | — |
-| node:dns | ✔︎ | ✔︎⚠️ | Exports `lookup` and `promises.lookup` only; missing `Resolver`, `resolve*`, `reverse`, `lookupService`, and server/order settings ([details](#nodedns-and-nodednspromises)) |
-| node:dns/promises | ✔︎ | ✔︎⚠️ | Exports `lookup` only; missing `Resolver` and `resolve*`/`reverse`/`lookupService` ([details](#nodedns-and-nodednspromises)) |
+| node:dns | ✔︎ | ✔︎ | — |
+| node:dns/promises | ✔︎ | ✔︎ | — |
 | node:events | ✔︎ | ✔︎ | — |
 | node:fs | ✔︎ | ✔︎ | — |
 | node:fs/promises | ✔︎ | ✔︎ | — |
@@ -126,11 +126,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Missing classic Node.js crypto APIs: `createCipheriv`/`createDecipheriv`, `createSign`/`createVerify`, top-level `sign`/`verify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `hkdf`/`hkdfSync`, `timingSafeEqual`, `KeyObject`, `createPrivateKey`/`createPublicKey`/`createSecretKey`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `X509Certificate`, `DiffieHellman`/`createDiffieHellman`, `ECDH`/`createECDH`, `getCiphers`, `getHashes`, and `crypto.hash()`. (Symmetric/asymmetric cipher, signature, and KDF operations are primarily provided through WebCrypto `subtle`.)
 - `publicEncrypt` / RSA-OAEP rejects `MD5`, and algorithm availability depends on the compiled TLS/crypto backend (for example, `graviola` lacks most operations).
-
-#### `node:dns` and `node:dns/promises`
-
-- Only `dns.lookup()` and `dns.promises.lookup()` (exposed by `node:dns/promises`) are implemented.
-- Missing `Resolver`, `lookupService()`, `reverse()`, all `resolve*()` record methods (`resolve`, `resolve4`, `resolve6`, `resolveAny`, `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNaptr`, `resolveNs`, `resolvePtr`, `resolveSoa`, `resolveSrv`, `resolveTxt`), `getServers()`/`setServers()`, `getDefaultResultOrder()`/`setDefaultResultOrder()`, and lookup flag constants (`ADDRCONFIG`, `V4MAPPED`, `ALL`).
 
 #### `node:http` and `node:https`
 

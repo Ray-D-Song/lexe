@@ -20,7 +20,19 @@ rquickjs = { version = "=0.12.1", features = [
   "macro",
   "either",
 ], default-features = false }
-tokio = { version = "1", features = ["net"], default-features = false }
+tokio = { version = "1", features = [
+  "net",
+  "rt",
+  "sync",
+  "time",
+  "io-util",
+], default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
 
 [dev-dependencies]
 lexe_test = { path = "../../libs/lexe_test" }

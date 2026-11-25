@@ -436,9 +436,11 @@ Lightweight and fast hash classes for lexe.
 
 ## dns
 
-[lookup](https://nodejs.org/api/dns.html#dnslookuphostname-options-callback)
+Supports the full Node.js `node:dns` synchronous configuration, lookup, and DNS record resolution APIs: `Resolver` (`resolve`, `resolve4`, `resolve6`, `resolveAny`, `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNaptr`, `resolveNs`, `resolvePtr`, `resolveSoa`, `resolveSrv`, `resolveTlsa`, `resolveTxt`, `reverse`, `cancel`, `getServers`, `setServers`, `setLocalAddress`), top-level default resolver methods, `lookup` (including `ADDRCONFIG`, `V4MAPPED`, `ALL` hints and `order`/`verbatim`), `lookupService`, `getServers`/`setServers`, `getDefaultResultOrder`/`setDefaultResultOrder`, `promises`, and all Node DNS error constants (`NODATA`, `NOTFOUND`, `SERVFAIL`, `TIMEOUT`, `CANCELLED`, etc.).
 
-[promises.lookup](https://nodejs.org/api/dns.html#dnspromiseslookuphostname-options) (also via `dns/promises` / `node:dns/promises`)
+## dns/promises
+
+Supports all Node.js `node:dns/promises` async DNS APIs (`Resolver`, `lookup`, `lookupService`, `resolve`, `resolve4`, `resolve6`, `resolveAny`, `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNaptr`, `resolveNs`, `resolvePtr`, `resolveSoa`, `resolveSrv`, `resolveTlsa`, `resolveTxt`, `reverse`, `getServers`, `setServers`, `getDefaultResultOrder`, `setDefaultResultOrder`, and DNS error constants), sharing default state with `dns.promises`.
 
 ## diagnostics_channel
 
