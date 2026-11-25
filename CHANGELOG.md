@@ -4,6 +4,14 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-25
+
+- Completed full WHATWG Streams and Compression Streams parity (`node:stream/web`, `STREAMS`, `COMPRESSION` now `✔︎` in `docs/compatibility.md`, reducing `⚠️` items from 27 to 24):
+  - `TransformStream` follows the specification (`start`/`transform`/`flush`/`cancel`, backpressure, error propagation, `readableType`/`writableType` validation); `pipeTo`/`pipeThrough`/`values` accept `null` options with WebIDL ordering; BYOB reads validate `min` and reject `SharedArrayBuffer` and non-detachable `WebAssembly.Memory` buffers; queuing strategies coerce `highWaterMark` and expose shared callable `size` functions; all stream classes expose `Symbol.toStringTag`.
+  - `CompressionStream`/`DecompressionStream` are `GenericTransformStream`s (no longer `TransformStream` subclasses), decode concatenated gzip members and reject trailing data with `TypeError`.
+  - Fixed QuickJS shutdown leaks from untraced promise reactions and shared state in `tee()`, `ReadableStream.from()`, and `pipeTo()`.
+- Added `node:sea` to the compatibility table as not implemented.
+
 ## [0.1.2] - 2026-11-25
 
 - Closed full Node.js v24.3.0 parity gaps across 20+ built-in modules, reducing `⚠️` items in `docs/compatibility.md` from 53 to 28 and increasing full `✔︎` modules from 20 to 46:

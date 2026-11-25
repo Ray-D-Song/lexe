@@ -1,7 +1,7 @@
 [package]
 name = "lexe_context"
 description = "lexe context helpers"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -10,12 +10,12 @@ repository = "https://github.com/Ray-D-Song/lexe"
 rquickjs = { version = "=0.12.1", features = [
     "futures",
 ], default-features = false }
-lexe_utils = { version = "0.1.2", path = "../lexe_utils", default-features = false }
+lexe_utils = { version = "0.1.3", path = "../lexe_utils", default-features = false }
 tokio = { version = "1", features = ["sync"], default-features = false }
 tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]
-lexe_test = { version = "0.1.2", path = "../lexe_test" }
+lexe_test = { version = "0.1.3", path = "../lexe_test" }
 
 [build-dependencies]
-lexe_build = { version = "0.1.2", path = "../lexe_build" }
+lexe_build = { version = "0.1.3", path = "../lexe_build" }
