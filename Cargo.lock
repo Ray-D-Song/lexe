@@ -2083,8 +2083,10 @@ dependencies = [
  "lexe_hooking",
  "lexe_test",
  "lexe_utils",
+ "libc",
  "rquickjs",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
