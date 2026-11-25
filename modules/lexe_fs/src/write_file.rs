@@ -7,6 +7,7 @@ use rquickjs::{function::Opt, Ctx, Error, Exception, FromJs, Result, Value};
 use tokio::io::AsyncWriteExt;
 
 /// Default mode for a newly created file, matching Node.
+#[cfg(unix)]
 const DEFAULT_MODE: u32 = 0o666;
 
 pub(crate) struct WriteFileOptions {
@@ -320,10 +321,13 @@ async fn write_file_flagged<'js>(
     let (encoding, mode, flag) = resolve_options(&ctx, options, default_flag)?;
     let bytes = data_bytes(&ctx, &data, encoding.as_deref())?;
 
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut options = open_options(&flag).ok_or_else(|| invalid_flag(&ctx, &flag))?;
 
     #[cfg(unix)]
     options.mode(mode.unwrap_or(DEFAULT_MODE));
+    #[cfg(not(unix))]
+    let _ = mode;
 
     let mut file = options
         .open(&path)
@@ -360,6 +364,7 @@ fn write_file_sync_flagged<'js>(
     let (encoding, mode, flag) = resolve_options(&ctx, options, default_flag)?;
     let bytes = data_bytes(&ctx, &data, encoding.as_deref())?;
 
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut options = sync_open_options(&flag).ok_or_else(|| invalid_flag(&ctx, &flag))?;
 
     #[cfg(unix)]

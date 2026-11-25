@@ -6,10 +6,9 @@ use std::os::unix::fs::FileTypeExt;
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
-use std::{
-    fs::Metadata,
-    time::{Duration, SystemTime},
-};
+#[cfg(unix)]
+use std::time::Duration;
+use std::{fs::Metadata, time::SystemTime};
 
 use lexe_context::CtxExtension;
 use lexe_utils::result::ResultExt;

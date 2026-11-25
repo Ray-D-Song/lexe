@@ -99,10 +99,7 @@ fn duplicate_as_crt_fd(file: &File, crt_flags: i32) -> io::Result<OwnedCrtFd> {
         let fd = _open_osfhandle(dup as isize, crt_flags);
         if fd < 0 {
             CloseHandle(dup);
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "_open_osfhandle failed",
-            ));
+            return Err(io::Error::other("_open_osfhandle failed"));
         }
         // CRT now owns `dup`; do not CloseHandle(dup).
         Ok(OwnedCrtFd(fd))

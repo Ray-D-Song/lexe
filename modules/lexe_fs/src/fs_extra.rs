@@ -274,17 +274,17 @@ pub async fn chown(ctx: Ctx<'_>, path: String, uid: u32, gid: u32) -> Result<()>
                 .or_throw_msg(&ctx, &format!("chown {path}"));
             return err;
         }
+        Ok(())
     }
     #[cfg(not(unix))]
     {
         // Windows has no chown; Node reports ENOSYS here.
         let _ = (uid, gid);
-        return Err(rquickjs::Exception::throw_message(
+        Err(rquickjs::Exception::throw_message(
             &ctx,
             &format!("chown {path}: ENOSYS"),
-        ));
+        ))
     }
-    Ok(())
 }
 
 pub fn chown_sync(ctx: Ctx<'_>, path: String, uid: u32, gid: u32) -> Result<()> {
@@ -292,16 +292,16 @@ pub fn chown_sync(ctx: Ctx<'_>, path: String, uid: u32, gid: u32) -> Result<()> 
     {
         use std::os::unix::fs::chown;
         chown(&path, Some(uid), Some(gid)).or_throw_msg(&ctx, &format!("chown {path}"))?;
+        Ok(())
     }
     #[cfg(not(unix))]
     {
         let _ = (uid, gid);
-        return Err(rquickjs::Exception::throw_message(
+        Err(rquickjs::Exception::throw_message(
             &ctx,
             &format!("chown {path}: ENOSYS"),
-        ));
+        ))
     }
-    Ok(())
 }
 
 /// `fs.promises.lchown(path, uid, gid)` — `chown` without following symlinks.
@@ -317,16 +317,16 @@ pub async fn lchown(ctx: Ctx<'_>, path: String, uid: u32, gid: u32) -> Result<()
                 .or_throw_msg(&ctx, &format!("lchown {path}"));
             return err;
         }
+        Ok(())
     }
     #[cfg(not(unix))]
     {
         let _ = (uid, gid);
-        return Err(rquickjs::Exception::throw_message(
+        Err(rquickjs::Exception::throw_message(
             &ctx,
             &format!("lchown {path}: ENOSYS"),
-        ));
+        ))
     }
-    Ok(())
 }
 
 pub fn lchown_sync(ctx: Ctx<'_>, path: String, uid: u32, gid: u32) -> Result<()> {
@@ -334,16 +334,16 @@ pub fn lchown_sync(ctx: Ctx<'_>, path: String, uid: u32, gid: u32) -> Result<()>
     {
         use std::os::unix::fs::lchown;
         lchown(&path, Some(uid), Some(gid)).or_throw_msg(&ctx, &format!("lchown {path}"))?;
+        Ok(())
     }
     #[cfg(not(unix))]
     {
         let _ = (uid, gid);
-        return Err(rquickjs::Exception::throw_message(
+        Err(rquickjs::Exception::throw_message(
             &ctx,
             &format!("lchown {path}: ENOSYS"),
-        ));
+        ))
     }
-    Ok(())
 }
 
 /// `fs.promises.utimes(path, atime, mtime)`; times are seconds (number) or Date.

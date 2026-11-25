@@ -15,7 +15,7 @@ use lexe_stream::{impl_stream_events, SteamEvents};
 use lexe_utils::{
     event_loop::EventLoopRef, object::ObjectExt, result::ResultExt, reuse_list::ReuseList,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use rquickjs::IntoJs;
 use rquickjs::{
     class::Trace,

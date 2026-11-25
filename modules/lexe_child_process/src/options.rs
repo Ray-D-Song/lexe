@@ -764,7 +764,7 @@ pub fn dup_fd_stdio(ctx: &Ctx<'_>, fd: i32) -> Result<std::process::Stdio> {
 #[cfg(windows)]
 pub fn dup_fd_stdio(_ctx: &Ctx<'_>, fd: i32) -> Result<std::process::Stdio> {
     use std::os::windows::io::{FromRawHandle, RawHandle};
-    Ok(unsafe { std::process::Stdio::from_raw_handle(fd as RawHandle) })
+    Ok(unsafe { std::process::Stdio::from_raw_handle(fd as isize as RawHandle) })
 }
 
 #[cfg(all(not(unix), not(windows)))]

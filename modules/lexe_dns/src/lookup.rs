@@ -468,9 +468,9 @@ async fn resolve_service_os(ip: IpAddr, port: u16) -> StdResult<(String, String)
                             (&raw const sa) as *const SOCKADDR,
                             std::mem::size_of::<SOCKADDR_IN>() as i32,
                             host_buf.as_mut_ptr(),
-                            host_buf.len() as i32,
+                            host_buf.len() as u32,
                             serv_buf.as_mut_ptr(),
-                            serv_buf.len() as i32,
+                            serv_buf.len() as u32,
                             0,
                         )
                     }
@@ -487,9 +487,9 @@ async fn resolve_service_os(ip: IpAddr, port: u16) -> StdResult<(String, String)
                             (&raw const sa6) as *const SOCKADDR,
                             std::mem::size_of::<SOCKADDR_IN6>() as i32,
                             host_buf.as_mut_ptr(),
-                            host_buf.len() as i32,
+                            host_buf.len() as u32,
                             serv_buf.as_mut_ptr(),
-                            serv_buf.len() as i32,
+                            serv_buf.len() as u32,
                             0,
                         )
                     }
@@ -498,12 +498,14 @@ async fn resolve_service_os(ip: IpAddr, port: u16) -> StdResult<(String, String)
             if rc != 0 {
                 return Err("ENOTFOUND");
             }
-            let host = unsafe { std::ffi::CStr::from_ptr(host_buf.as_ptr() as *const i8) }
-                .to_string_lossy()
-                .into_owned();
-            let serv = unsafe { std::ffi::CStr::from_ptr(serv_buf.as_ptr() as *const i8) }
-                .to_string_lossy()
-                .into_owned();
+            let host =
+                unsafe { std::ffi::CStr::from_ptr(host_buf.as_ptr() as *const std::ffi::c_char) }
+                    .to_string_lossy()
+                    .into_owned();
+            let serv =
+                unsafe { std::ffi::CStr::from_ptr(serv_buf.as_ptr() as *const std::ffi::c_char) }
+                    .to_string_lossy()
+                    .into_owned();
             Ok((host, serv))
         }
         #[cfg(not(any(unix, windows)))]

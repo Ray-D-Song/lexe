@@ -26,6 +26,7 @@ use std::collections::HashSet;
 
 use lexe_events::Emitter;
 use lexe_utils::module::{export_default, ModuleInfo};
+#[cfg(unix)]
 use lexe_utils::result::ResultExt;
 use rquickjs::{
     atom::PredefinedAtom,
