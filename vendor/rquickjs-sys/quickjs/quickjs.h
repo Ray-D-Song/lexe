@@ -442,6 +442,8 @@ static inline bool JS_VALUE_IS_NAN(JSValue v)
 /* allow top-level await in normal script. JS_Eval() returns a
    promise. Only allowed with JS_EVAL_TYPE_GLOBAL */
 #define JS_EVAL_FLAG_ASYNC (1 << 7)
+/* do not resolve module dependencies automatically on compile/read */
+#define JS_EVAL_FLAG_NO_RESOLVE (1 << 8)
 
 typedef JSValue JSCFunction(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv);
 typedef JSValue JSCFunctionMagic(JSContext *ctx, JSValueConst this_val, int argc, JSValueConst *argv, int magic);
@@ -1135,6 +1137,14 @@ JS_EXTERN void JS_SetPromiseHook(JSRuntime *rt, JSPromiseHook promise_hook,
 typedef void JSGCHook(JSRuntime *rt, int phase, int flags, void *opaque);
 JS_EXTERN void JS_SetGCHook(JSRuntime *rt, JSGCHook *gc_hook, void *opaque);
 
+typedef JSValue JSDynamicImportHook(JSContext *ctx, JSValueConst basename,
+                                    JSValueConst specifier,
+                                    JSValueConst attributes,
+                                    void *opaque);
+JS_EXTERN void JS_SetDynamicImportHook(JSRuntime *rt, JSDynamicImportHook *cb, void *opaque);
+JS_EXTERN void JS_SetCodegenFromStrings(JSContext *ctx, bool allow);
+JS_EXTERN void JS_SetGlobalObject(JSContext *ctx, JSValue global_obj);
+
 /* is_handled = true means that the rejection is handled */
 typedef void JSHostPromiseRejectionTracker(JSContext *ctx, JSValueConst promise,
                                            JSValueConst reason,
@@ -1200,6 +1210,20 @@ JS_EXTERN int JS_SyncModuleExportsFromDefault(JSContext *ctx, const char *module
 JS_EXTERN int JS_SetModulePrivateValue(JSContext *ctx, JSModuleDef *m, JSValue val);
 JS_EXTERN JSValue JS_GetModulePrivateValue(JSContext *ctx, JSModuleDef *m);
 
+/* VM module inspection, linking, and evaluation helpers */
+JS_EXTERN JSModuleDef *JS_ValueToModule(JSValueConst val);
+JS_EXTERN JSValue JS_ModuleToValue(JSContext *ctx, JSModuleDef *m);
+JS_EXTERN int JS_GetModuleReqCount(JSModuleDef *m);
+JS_EXTERN JSValue JS_GetModuleReqName(JSContext *ctx, JSModuleDef *m, int idx);
+JS_EXTERN JSValue JS_GetModuleReqAttributes(JSContext *ctx, JSModuleDef *m, int idx);
+JS_EXTERN int JS_SetModuleReqModule(JSModuleDef *m, int idx, JSModuleDef *dep);
+JS_EXTERN void JS_SetModuleResolved(JSModuleDef *m, bool resolved);
+JS_EXTERN int JS_VmLinkModule(JSContext *ctx, JSModuleDef *m);
+JS_EXTERN JSValue JS_VmEvaluateModule(JSContext *ctx, JSModuleDef *m);
+JS_EXTERN int JS_GetModuleStatus(JSModuleDef *m);
+JS_EXTERN JSValue JS_GetModuleEvalException(JSContext *ctx, JSModuleDef *m);
+JS_EXTERN bool JS_ModuleHasTLA(JSModuleDef *m);
+
 /* JS Job support */
 
 typedef JSValue JSJobFunc(JSContext *ctx, int argc, JSValueConst *argv);
@@ -1209,6 +1233,7 @@ JS_EXTERN int JS_EnqueueJob(JSContext *ctx, JSJobFunc *job_func,
 JS_EXTERN bool JS_IsJobPending(JSRuntime *rt);
 JS_EXTERN JSContext *JS_GetPendingJobContext(JSRuntime *rt);
 JS_EXTERN int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx);
+JS_EXTERN int JS_ExecutePendingJobForContext(JSRuntime *rt, JSContext *target_ctx);
 
 /* Structure to retrieve (de)serialized SharedArrayBuffer objects. */
 typedef struct JSSABTab {
@@ -1237,6 +1262,7 @@ JS_EXTERN uint8_t *JS_WriteObject2(JSContext *ctx, size_t *psize, JSValueConst o
    writer in the same process (e.g. another Worker on the same runtime). */
 #define JS_READ_OBJ_SAB       (1 << 2) /* allow SharedArrayBuffer */
 #define JS_READ_OBJ_REFERENCE (1 << 3) /* allow object references */
+#define JS_READ_OBJ_NO_RESOLVE (1 << 4) /* do not auto-resolve module dependencies */
 JS_EXTERN JSValue JS_ReadObject(JSContext *ctx, const uint8_t *buf, size_t buf_len, int flags);
 JS_EXTERN JSValue JS_ReadObject2(JSContext *ctx, const uint8_t *buf, size_t buf_len,
                                  int flags, JSSABTab *psab_tab);

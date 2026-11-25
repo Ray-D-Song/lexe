@@ -269,6 +269,8 @@ impl ModuleBuilder {
         }
         #[cfg(feature = "vm")]
         {
+            #[cfg(feature = "webassembly")]
+            crate::modules::vm::set_wasm_initializer(crate::modules::webassembly::init);
             builder = builder.with_module(crate::modules::vm::VmModule);
         }
         #[cfg(feature = "webassembly")]

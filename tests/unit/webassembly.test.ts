@@ -571,40 +571,32 @@ describe("SIMD", () => {
 // ---------------------------------------------------------------------------
 
 describe("cross-realm isolation", () => {
-  // `vm.runInNewContext` creates a bare QuickJS context that does not run
-  // any Lexe module's `init` (see `lexe_vm::run_in_new_context`):
-  // it has no `WebAssembly` of its own at all, so it cannot be used here to
-  // build a *second fully-initialized* realm to import across (that
-  // scenario -- two realms that each have a working `WebAssembly`, with an
-  // object from one imported into the other -- is exercised directly at
-  // the Rust level by
-  // `instance::tests::cross_realm_memory_import_is_rejected_with_link_error`,
-  // which constructs two realms on the same QuickJS `Runtime` explicitly).
-  //
-  // What *is* meaningfully JS-observable from here is that reusing a
-  // realm-scoped WebAssembly object (or its class, obtained by reference
-  // through `vm`'s sandbox, which shares values rather than copying them)
-  // from a context that never had its own realm installed fails safely --
-  // no crash, no silent corruption -- rather than, say, dereferencing a
-  // stale `Store` pointer.
-  it("using a parent-realm Memory/constructor from an uninitialized child context fails safely", () => {
+  // Every `vm` child context gets its own independent `WebAssembly` namespace
+  // and private `wasmi::Store` realm (see `API.md`). Constructing new objects
+  // in the child realm succeeds cleanly (bound to the child's own realm), while
+  // passing a `Memory`/`Instance`/`Table`/`Global` across realm boundaries
+  // rejects with `LinkError` instead of mixing `wasmi` stores.
+  it("isolates WebAssembly realms across vm contexts with LinkError on cross-realm use", () => {
     const memory = new WebAssembly.Memory({ initial: 1 });
     const sandbox: { memory: WebAssembly.Memory; MemoryCtor: typeof WebAssembly.Memory } = {
       memory,
       MemoryCtor: WebAssembly.Memory,
     };
 
+    expect(runInNewContext("typeof WebAssembly", {})).toBe("object");
+
     const accessResult = runInNewContext(
       "(() => { try { memory.buffer; return 'unexpectedly-succeeded'; } catch (e) { return e.constructor.name; } })()",
       sandbox
     );
-    expect(accessResult).not.toBe("unexpectedly-succeeded");
+    expect(accessResult).toBe("LinkError");
 
-    const constructResult = runInNewContext(
-      "(() => { try { new MemoryCtor({ initial: 1 }); return 'unexpectedly-succeeded'; } catch (e) { return e.constructor.name; } })()",
+    const childMemory = runInNewContext(
+      "new MemoryCtor({ initial: 1 })",
       sandbox
-    );
-    expect(constructResult).not.toBe("unexpectedly-succeeded");
+    ) as WebAssembly.Memory;
+    expect(childMemory).toBeInstanceOf(WebAssembly.Memory);
+    expect(() => childMemory.buffer).toThrow();
 
     // The parent-realm object itself must be entirely unaffected.
     expect(memory).toBeInstanceOf(WebAssembly.Memory);

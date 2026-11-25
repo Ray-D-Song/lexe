@@ -49,7 +49,7 @@
 | node:util | ✔︎ | ✔︎⚠️ | Missing `parseArgs` and `transferableAbort*`; limited `TextDecoder` encodings ([details](#nodeutil-and-nodeutiltypes)) |
 | node:util/types | ✔︎ | ✔︎⚠️ | Missing `isWebAssemblyCompiledModule`; `isExternal`, `isKeyObject`, and `isCryptoKey` always return `false` ([details](#nodeutil-and-nodeutiltypes)) |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
-| node:vm | ✔︎ | ✔︎⚠️ | Exports `runInNewContext` only (no `Script`/`createContext`/modules); only `{ filename }` option; shared QuickJS runtime ([details](#nodevm)) |
+| node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✘ | Not implemented |
 | node:worker_threads | ✔︎ | ✔︎⚠️ | `moveMessagePortToContext` throws; missing `BroadcastChannel`, `SHARE_ENV`, `resourceLimits`, `getHeapSnapshot`, `postMessageToThread`, and piped worker stdio ([details](#nodeworker_threads)) |
 | node:zlib | ✔︎ | ✔︎ | — |
@@ -178,12 +178,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Backed by QuickJS `JS_ComputeMemoryUsage` rather than V8: `getHeapSpaceStatistics()` always returns a single `"quickjs"` space, and `heap_size_limit` falls back to `Number.MAX_SAFE_INTEGER` when `malloc_limit === 0`.
 - `setFlagsFromString()` is a no-op.
 - Missing serialization (`serialize`, `deserialize`, `Serializer`, `Deserializer`, `DefaultSerializer`, `DefaultDeserializer`), heap snapshots (`writeHeapSnapshot`, `getHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `cachedDataVersionTag`, and coverage APIs (`takeCoverage`, `stopCoverage`).
-
-#### `node:vm`
-
-- Only `vm.runInNewContext()` is exported; missing `Script`, `createContext()`, `isContext()`, `runInContext()`, `runInThisContext()`, `compileFunction()`, `measureMemory()`, `SourceTextModule`, and `SyntheticModule`.
-- `runInNewContext()` supports `{ filename }` only (rejecting `timeout`, `breakOnSigint`, `contextCodeGeneration`, `microtaskMode`, `lineOffset`/`columnOffset`, `cachedData`, etc.).
-- Sandbox synchronization copies own enumerable string-keyed properties only (no symbols, non-enumerable properties, or property descriptors), and scripts run inside the same QuickJS runtime (not a security boundary).
 
 #### `node:worker_threads`
 

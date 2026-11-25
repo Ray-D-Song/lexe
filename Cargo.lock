@@ -2682,8 +2682,10 @@ dependencies = [
 name = "lexe_vm"
 version = "0.1.2"
 dependencies = [
+ "lexe_buffer",
  "lexe_test",
  "lexe_utils",
+ "libc",
  "rquickjs",
  "tokio",
 ]

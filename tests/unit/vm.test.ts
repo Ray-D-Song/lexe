@@ -51,7 +51,7 @@ it("prefers script exceptions over sandbox sync failures", () => {
   ).toThrow("script boom");
 });
 
-it("syncs each sandbox setter-backed property once", () => {
+it("invokes sandbox setter-backed properties only when written", () => {
   let setterCalls = 0;
   const sandbox: Record<string, unknown> = {};
   Object.defineProperty(sandbox, "tracked", {
@@ -64,11 +64,13 @@ it("syncs each sandbox setter-backed property once", () => {
       setterCalls += 1;
     },
   });
-  runInNewContext("tracked", sandbox);
+  expect(runInNewContext("tracked", sandbox)).toBe(1);
+  expect(setterCalls).toBe(0);
+  runInNewContext("tracked = 2", sandbox);
   expect(setterCalls).toBe(1);
 });
 
-it("propagates sandbox ownKeys exceptions during enumeration", () => {
+it("propagates sandbox ownKeys exceptions when enumerated", () => {
   const sandbox = new Proxy(
     {},
     {
@@ -77,7 +79,10 @@ it("propagates sandbox ownKeys exceptions during enumeration", () => {
       },
     }
   );
-  expect(() => runInNewContext("1", sandbox)).toThrow("ownKeys failure");
+  expect(runInNewContext("1", sandbox)).toBe(1);
+  expect(() => runInNewContext("Object.keys(globalThis)", sandbox)).toThrow(
+    "ownKeys failure"
+  );
 });
 
 it("writes manifest-like globals back to the sandbox", () => {
@@ -164,12 +169,37 @@ it("accepts arrays as context objects", () => {
   expect(runInNewContext("this[0]", sandbox)).toBe("value");
 });
 
-it("rejects syncing into a frozen sandbox without leaking", () => {
-  const sandbox = Object.freeze({});
-  expect(() => runInNewContext("x = 1; ({ payload: true })", sandbox)).toThrow();
+it("ignores sloppy writes on frozen sandboxes and throws in strict mode", () => {
+  const sandbox = Object.freeze({ a: 1 });
+  expect(runInNewContext("x = 1; ({ payload: true })", sandbox)).toEqual({
+    payload: true,
+  });
+  expect((sandbox as Record<string, unknown>).x).toBeUndefined();
+  let strictUndeclErr: unknown;
+  try {
+    runInNewContext("'use strict'; x = 1", sandbox);
+  } catch (err) {
+    strictUndeclErr = err;
+  }
+  expect((strictUndeclErr as { name?: string }).name).toBe("ReferenceError");
+  let strictReadonlyErr: unknown;
+  try {
+    runInNewContext("'use strict'; a = 2", sandbox);
+  } catch (err) {
+    strictReadonlyErr = err;
+  }
+  expect((strictReadonlyErr as { name?: string }).name).toBe("TypeError");
+  expect(
+    runInNewContext("Object.getOwnPropertyDescriptor(globalThis, 'a')", sandbox)
+  ).toEqual({
+    value: 1,
+    writable: false,
+    enumerable: true,
+    configurable: false,
+  });
 });
 
-it("transfers sandbox getter exceptions to the caller", () => {
+it("transfers sandbox getter exceptions to the caller on access", () => {
   const sandbox: Record<string, unknown> = {};
   Object.defineProperty(sandbox, "boom", {
     enumerable: true,
@@ -177,7 +207,8 @@ it("transfers sandbox getter exceptions to the caller", () => {
       throw new Error("getter failure");
     },
   });
-  expect(() => runInNewContext("1", sandbox)).toThrow("getter failure");
+  expect(runInNewContext("1", sandbox)).toBe(1);
+  expect(() => runInNewContext("boom", sandbox)).toThrow("getter failure");
 });
 
 it("does not panic when global TypeError is poisoned", () => {

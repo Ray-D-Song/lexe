@@ -59,6 +59,39 @@ pub fn rt_key_from_ptr(rt: *mut std::ffi::c_void) -> RtKey {
     rt as RtKey
 }
 
+type RuntimeCleanupFn = fn(*mut std::ffi::c_void);
+
+fn runtime_cleanups(
+) -> &'static std::sync::Mutex<std::collections::HashMap<RtKey, Vec<RuntimeCleanupFn>>> {
+    static CLEANUPS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<RtKey, Vec<RuntimeCleanupFn>>>,
+    > = std::sync::OnceLock::new();
+    CLEANUPS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Register a callback to run with `*mut JSRuntime` just before the runtime shuts down.
+pub fn register_runtime_cleanup(rt: RtKey, f: RuntimeCleanupFn) {
+    let mut map = runtime_cleanups().lock().unwrap();
+    let list = map.entry(rt).or_default();
+    if !list.iter().any(|&existing| existing as usize == f as usize) {
+        list.push(f);
+    }
+}
+
+/// Run and remove all registered cleanup callbacks for `rt`.
+///
+/// # Safety
+/// `rt` must be a valid, uniquely-locked `*mut JSRuntime` whose contexts have not been freed yet.
+pub unsafe fn run_runtime_cleanups(rt: *mut std::ffi::c_void) {
+    let key = rt_key_from_ptr(rt);
+    let callbacks = runtime_cleanups().lock().unwrap().remove(&key);
+    if let Some(callbacks) = callbacks {
+        for cb in callbacks {
+            cb(rt);
+        }
+    }
+}
+
 pub fn has_refed_handles(rt: RtKey) -> bool {
     state_for(rt).refs.load(Ordering::Acquire) > 0
 }

@@ -1064,14 +1064,16 @@ Startup probe only — Lexe does **not** implement the Node Inspector debugging 
 ## vm
 
 > [!IMPORTANT]
-> Lexe provides a minimal `vm.runInNewContext` implementation backed by an isolated QuickJS context in the same runtime. This is **not** a security boundary.
+> Lexe provides full `node:vm` context, script, and module APIs backed by separate QuickJS contexts in the same runtime. As in Node.js, `vm` contexts share a runtime and are **not** a security boundary.
 
-[runInNewContext](https://nodejs.org/api/vm.html#vmruninnewcontextcode-contextobject-options)
-
-> [!NOTE]
-> Only `filename` is supported in the options object. Other Node options such as `timeout`, `breakOnSigint`, `contextCodeGeneration`, `microtaskMode`, `offset`, and `cachedData` throw `Error("vm.runInNewContext option '<name>' is not supported")`.
->
-> Sandbox synchronization copies own enumerable string-keyed properties only. Non-enumerable properties, symbol properties, and full property descriptor forwarding are not supported.
+- [Script](https://nodejs.org/api/vm.html#class-vmscript) (`new vm.Script()`, `vm.createScript()`, `createCachedData()`, `runInContext()`, `runInNewContext()`, `runInThisContext()`, `sourceURL`, `sourceMapURL`, `cachedData`, `cachedDataProduced`, `cachedDataRejected`)
+- [createContext](https://nodejs.org/api/vm.html#vmcreatecontextcontextobject-options) / [isContext](https://nodejs.org/api/vm.html#vmiscontextobject) / [runInContext](https://nodejs.org/api/vm.html#vmrunincontextcode-contextifiedobject-options) / [runInNewContext](https://nodejs.org/api/vm.html#vmruninnewcontextcode-contextobject-options) / [runInThisContext](https://nodejs.org/api/vm.html#vmruninthiscontextcode-options)
+  - Live `Proxy`-wrapped contextified sandboxes preserving own symbols, non-enumerable properties, property descriptors, getter/setter `this` binding, persistent `let`/`const`/`var` bindings, isolated realm intrinsics, and `vm.constants.DONT_CONTEXTIFY`
+  - Options: `filename`, `lineOffset`, `columnOffset`, `timeout`, `breakOnSigint`, `codeGeneration` (`strings`, `wasm`), `microtaskMode` (`"afterEvaluate"`), `cachedData`, `produceCachedData`, `importModuleDynamically`
+- [compileFunction](https://nodejs.org/api/vm.html#vmcompilefunctioncode-params-options) (`params`, `parsingContext`, `contextExtensions`, `cachedData`, `produceCachedData`, `importModuleDynamically`)
+- [Module](https://nodejs.org/api/vm.html#class-vmmodule) / [SourceTextModule](https://nodejs.org/api/vm.html#class-vmsourcetextmodule) / [SyntheticModule](https://nodejs.org/api/vm.html#class-vmsyntheticmodule) (`link()`, `evaluate()`, `status`, `identifier`, `context`, `dependencySpecifiers`, `namespace`, `error`, `createCachedData()`, `setExport()`, `initializeImportMeta`, `importModuleDynamically`, `--experimental-vm-modules`)
+- [measureMemory](https://nodejs.org/api/vm.html#vmmeasurememoryoptions) (`summary` / `detailed`, `eager` GC)
+- [constants](https://nodejs.org/api/vm.html#vmconstants) (`DONT_CONTEXTIFY`, `USE_MAIN_CONTEXT_DEFAULT_LOADER`)
 
 ## worker_threads
 
@@ -1444,7 +1446,7 @@ Implemented:
 >
 > Memory model: each `Memory` lazily materializes a QuickJS `ArrayBuffer` "mirror" the first time `.buffer` is read. Wasm's actual linear memory is copied into the mirror immediately before returning from an exported call or before invoking a JS import callback, and copied back out immediately after -- so JS and Wasm always observe each other's writes at every boundary crossing, at the cost of a full-buffer copy per crossing rather than a zero-copy view. A `grow()` (including `grow(0)`, and including a Wasm-internal `memory.grow`) detaches the previous mirror `ArrayBuffer` and creates a new one.
 >
-> Every `Instance`/`Memory`/`Table`/`Global`/exported-function object is scoped to the QuickJS context (realm) that created it; passing one into a different realm's `WebAssembly` APIs (e.g. across a `vm.runInNewContext` boundary, if that child context also had `WebAssembly` installed) throws `LinkError` rather than silently mixing `wasmi` stores.
+> Every `Instance`/`Memory`/`Table`/`Global`/exported-function object is scoped to the QuickJS context (realm) that created it; passing one into a different realm's `WebAssembly` APIs (e.g. across a `vm.runInNewContext` boundary) throws `LinkError` rather than silently mixing `wasmi` stores.
 >
 > `externref` lifetime: to preserve JS identity for every Wasm reference safely, Lexe retains the `Persistent<Value>` associated with an `externref` until its WebAssembly realm is torn down. `wasmi` 1.1.0 does not expose the complete set of roots required to reclaim individual entries safely (including Wasm-private tables, globals, and active frames). Consequently, a long-lived realm that continuously stores distinct JS values as `externref` can grow its retained memory until realm teardown; applications with that pattern should use bounded/reused references or periodically recreate the realm.
 

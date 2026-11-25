@@ -319,6 +319,8 @@ struct JSRuntime {
     JSGCHook *gc_hook;
     void *gc_hook_opaque;
     int gc_in_trigger;
+    JSDynamicImportHook *dynamic_import_hook;
+    void *dynamic_import_hook_opaque;
     // for smuggling the parent promise from js_promise_then
     // to js_promise_constructor
     JSValueLink *parent_promise;
@@ -541,6 +543,7 @@ struct JSContext {
     JSValue (*eval_internal)(JSContext *ctx, JSValueConst this_obj,
                              const char *input, size_t input_len,
                              const char *filename, int line, int flags, int scope_idx);
+    bool disallow_codegen_from_strings;
     void *user_opaque;
 };
 
@@ -2128,6 +2131,23 @@ void JS_SetInterruptHandler(JSRuntime *rt, JSInterruptHandler *cb, void *opaque)
     rt->interrupt_opaque = opaque;
 }
 
+void JS_SetDynamicImportHook(JSRuntime *rt, JSDynamicImportHook *cb, void *opaque)
+{
+    rt->dynamic_import_hook = cb;
+    rt->dynamic_import_hook_opaque = opaque;
+}
+
+void JS_SetCodegenFromStrings(JSContext *ctx, bool allow)
+{
+    ctx->disallow_codegen_from_strings = !allow;
+}
+
+void JS_SetGlobalObject(JSContext *ctx, JSValue global_obj)
+{
+    JS_FreeValue(ctx, ctx->global_obj);
+    ctx->global_obj = global_obj;
+}
+
 void JS_SetCanBlock(JSRuntime *rt, bool can_block)
 {
     rt->can_block = can_block;
@@ -2203,6 +2223,37 @@ int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx)
     JS_FreeValue(ctx, res);
     js_free(ctx, e);
     *pctx = ctx;
+    return ret;
+}
+
+int JS_ExecutePendingJobForContext(JSRuntime *rt, JSContext *target_ctx)
+{
+    struct list_head *el;
+    JSJobEntry *e = NULL;
+    JSValue res;
+    int i, ret;
+
+    list_for_each(el, &rt->job_list) {
+        JSJobEntry *candidate = list_entry(el, JSJobEntry, link);
+        if (candidate->ctx == target_ctx) {
+            e = candidate;
+            break;
+        }
+    }
+    if (!e) {
+        return 0;
+    }
+
+    list_del(&e->link);
+    res = e->job_func(e->ctx, e->argc, vc(e->argv));
+    for (i = 0; i < e->argc; i++)
+        JS_FreeValue(target_ctx, e->argv[i]);
+    if (JS_IsException(res))
+        ret = -1;
+    else
+        ret = 1;
+    JS_FreeValue(target_ctx, res);
+    js_free(target_ctx, e);
     return ret;
 }
 
@@ -8121,6 +8172,18 @@ JS_ERROR_MAP(X)
 #undef X
 #undef JS_ERROR_MAP
 
+static JSValue JS_PRINTF_FORMAT_ATTR(2, 3)
+js_throw_eval_error(JSContext *ctx, JS_PRINTF_FORMAT const char *fmt, ...)
+{
+    JSValue val;
+    va_list ap;
+
+    va_start(ap, fmt);
+    val = JS_ThrowError(ctx, JS_EVAL_ERROR, fmt, ap);
+    va_end(ap);
+    return val;
+}
+
 static int JS_PRINTF_FORMAT_ATTR(3, 4) JS_ThrowTypeErrorOrFalse(JSContext *ctx, int flags, JS_PRINTF_FORMAT const char *fmt, ...)
 {
     va_list ap;
@@ -11274,31 +11337,55 @@ static JSValue JS_ThrowSyntaxErrorVarRedeclaration(JSContext *ctx, JSAtom prop)
 }
 
 /* flags is 0, DEFINE_GLOBAL_LEX_VAR or DEFINE_GLOBAL_FUNC_VAR */
-/* XXX: could support exotic global object. */
 static int JS_CheckDefineGlobalVar(JSContext *ctx, JSAtom prop, int flags)
 {
     JSObject *p;
     JSShapeProperty *prs;
 
     p = JS_VALUE_GET_OBJ(ctx->global_obj);
-    prs = find_own_property1(p, prop);
-    /* XXX: should handle JS_PROP_AUTOINIT */
-    if (flags & DEFINE_GLOBAL_LEX_VAR) {
-        if (prs && !(prs->flags & JS_PROP_CONFIGURABLE))
-            goto fail_redeclaration;
-    } else {
-        if (!prs && !p->extensible)
-            goto define_error;
-        if (flags & DEFINE_GLOBAL_FUNC_VAR) {
-            if (prs) {
-                if (!(prs->flags & JS_PROP_CONFIGURABLE) &&
-                    ((prs->flags & JS_PROP_TMASK) == JS_PROP_GETSET ||
-                     ((prs->flags & (JS_PROP_WRITABLE | JS_PROP_ENUMERABLE)) !=
+    if (unlikely(p->is_exotic)) {
+        int prs_flags = 0;
+        int has = JS_GetOwnPropertyFlagsInternal(ctx, &prs_flags, p, prop);
+        if (has < 0)
+            return -1;
+        if (flags & DEFINE_GLOBAL_LEX_VAR) {
+            if (has && !(prs_flags & JS_PROP_CONFIGURABLE))
+                goto fail_redeclaration;
+        } else {
+            int ext = has ? 1 : JS_IsExtensible(ctx, ctx->global_obj);
+            if (ext < 0)
+                return -1;
+            if (!has && !ext)
+                goto define_error;
+            if (flags & DEFINE_GLOBAL_FUNC_VAR) {
+                if (has && !(prs_flags & JS_PROP_CONFIGURABLE) &&
+                    ((prs_flags & JS_PROP_TMASK) == JS_PROP_GETSET ||
+                     ((prs_flags & (JS_PROP_WRITABLE | JS_PROP_ENUMERABLE)) !=
                       (JS_PROP_WRITABLE | JS_PROP_ENUMERABLE)))) {
-                define_error:
-                    JS_ThrowTypeErrorAtom(ctx, "cannot define variable '%s'",
-                                          prop);
-                    return -1;
+                    goto define_error;
+                }
+            }
+        }
+    } else {
+        prs = find_own_property1(p, prop);
+        /* XXX: should handle JS_PROP_AUTOINIT */
+        if (flags & DEFINE_GLOBAL_LEX_VAR) {
+            if (prs && !(prs->flags & JS_PROP_CONFIGURABLE))
+                goto fail_redeclaration;
+        } else {
+            if (!prs && !p->extensible)
+                goto define_error;
+            if (flags & DEFINE_GLOBAL_FUNC_VAR) {
+                if (prs) {
+                    if (!(prs->flags & JS_PROP_CONFIGURABLE) &&
+                        ((prs->flags & JS_PROP_TMASK) == JS_PROP_GETSET ||
+                         ((prs->flags & (JS_PROP_WRITABLE | JS_PROP_ENUMERABLE)) !=
+                          (JS_PROP_WRITABLE | JS_PROP_ENUMERABLE)))) {
+                    define_error:
+                        JS_ThrowTypeErrorAtom(ctx, "cannot define variable '%s'",
+                                              prop);
+                        return -1;
+                    }
                 }
             }
         }
@@ -11316,7 +11403,6 @@ static int JS_CheckDefineGlobalVar(JSContext *ctx, JSAtom prop, int flags)
 
 /* def_flags is (0, DEFINE_GLOBAL_LEX_VAR) |
    JS_PROP_CONFIGURABLE | JS_PROP_WRITABLE */
-/* XXX: could support exotic global object. */
 static int JS_DefineGlobalVar(JSContext *ctx, JSAtom prop, int def_flags)
 {
     JSObject *p;
@@ -11332,6 +11418,21 @@ static int JS_DefineGlobalVar(JSContext *ctx, JSAtom prop, int def_flags)
         val = JS_UNINITIALIZED;
     } else {
         p = JS_VALUE_GET_OBJ(ctx->global_obj);
+        if (unlikely(p->is_exotic)) {
+            int has = JS_GetOwnPropertyFlagsInternal(ctx, &flags, p, prop);
+            if (has < 0)
+                return -1;
+            if (has)
+                return 0;
+            int ext = JS_IsExtensible(ctx, ctx->global_obj);
+            if (ext <= 0)
+                return ext;
+            flags = JS_PROP_ENUMERABLE | JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE |
+                JS_PROP_HAS_VALUE | JS_PROP_HAS_WRITABLE |
+                JS_PROP_HAS_ENUMERABLE | JS_PROP_HAS_CONFIGURABLE;
+            return JS_DefineProperty(ctx, ctx->global_obj, prop, JS_UNDEFINED,
+                                     JS_UNDEFINED, JS_UNDEFINED, flags) < 0 ? -1 : 0;
+        }
         flags = JS_PROP_ENUMERABLE | JS_PROP_WRITABLE |
             (def_flags & JS_PROP_CONFIGURABLE);
         val = JS_UNDEFINED;
@@ -11349,7 +11450,6 @@ static int JS_DefineGlobalVar(JSContext *ctx, JSAtom prop, int def_flags)
 }
 
 /* 'def_flags' is 0 or JS_PROP_CONFIGURABLE. */
-/* XXX: could support exotic global object. */
 static int JS_DefineGlobalFunction(JSContext *ctx, JSAtom prop,
                                    JSValue func, int def_flags)
 {
@@ -11359,11 +11459,22 @@ static int JS_DefineGlobalFunction(JSContext *ctx, JSAtom prop,
     int flags;
 
     p = JS_VALUE_GET_OBJ(ctx->global_obj);
-    prs = find_own_property1(p, prop);
     flags = JS_PROP_HAS_VALUE | JS_PROP_THROW;
-    if (!prs || (prs->flags & JS_PROP_CONFIGURABLE)) {
-        flags |= JS_PROP_ENUMERABLE | JS_PROP_WRITABLE | def_flags |
-            JS_PROP_HAS_CONFIGURABLE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE;
+    if (unlikely(p->is_exotic)) {
+        int prs_flags = 0;
+        int has = JS_GetOwnPropertyFlagsInternal(ctx, &prs_flags, p, prop);
+        if (has < 0)
+            return -1;
+        if (!has || (prs_flags & JS_PROP_CONFIGURABLE)) {
+            flags |= JS_PROP_ENUMERABLE | JS_PROP_WRITABLE | JS_PROP_CONFIGURABLE |
+                JS_PROP_HAS_CONFIGURABLE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE;
+        }
+    } else {
+        prs = find_own_property1(p, prop);
+        if (!prs || (prs->flags & JS_PROP_CONFIGURABLE)) {
+            flags |= JS_PROP_ENUMERABLE | JS_PROP_WRITABLE | def_flags |
+                JS_PROP_HAS_CONFIGURABLE | JS_PROP_HAS_WRITABLE | JS_PROP_HAS_ENUMERABLE;
+        }
     }
     if (JS_DefineProperty(ctx, ctx->global_obj, prop, func,
                           JS_UNDEFINED, JS_UNDEFINED, flags) < 0)
@@ -30026,6 +30137,74 @@ JSValue JS_GetModulePrivateValue(JSContext *ctx, JSModuleDef *m)
     return js_dup(m->private_value);
 }
 
+JSModuleDef *JS_ValueToModule(JSValueConst val)
+{
+    if (JS_VALUE_GET_TAG(val) == JS_TAG_MODULE) {
+        return (JSModuleDef *)JS_VALUE_GET_PTR(val);
+    }
+    return NULL;
+}
+
+JSValue JS_ModuleToValue(JSContext *ctx, JSModuleDef *m)
+{
+    (void)ctx;
+    if (!m)
+        return JS_UNDEFINED;
+    return js_dup(JS_MKPTR(JS_TAG_MODULE, m));
+}
+
+int JS_GetModuleReqCount(JSModuleDef *m)
+{
+    return m->req_module_entries_count;
+}
+
+JSValue JS_GetModuleReqName(JSContext *ctx, JSModuleDef *m, int idx)
+{
+    if (idx < 0 || idx >= m->req_module_entries_count)
+        return JS_UNDEFINED;
+    return JS_AtomToValue(ctx, m->req_module_entries[idx].module_name);
+}
+
+JSValue JS_GetModuleReqAttributes(JSContext *ctx, JSModuleDef *m, int idx)
+{
+    if (idx < 0 || idx >= m->req_module_entries_count)
+        return JS_UNDEFINED;
+    return js_dup(m->req_module_entries[idx].attributes);
+}
+
+int JS_SetModuleReqModule(JSModuleDef *m, int idx, JSModuleDef *dep)
+{
+    if (idx < 0 || idx >= m->req_module_entries_count || !dep)
+        return -1;
+    m->req_module_entries[idx].module = dep;
+    return 0;
+}
+
+void JS_SetModuleResolved(JSModuleDef *m, bool resolved)
+{
+    m->resolved = resolved;
+}
+
+int JS_GetModuleStatus(JSModuleDef *m)
+{
+    if (m->eval_has_exception)
+        return 6;
+    return (int)m->status;
+}
+
+JSValue JS_GetModuleEvalException(JSContext *ctx, JSModuleDef *m)
+{
+    (void)ctx;
+    if (m->eval_has_exception)
+        return js_dup(m->eval_exception);
+    return JS_UNDEFINED;
+}
+
+bool JS_ModuleHasTLA(JSModuleDef *m)
+{
+    return m->has_tla;
+}
+
 /* default module filename normalizer */
 static char *js_default_module_normalize_name(JSContext *ctx,
                                               const char *base_name,
@@ -31281,6 +31460,22 @@ static JSValue js_dynamic_import(JSContext *ctx, JSValueConst specifier,
     args[3] = specifier_str;
     args[4] = attributes;
 
+    if (ctx->rt->dynamic_import_hook) {
+        JSValue hook_ret = ctx->rt->dynamic_import_hook(
+            ctx, basename_val, specifier_str, attributes,
+            ctx->rt->dynamic_import_hook_opaque);
+        if (!JS_IsUninitialized(hook_ret)) {
+            if (JS_IsException(hook_ret)) {
+                JS_FreeValue(ctx, hook_ret);
+                goto exception;
+            }
+            ret = JS_Call(ctx, resolving_funcs[0], JS_UNDEFINED, 1, vc(&hook_ret));
+            JS_FreeValue(ctx, ret);
+            JS_FreeValue(ctx, hook_ret);
+            goto done;
+        }
+    }
+
     /* cannot run JS_LoadModuleInternal synchronously because it would
        cause an unexpected recursion in js_evaluate_module() */
     JS_EnqueueJob(ctx, js_dynamic_import_job, 5, vc(args));
@@ -31691,6 +31886,22 @@ static JSValue js_evaluate_module(JSContext *ctx, JSModuleDef *m)
         assert(stack_top == NULL);
     }
     return js_dup(m->promise);
+}
+
+int JS_VmLinkModule(JSContext *ctx, JSModuleDef *m)
+{
+    if (!m)
+        return -1;
+    if (js_create_module_function(ctx, m) < 0)
+        return -1;
+    return js_link_module(ctx, m);
+}
+
+JSValue JS_VmEvaluateModule(JSContext *ctx, JSModuleDef *m)
+{
+    if (!m)
+        return JS_EXCEPTION;
+    return js_evaluate_module(ctx, m);
 }
 
 #ifndef QJS_DISABLE_PARSER
@@ -37502,8 +37713,10 @@ static JSValue __JS_EvalInternal(JSContext *ctx, JSValueConst this_obj,
     /* Could add a flag to avoid resolution if necessary */
     if (m) {
         m->func_obj = fun_obj;
-        if (js_resolve_module(ctx, m) < 0)
-            goto fail1;
+        if (!(flags & JS_EVAL_FLAG_NO_RESOLVE)) {
+            if (js_resolve_module(ctx, m) < 0)
+                goto fail1;
+        }
         fun_obj = JS_NewModuleValue(ctx, m);
     }
     if (flags & JS_EVAL_FLAG_COMPILE_ONLY) {
@@ -37546,6 +37759,9 @@ static JSValue JS_EvalObject(JSContext *ctx, JSValueConst this_obj,
     const char *str;
     size_t len;
 
+    if (unlikely(ctx->disallow_codegen_from_strings)) {
+        return js_throw_eval_error(ctx, "Code generation from strings disallowed for this context");
+    }
     if (!JS_IsString(val))
         return js_dup(val);
     str = JS_ToCStringLen(ctx, &len, val);
@@ -38602,6 +38818,7 @@ typedef struct BCReaderState {
     bool allow_sab;
     bool allow_bytecode;
     bool allow_reference;
+    bool no_module_resolve;
     /* object references */
     JSObject **objects;
     int objects_count;
@@ -39231,21 +39448,16 @@ static JSValue JS_ReadModule(BCReaderState *s)
         for(i = 0; i < m->req_module_entries_count; i++) {
             JSReqModuleEntry *rme = &m->req_module_entries[i];
             JSModuleDef **pm = &rme->module;
+            rme->attributes = JS_UNDEFINED;
             if (bc_get_atom(s, &rme->module_name))
                 goto fail;
-            // Resolves a module either from the cache or by requesting
-            // it from the module loader. From cache is not ideal because
-            // the module may not be the one it was a time of serialization
-            // but directly petitioning the module loader is not correct
-            // either because then the same module can get loaded twice.
-            // JS_WriteModule() does not serialize modules transitively
-            // because that doesn't work for C modules and is also prone
-            // to loading the same JS module twice.
-            *pm = js_host_resolve_imported_module_atom(s->ctx, m->module_name,
-                                                       rme->module_name,
-                                                       rme->attributes);
-            if (!*pm)
-                goto fail;
+            if (!s->no_module_resolve) {
+                *pm = js_host_resolve_imported_module_atom(s->ctx, m->module_name,
+                                                           rme->module_name,
+                                                           rme->attributes);
+                if (!*pm)
+                    goto fail;
+            }
         }
     }
 
@@ -39847,6 +40059,7 @@ JSValue JS_ReadObject2(JSContext *ctx, const uint8_t *buf, size_t buf_len,
     s->allow_bytecode = ((flags & JS_READ_OBJ_BYTECODE) != 0);
     s->allow_sab = ((flags & JS_READ_OBJ_SAB) != 0);
     s->allow_reference = ((flags & JS_READ_OBJ_REFERENCE) != 0);
+    s->no_module_resolve = ((flags & JS_READ_OBJ_NO_RESOLVE) != 0);
     if (s->allow_bytecode)
         s->first_atom = JS_ATOM_END;
     else
@@ -51503,7 +51716,7 @@ static int js_proxy_define_own_property(JSContext *ctx, JSValueConst obj,
                 goto fail1;
             }
         }
-        if (flags & JS_PROP_HAS_WRITABLE) {
+        if ((flags & (JS_PROP_HAS_WRITABLE | JS_PROP_WRITABLE)) == JS_PROP_HAS_WRITABLE) {
             if ((desc.flags & (JS_PROP_GETSET | JS_PROP_CONFIGURABLE |
                                JS_PROP_WRITABLE)) == JS_PROP_WRITABLE) {
                 /* proxy-missing-checks */

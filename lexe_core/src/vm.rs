@@ -307,6 +307,10 @@ impl Vm {
                 lexe_utils::event_loop::unregister_runtime(rt_key);
                 let _ = shutdown_module_state(&ctx);
                 let _ = shutdown_context_userdata(&ctx);
+                unsafe {
+                    let rt = rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr());
+                    lexe_utils::event_loop::run_runtime_cleanups(rt as *mut std::ffi::c_void);
+                }
                 Ok::<(), Error>(())
             })
             .await;

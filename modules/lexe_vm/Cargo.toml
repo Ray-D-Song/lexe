@@ -11,8 +11,12 @@ name = "lexe_vm"
 path = "src/lib.rs"
 
 [dependencies]
+lexe_buffer = { version = "0.1.2", path = "../lexe_buffer" }
 lexe_utils = { version = "0.1.2", path = "../../libs/lexe_utils", default-features = false }
-rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
+rquickjs = { version = "=0.12.1", features = ["std", "macro", "futures"], default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 lexe_test = { path = "../../libs/lexe_test" }

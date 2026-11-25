@@ -331,6 +331,9 @@ fn parse_node_cli_flags(raw_argv: Vec<String>) -> NodeCliFlags {
                 no_warnings = true;
                 exec_argv.push(arg.clone());
             },
+            "--experimental-vm-modules" => {
+                exec_argv.push(arg.clone());
+            },
             "--trace-warnings" => {
                 trace_warnings = true;
                 exec_argv.push(arg.clone());

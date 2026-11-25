@@ -117,6 +117,8 @@ fn main() {
         println!("cargo:rerun-if-env-changed={}", feature_to_cargo(feature));
     }
     println!("cargo:rerun-if-env-changed=CARGO_CFG_SANITIZE");
+    println!("cargo:rerun-if-changed=quickjs");
+    println!("cargo:rerun-if-changed=quickjs.bind.h");
 
     let src_dir = Path::new("quickjs");
 
