@@ -30,7 +30,7 @@
 | node:os | ✔︎ | ✔︎ | — |
 | node:path | ✔︎ | ✔︎ | — |
 | node:perf_hooks | ✔︎ | ✔︎⚠️ | Static `nodeTiming` stub; no automatic GC/resource entries; timer-based ms `monitorEventLoopDelay`; fallback `eventLoopUtilization` ([details](#nodeperf_hooks)) |
-| node:process | ✔︎ | ✔︎⚠️ | Missing `execPath`, `execArgv`, `ppid`, `uptime`, `memoryUsage`, `cpuUsage`, `resourceUsage`, `umask`, `loadEnvFile`, `report`, and `permission` ([details](#nodeprocess)) |
+| node:process | ✔︎ | ✔︎ | Runtime identity ([notes](#nodeprocess)) |
 | node:querystring | ✔︎ | ✔︎ | — |
 | node:readline | ✔︎ | ✔︎ | — |
 | node:readline/promises | ✔︎ | ✔︎ | — |
@@ -178,11 +178,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `createHistogram()` ignores `lowest`/`highest`/`figures` bucketing parameters and stores exact samples in an array.
 - `performance.eventLoopUtilization()` falls back to `{ active: elapsed, idle: 0 }` because native active/idle event-loop counters are not wired in.
 
-#### `node:process`
-
-- Missing common Node.js properties and methods: `execPath`, `execArgv`, `ppid`, `uptime()`, `memoryUsage()` / `memoryUsage.rss()`, `cpuUsage()`, `resourceUsage()`, `constrainedMemory()`, `availableMemory()`, `umask()`, `title`, `config`, `features`, `allowedNodeEnvironmentFlags`, `report`, `permission`, `loadEnvFile()`, `getActiveResourcesInfo()`, `setUncaughtExceptionCaptureCallback()`, `abort()`, `finalization`, `ref()`/`unref()`, and `setSourceMapsEnabled()`.
-- `process.version` (`v24.3.0`) and `process.versions.node` (`24.3.0`) advertise Node 24.3 compatibility while `process.release.name` is `"lexe"` and engine keys such as `v8`, `uv`, and `openssl` are absent from `process.versions`.
-
 #### `node:stream/web`
 
 - `TransformStream` rejects `readableType` and `writableType` options.
@@ -307,6 +302,10 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Implemented natively: `createServer`, `createSecureServer`, `connect`, settings helpers, and constants.
 - Browser builds may still use the embedded load-time stub when the native module is unavailable.
+
+### `node:process`
+
+- `process.version` (`v24.3.0`) and `process.versions.node` (`24.3.0`) advertise Node 24.3 compatibility while `process.release.name` is `"lexe"` and V8/libuv/OpenSSL-specific keys (`v8`, `uv`, `openssl`) are replaced by Lexe runtime keys (`lexe`, `node`, `sqlite`).
 
 ### Native addons
 

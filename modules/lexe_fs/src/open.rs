@@ -47,6 +47,12 @@ pub async fn open(
 
     let path = PathBuf::from(path);
     let path_str = path.to_string_lossy().into_owned();
+    if flag_str.contains('r') || flag_str == "r+" {
+        lexe_utils::permissions::ensure_fs_read(&ctx, &path_str)?;
+    }
+    if flag_str != "r" {
+        lexe_utils::permissions::ensure_fs_write(&ctx, &path_str)?;
+    }
     let file = options
         .open(&path)
         .await

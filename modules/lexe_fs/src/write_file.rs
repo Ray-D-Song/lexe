@@ -316,6 +316,7 @@ async fn write_file_flagged<'js>(
     options: Opt<Value<'js>>,
     default_flag: &str,
 ) -> Result<()> {
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
     let (encoding, mode, flag) = resolve_options(&ctx, options, default_flag)?;
     let bytes = data_bytes(&ctx, &data, encoding.as_deref())?;
 
@@ -355,6 +356,7 @@ fn write_file_sync_flagged<'js>(
     options: Opt<Value<'js>>,
     default_flag: &str,
 ) -> Result<()> {
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
     let (encoding, mode, flag) = resolve_options(&ctx, options, default_flag)?;
     let bytes = data_bytes(&ctx, &data, encoding.as_deref())?;
 

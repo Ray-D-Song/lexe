@@ -427,7 +427,7 @@ impl<'js> ChildProcess<'js> {
 
         let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
         let rt_key = lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
-        let loop_ref = EventLoopRef::new_referenced(rt_key);
+        let loop_ref = EventLoopRef::new_referenced_named(rt_key, "ChildProcess");
 
         let instance = Self {
             emitter: EventEmitter::new(),
@@ -865,6 +865,7 @@ fn spawn<'js>(
     cmd_val: Value<'js>,
     args_and_opts: Rest<Value<'js>>,
 ) -> Result<Class<'js, ChildProcess<'js>>> {
+    lexe_utils::permissions::ensure_child_process(&ctx)?;
     let args_val = args_and_opts.first().cloned();
     let opts_val = args_and_opts.get(1).cloned();
     let (raw_cmd, raw_args, opts) = parse_cmd_args_and_opts(

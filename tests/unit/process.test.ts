@@ -8,8 +8,10 @@ import {
   id as namedId,
   pid as namedPid,
 } from "node:process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnCapture } from "./test-utils";
 
 it("node:process should be the same as process", () => {
@@ -370,5 +372,306 @@ describe("process lifecycle drain", () => {
     expect(code).toBe(0);
     expect(stderr).toContain("exit:0");
     expect(Date.now() - start).toBeGreaterThanOrEqual(40);
+  });
+});
+
+describe("extended Node process APIs", () => {
+  it("exposes execPath, execArgv, ppid, uptime, title, config, features, allowedNodeEnvironmentFlags", async () => {
+    expect(typeof process.execPath).toBe("string");
+    expect(process.execPath.length).toBeGreaterThan(0);
+    expect(Array.isArray(process.execArgv)).toBe(true);
+    expect(typeof process.ppid).toBe("number");
+    expect(process.ppid).toBeGreaterThanOrEqual(0);
+    const ppidDesc = Object.getOwnPropertyDescriptor(process, "ppid");
+    expect(ppidDesc?.enumerable).toBe(true);
+    expect(ppidDesc?.writable).toBe(false);
+
+    expect(typeof process.uptime()).toBe("number");
+    expect(process.uptime()).toBeGreaterThanOrEqual(0);
+
+    const oldTitle = process.title;
+    process.title = "lexe-test-title";
+    expect(process.title).toBe("lexe-test-title");
+    process.title = oldTitle;
+
+    expect(typeof process.config).toBe("object");
+    expect(typeof process.config.variables).toBe("object");
+    expect(process.features.tls).toBe(true);
+    expect(process.allowedNodeEnvironmentFlags instanceof Set).toBe(true);
+    expect(process.allowedNodeEnvironmentFlags.has("--no-warnings")).toBe(true);
+    expect(process.allowedNodeEnvironmentFlags.has("--permission")).toBe(true);
+
+    const { code, stdout } = await spawnCapture(process.argv[0], [
+      "--no-warnings",
+      "--enable-source-maps",
+      "-e",
+      "console.log(JSON.stringify({ execArgv: process.execArgv, sm: process.sourceMapsEnabled }))",
+    ]);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout.trim())).toEqual({
+      execArgv: ["--no-warnings", "--enable-source-maps"],
+      sm: true,
+    });
+  });
+
+  it("reports memoryUsage(), memoryUsage.rss(), cpuUsage(), resourceUsage(), constrainedMemory(), availableMemory()", () => {
+    const mem = process.memoryUsage();
+    expect(mem.rss).toBeGreaterThan(0);
+    expect(mem.heapTotal).toBeGreaterThan(0);
+    expect(mem.heapUsed).toBeGreaterThan(0);
+    expect(typeof mem.external).toBe("number");
+    expect(typeof mem.arrayBuffers).toBe("number");
+    expect(process.memoryUsage.rss()).toBeGreaterThan(0);
+
+    const c1 = process.cpuUsage();
+    expect(c1.user).toBeGreaterThanOrEqual(0);
+    expect(c1.system).toBeGreaterThanOrEqual(0);
+    const c2 = process.cpuUsage(c1);
+    expect(c2.user).toBeGreaterThanOrEqual(0);
+    expect(c2.system).toBeGreaterThanOrEqual(0);
+    expect(() => process.cpuUsage("bad" as any)).toThrow();
+    expect(() => process.cpuUsage({ user: -1, system: 0 })).toThrow();
+
+    const ru = process.resourceUsage();
+    for (const key of [
+      "userCPUTime",
+      "systemCPUTime",
+      "maxRSS",
+      "minorPageFault",
+      "majorPageFault",
+      "voluntaryContextSwitches",
+      "involuntaryContextSwitches",
+    ]) {
+      expect(typeof (ru as any)[key]).toBe("number");
+    }
+
+    expect(typeof process.constrainedMemory()).toBe("number");
+    expect(process.constrainedMemory()).toBeGreaterThanOrEqual(0);
+    expect(typeof process.availableMemory()).toBe("number");
+    expect(process.availableMemory()).toBeGreaterThanOrEqual(0);
+  });
+
+  it("supports umask(), ref/unref helpers, getActiveResourcesInfo(), and synced sourceMapsEnabled", () => {
+    const origMask = process.umask();
+    try {
+      const prev1 = process.umask(0o027);
+      expect(prev1).toBe(origMask);
+      expect(process.umask()).toBe(0o027);
+      const prev2 = process.umask("022");
+      expect(prev2).toBe(0o027);
+      expect(process.umask()).toBe(0o022);
+    } finally {
+      process.umask(origMask);
+    }
+    expect(() => process.umask("not-octal")).toThrow();
+
+    let refCalls = 0;
+    let unrefCalls = 0;
+    const handle = {
+      ref() {
+        refCalls += 1;
+      },
+      unref() {
+        unrefCalls += 1;
+      },
+    };
+    process.ref(handle);
+    process.unref(handle);
+    process.ref(null);
+    process.unref(123);
+    expect(refCalls).toBe(1);
+    expect(unrefCalls).toBe(1);
+
+    const timer = setTimeout(() => {}, 5000);
+    try {
+      const active = process.getActiveResourcesInfo();
+      expect(Array.isArray(active)).toBe(true);
+      expect(active.length).toBeGreaterThan(0);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const req = createRequire(import.meta.url);
+    const mod = req("node:module");
+    const origSm = process.sourceMapsEnabled;
+    try {
+      process.setSourceMapsEnabled(true);
+      expect(process.sourceMapsEnabled).toBe(true);
+      expect(mod.getSourceMapsSupport().enabled).toBe(true);
+      mod.setSourceMapsSupport(false);
+      expect(process.sourceMapsEnabled).toBe(false);
+      expect(() => process.setSourceMapsEnabled("yes" as any)).toThrow();
+    } finally {
+      process.setSourceMapsEnabled(origSm);
+    }
+  });
+
+  it("loads .env files without overwriting existing env vars and throws ENOENT when missing", () => {
+    const envPath = join(tmpdir(), `lexe-env-${process.pid}-${Date.now()}.env`);
+    writeFileSync(
+      envPath,
+      [
+        "# leading comment",
+        "LEXE_TEST_PLAIN=hello # inline comment",
+        'export LEXE_TEST_EXPORTED="line1\\nline2"',
+        "LEXE_TEST_SINGLE='literal # not comment'",
+        "LEXE_TEST_EXISTING=from-file",
+      ].join("\n")
+    );
+    process.env.LEXE_TEST_EXISTING = "already-set";
+    try {
+      process.loadEnvFile(envPath);
+      expect(process.env.LEXE_TEST_PLAIN).toBe("hello");
+      expect(process.env.LEXE_TEST_EXPORTED).toBe("line1\nline2");
+      expect(process.env.LEXE_TEST_SINGLE).toBe("literal # not comment");
+      expect(process.env.LEXE_TEST_EXISTING).toBe("already-set");
+    } finally {
+      delete process.env.LEXE_TEST_PLAIN;
+      delete process.env.LEXE_TEST_EXPORTED;
+      delete process.env.LEXE_TEST_SINGLE;
+      delete process.env.LEXE_TEST_EXISTING;
+      rmSync(envPath, { force: true });
+    }
+
+    let missingErr: any;
+    try {
+      process.loadEnvFile(envPath + ".missing");
+    } catch (e) {
+      missingErr = e;
+    }
+    expect(missingErr?.code).toBe("ENOENT");
+    expect(missingErr?.syscall).toBe("open");
+  });
+
+  it("supports report.getReport() and report.writeReport()", () => {
+    const reportObj = process.report.getReport(new Error("sample-err"));
+    expect(reportObj.header.reportVersion).toBe(5);
+    expect(reportObj.header.nodejsVersion).toBe(process.version);
+    expect(reportObj.javascriptStack.message).toContain("sample-err");
+    expect(typeof reportObj.resourceUsage.maxRSS).toBe("number");
+
+    const outPath = join(tmpdir(), `lexe-report-${process.pid}-${Date.now()}.json`);
+    try {
+      const written = process.report.writeReport(outPath);
+      expect(written).toBe(outPath);
+      const parsed = JSON.parse(readFileSync(outPath, "utf8"));
+      expect(parsed.header.trigger).toBe("WriteReport");
+      expect(parsed.header.filename).toBe(outPath);
+    } finally {
+      rmSync(outPath, { force: true });
+    }
+  });
+
+  it("supports setUncaughtExceptionCaptureCallback and finalization in subprocesses", async () => {
+    expect(process.hasUncaughtExceptionCaptureCallback()).toBe(false);
+    expect(() => process.setUncaughtExceptionCaptureCallback("bad" as any)).toThrow();
+    const dummy = () => {};
+    process.setUncaughtExceptionCaptureCallback(dummy);
+    expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
+    let dupErr: any;
+    try {
+      process.setUncaughtExceptionCaptureCallback(() => {});
+    } catch (e) {
+      dupErr = e;
+    }
+    expect(dupErr?.code).toBe("ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET");
+    process.setUncaughtExceptionCaptureCallback(null);
+    expect(process.hasUncaughtExceptionCaptureCallback()).toBe(false);
+
+    const syncCap = await spawnCapture(process.argv[0], [
+      "-e",
+      `
+        process.setUncaughtExceptionCaptureCallback((err) => {
+          console.log("sync-captured:" + err.message);
+        });
+        throw new Error("boom-sync");
+      `,
+    ]);
+    expect(syncCap.code).toBe(0);
+    expect(syncCap.stdout.trim()).toBe("sync-captured:boom-sync");
+
+    const asyncCap = await spawnCapture(process.argv[0], [
+      "-e",
+      `
+        process.setUncaughtExceptionCaptureCallback((err) => {
+          console.log("async-captured:" + err.message);
+        });
+        setTimeout(() => { throw new Error("boom-async"); }, 10);
+      `,
+    ]);
+    expect(asyncCap.code).toBe(0);
+    expect(asyncCap.stdout.trim()).toBe("async-captured:boom-async");
+
+    const finRes = await spawnCapture(process.argv[0], [
+      "-e",
+      `
+        const events = [];
+        const a = { name: "a" };
+        const b = { name: "b" };
+        const c = { name: "c" };
+        process.finalization.register(a, (t, ev) => events.push(t.name + ":" + ev));
+        process.finalization.registerBeforeExit(b, (t, ev) => events.push(t.name + ":" + ev));
+        process.finalization.register(c, (t, ev) => events.push(t.name + ":" + ev));
+        process.finalization.unregister(c);
+        process.on("exit", () => console.error("fin:" + events.join(",")));
+      `,
+    ]);
+    expect(finRes.code).toBe(0);
+    expect(finRes.stderr).toContain("fin:");
+    expect(finRes.stderr).toContain("b:beforeExit");
+    expect(finRes.stderr).toContain("b:exit");
+    expect(finRes.stderr).toContain("a:exit");
+    expect(finRes.stderr).not.toContain("c:");
+  });
+
+  it("exposes process.permission only under --permission and enforces fs/child restrictions", async () => {
+    expect(process.permission).toBeUndefined();
+
+    const dir = join(tmpdir(), `lexe-perm-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const allowedFile = join(dir, "ok.txt");
+    const deniedFile = join(tmpdir(), `lexe-perm-denied-${process.pid}-${Date.now()}.txt`);
+    writeFileSync(allowedFile, "allowed-content");
+    writeFileSync(deniedFile, "denied-content");
+
+    try {
+      const { code, stdout } = await spawnCapture(process.argv[0], [
+        "--permission",
+        `--allow-fs-read=${dir}`,
+        "-e",
+        `
+          const fs = require("node:fs");
+          const cp = require("node:child_process");
+          const out = {
+            hasReadOk: process.permission.has("fs.read", ${JSON.stringify(allowedFile)}),
+            hasReadDenied: process.permission.has("fs.read", ${JSON.stringify(deniedFile)}),
+            hasWrite: process.permission.has("fs.write", ${JSON.stringify(allowedFile)}),
+            hasChild: process.permission.has("child"),
+            readOk: fs.readFileSync(${JSON.stringify(allowedFile)}, "utf8"),
+            readDeniedCode: null,
+            writeDeniedCode: null,
+            childDeniedCode: null,
+          };
+          try { fs.readFileSync(${JSON.stringify(deniedFile)}, "utf8"); } catch (e) { out.readDeniedCode = e.code; }
+          try { fs.writeFileSync(${JSON.stringify(allowedFile)}, "nope"); } catch (e) { out.writeDeniedCode = e.code; }
+          try { cp.spawn("echo", ["hi"]); } catch (e) { out.childDeniedCode = e.code; }
+          console.log(JSON.stringify(out));
+        `,
+      ]);
+      expect(code).toBe(0);
+      expect(JSON.parse(stdout.trim())).toEqual({
+        hasReadOk: true,
+        hasReadDenied: false,
+        hasWrite: false,
+        hasChild: false,
+        readOk: "allowed-content",
+        readDeniedCode: "ERR_ACCESS_DENIED",
+        writeDeniedCode: "ERR_ACCESS_DENIED",
+        childDeniedCode: "ERR_ACCESS_DENIED",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(deniedFile, { force: true });
+    }
   });
 });

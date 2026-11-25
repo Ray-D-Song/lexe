@@ -738,21 +738,43 @@ Process is an EventEmitter. Explicit `process.exit(code)` emits `"exit"` synchro
 
 `process.version` / `process.versions.node` advertise Node `24.3.0` for ecosystem gates; `process.versions.lexe` and CLI `--version` remain the real Lexe version.
 
+[abort](https://nodejs.org/api/process.html#processabort)
+
+[allowedNodeEnvironmentFlags](https://nodejs.org/api/process.html#processallowednodeenvironmentflags)
+
 [arch](https://nodejs.org/api/process.html#processarch)
 
 [argv](https://nodejs.org/api/process.html#processargv)
 
 [argv0](https://nodejs.org/api/process.html#processargv0)
 
+[availableMemory](https://nodejs.org/api/process.html#processavailablememory)
+
 [cwd](https://nodejs.org/api/process.html#processcwd)
 
 [chdir](https://nodejs.org/api/process.html#processchdirdirectory)
 
+[config](https://nodejs.org/api/process.html#processconfig)
+
+[constrainedMemory](https://nodejs.org/api/process.html#processconstrainedmemory)
+
+[cpuUsage](https://nodejs.org/api/process.html#processcpuusagepreviousvalue)
+
 [env](https://nodejs.org/api/process.html#processenv)
+
+[execArgv](https://nodejs.org/api/process.html#processexecargv)
+
+[execPath](https://nodejs.org/api/process.html#processexecpath)
 
 [exit](https://nodejs.org/api/process.html#processexitcode)
 
 [exitCode](https://nodejs.org/api/process.html#processexitcode-1)
+
+[features](https://nodejs.org/api/process.html#processfeatures)
+
+[finalization](https://nodejs.org/api/process.html#processfinalizationregisterref-shutdown)
+
+[getActiveResourcesInfo](https://nodejs.org/api/process.html#processgetactiveresourcesinfo)
 
 [getegid](https://nodejs.org/api/process.html#processgetegid)
 
@@ -762,9 +784,19 @@ Process is an EventEmitter. Explicit `process.exit(code)` emits `"exit"` synchro
 
 [getuid](https://nodejs.org/api/process.html#processgetuid)
 
+[hasUncaughtExceptionCaptureCallback](https://nodejs.org/api/process.html#processhasuncaughtexceptioncapturecallback)
+
 [hrtime](https://nodejs.org/api/process.html#processhrtime)
 
+[loadEnvFile](https://nodejs.org/api/process.html#processloadenvfilepath)
+
+[memoryUsage](https://nodejs.org/api/process.html#processmemoryusage) / `memoryUsage.rss()`
+
+[permission](https://nodejs.org/api/process.html#processpermission) (enabled when running with `--permission`; pairs with `--allow-fs-read`, `--allow-fs-write`, `--allow-child-process`, `--allow-worker`, `--allow-addons`, `--allow-wasi`)
+
 [pid](https://nodejs.org/api/process.html#processpid)
+
+[ppid](https://nodejs.org/api/process.html#processppid)
 
 [id](https://nodejs.org/api/process.html#processpid) (deprecated Lexe-legacy PID property; initialized to the same value as `process.pid`, remains writable for backward compatibility and is not a live alias of `pid`)
 
@@ -774,7 +806,17 @@ Process is an EventEmitter. Explicit `process.exit(code)` emits `"exit"` synchro
 
 [platform](https://nodejs.org/api/process.html#processplatform)
 
+[ref](https://nodejs.org/api/process.html#processrefmayberefable) / [unref](https://nodejs.org/api/process.html#processunrefmayberefable)
+
 [release](https://nodejs.org/api/process.html#processrelease)
+
+[report](https://nodejs.org/api/process.html#processreport) (`getReport()`, `writeReport()`, and standard report configuration fields)
+
+[resourceUsage](https://nodejs.org/api/process.html#processresourceusage)
+
+[setUncaughtExceptionCaptureCallback](https://nodejs.org/api/process.html#processsetuncaughtexceptioncapturecallbackfn)
+
+[sourceMapsEnabled](https://nodejs.org/api/process.html#processsourcemapssupport) / [setSourceMapsEnabled](https://nodejs.org/api/process.html#processsetsourcemapsenabledval)
 
 [setegid](https://nodejs.org/api/process.html#processsetegidgid)
 
@@ -783,6 +825,12 @@ Process is an EventEmitter. Explicit `process.exit(code)` emits `"exit"` synchro
 [setgid](https://nodejs.org/api/process.html#processsetgidgid)
 
 [setuid](https://nodejs.org/api/process.html#processsetuiduid)
+
+[title](https://nodejs.org/api/process.html#processtitle)
+
+[umask](https://nodejs.org/api/process.html#processumaskmask)
+
+[uptime](https://nodejs.org/api/process.html#processuptime)
 
 [version](https://nodejs.org/api/process.html#processversion)
 

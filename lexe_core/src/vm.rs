@@ -183,7 +183,7 @@ impl Vm {
         self.ctx
             .with(|ctx| {
                 if let Err(err) = f(&ctx).catch(&ctx) {
-                    print_error_and_exit(&ctx, err);
+                    handle_uncaught_error(&ctx, err);
                 }
             })
             .await;
@@ -195,7 +195,26 @@ impl Vm {
             options.strict = strict;
             options.promise = true;
             options.global = global;
-            let _ = ctx.eval_with_options::<Value, _>(source, options)?;
+            let res = ctx.eval_with_options::<Value, _>(source, options)?;
+            if res.is_promise() {
+                let suppress = rejection_tracker_cache(ctx)?.suppress_reason;
+                if let Ok(catcher) = ctx.eval::<Function, _>(
+                    r#"(p, suppress) => {
+  if (p && typeof p.then === "function") {
+    p.then(undefined, (e) => {
+      suppress(e);
+      if (typeof process !== "undefined" && process?.[Symbol.for("lexe.invokeUncaughtCapture")]?.(e)) {
+        return;
+      }
+      console.error(e);
+      if (typeof process !== "undefined") process.exitCode = 1;
+    });
+  }
+}"#,
+                ) {
+                    let _ = catcher.call::<_, ()>((res, suppress));
+                }
+            }
             Ok::<_, Error>(())
         })
         .await;
@@ -208,7 +227,7 @@ impl Vm {
         let source = [
             r#"await import(""#,
             &filename.as_ref().replace('\\', "/"),
-            r#"").catch((e) => {console.error(e);process.exit(1)})"#,
+            r#"").catch((e) => { if (typeof process !== "undefined" && process?.[Symbol.for("lexe.invokeUncaughtCapture")]?.(e)) return; console.error(e); process.exit(1); })"#,
         ]
         .concat();
 
@@ -233,7 +252,7 @@ impl Vm {
                 .catch(&ctx);
 
                 if let Err(err) = result {
-                    print_error_and_exit(&ctx, err);
+                    handle_uncaught_error(&ctx, err);
                 }
             })
             .await;
@@ -273,34 +292,40 @@ fn track_promise_rejection<'js>(
     reason: Value<'js>,
     is_handled: bool,
 ) -> Result<()> {
-    let track = rejection_tracker_fn(&ctx)?;
-    track.call::<_, ()>((promise, reason, is_handled))?;
+    let cache = rejection_tracker_cache(&ctx)?;
+    cache.track.call::<_, ()>((promise, reason, is_handled))?;
     Ok(())
 }
 
-/// Private ctx userdata holding the deferred rejection tracker function.
+/// Private ctx userdata holding the deferred rejection tracker functions.
 /// Pending map / schedule state live in the JS closure — not on `globalThis`.
-#[derive(rquickjs::JsLifetime)]
+#[derive(Clone, rquickjs::JsLifetime)]
 struct RejectionTrackerCache<'js> {
     track: Function<'js>,
+    suppress_reason: Function<'js>,
 }
 
-fn rejection_tracker_fn<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
+fn rejection_tracker_cache<'js>(ctx: &Ctx<'js>) -> Result<RejectionTrackerCache<'js>> {
     if let Some(cached) = ctx.userdata::<RejectionTrackerCache>() {
-        return Ok(cached.track.clone());
+        return Ok(cached.clone());
     }
 
     // Node-like: only emit / default-log after a macrotask, so same-turn `.catch()`
     // can cancel. `rejectionHandled` is intentionally not emitted yet.
-    let track: Function = ctx.eval(
+    let obj: rquickjs::Object = ctx.eval(
         r#"
 (() => {
   const pending = new Map();
+  const suppressed = new Set();
   let scheduled = false;
   const flush = () => {
     scheduled = false;
     for (const [promise, reason] of pending) {
       pending.delete(promise);
+      if (suppressed.has(reason)) {
+        suppressed.delete(reason);
+        continue;
+      }
       let handled = false;
       try {
         handled = process.emit("unhandledRejection", reason, promise) === true;
@@ -313,6 +338,7 @@ fn rejection_tracker_fn<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
         process.exitCode = 1;
       } catch (_) {}
     }
+    suppressed.clear();
   };
   const schedule = () => {
     if (scheduled) return;
@@ -321,31 +347,51 @@ fn rejection_tracker_fn<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
     else if (typeof setTimeout === "function") setTimeout(flush, 0);
     else Promise.resolve().then(flush);
   };
-  return (promise, reason, isHandled) => {
-    if (isHandled) {
-      pending.delete(promise);
-      return;
-    }
-    pending.set(promise, reason);
-    schedule();
+  return {
+    track(promise, reason, isHandled) {
+      if (isHandled || suppressed.has(reason)) {
+        pending.delete(promise);
+        return;
+      }
+      pending.set(promise, reason);
+      schedule();
+    },
+    suppressReason(reason) {
+      suppressed.add(reason);
+      for (const [promise, r] of pending) {
+        if (r === reason) pending.delete(promise);
+      }
+      schedule();
+    },
   };
 })()
 "#,
     )?;
 
     let cache = RejectionTrackerCache {
-        track: track.clone(),
+        track: obj.get("track")?,
+        suppress_reason: obj.get("suppressReason")?,
     };
-    let _ = ctx.store_userdata(cache);
+    let _ = ctx.store_userdata(cache.clone());
     if let Some(cached) = ctx.userdata::<RejectionTrackerCache>() {
-        return Ok(cached.track.clone());
+        return Ok(cached.clone());
     }
-    Ok(track)
+    Ok(cache)
+}
+
+fn handle_uncaught_error<'js>(ctx: &Ctx<'js>, err: rquickjs::CaughtError<'js>) {
+    if let rquickjs::CaughtError::Exception(ref ex) = err {
+        #[cfg(feature = "process")]
+        if crate::modules::process::try_invoke_uncaught_exception_capture(ctx, ex.clone().into()) {
+            return;
+        }
+    }
+    print_error_and_exit(ctx, err);
 }
 
 fn init(ctx: &Ctx<'_>) -> Result<()> {
     set_spawn_error_handler(|ctx, err| {
-        print_error_and_exit(ctx, err);
+        handle_uncaught_error(ctx, err);
     });
 
     let globals = ctx.globals();

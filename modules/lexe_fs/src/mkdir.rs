@@ -11,6 +11,7 @@ use tokio::fs;
 
 pub async fn mkdir<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<String> {
     let (recursive, mode, path) = get_params(&path, options)?;
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
 
     if recursive {
         fs::create_dir_all(&path).await
@@ -26,6 +27,7 @@ pub async fn mkdir<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) 
 
 pub fn mkdir_sync<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<String> {
     let (recursive, mode, path) = get_params(&path, options)?;
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
 
     if recursive {
         std::fs::create_dir_all(&path)
@@ -66,6 +68,7 @@ fn random_chars(len: usize) -> String {
 }
 
 pub async fn mkdtemp(ctx: Ctx<'_>, prefix: String) -> Result<String> {
+    lexe_utils::permissions::ensure_fs_write(&ctx, &prefix)?;
     let path = [prefix.as_str(), random_chars(6).as_str()].join(",");
     fs::create_dir_all(&path)
         .await
@@ -74,6 +77,7 @@ pub async fn mkdtemp(ctx: Ctx<'_>, prefix: String) -> Result<String> {
 }
 
 pub fn mkdtemp_sync(ctx: Ctx<'_>, prefix: String) -> Result<String> {
+    lexe_utils::permissions::ensure_fs_write(&ctx, &prefix)?;
     let path = [prefix.as_str(), random_chars(6).as_str()].join(",");
     std::fs::create_dir_all(&path)
         .or_throw_msg(&ctx, &["Can't create dir \"", &path, "\""].concat())?;

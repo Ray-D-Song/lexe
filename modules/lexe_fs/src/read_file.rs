@@ -15,6 +15,7 @@ pub async fn read_file<'js>(
     options: Opt<Either<String, ReadFileOptions>>,
 ) -> Result<Value<'js>> {
     let path = path_from_value(&ctx, path)?;
+    lexe_utils::permissions::ensure_fs_read(&ctx, &path)?;
     let bytes = fs::read(&path)
         .await
         .map_err(|err| throw_fs_error(&ctx, err, "open", &path))?;
@@ -28,6 +29,7 @@ pub fn read_file_sync<'js>(
     options: Opt<Either<String, ReadFileOptions>>,
 ) -> Result<Value<'js>> {
     let path = path_from_value(&ctx, path)?;
+    lexe_utils::permissions::ensure_fs_read(&ctx, &path)?;
     let bytes = std::fs::read(&path).map_err(|err| throw_fs_error(&ctx, err, "open", &path))?;
 
     handle_read_file_bytes(&ctx, options, bytes)

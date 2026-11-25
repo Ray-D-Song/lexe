@@ -7,6 +7,20 @@ use rquickjs::{function::Args, Ctx, Function, Object, Result, Value};
 
 use crate::{emit_exit, EXIT_CODE};
 
+pub fn run_finalization_phase<'js>(ctx: &Ctx<'js>, phase: &str) -> Result<()> {
+    let process: Object = ctx.globals().get("process")?;
+    let hook_fn: Value = ctx.eval(
+        r#"(function (proc, phase) {
+  const fn = proc[Symbol.for("lexe.runFinalization")];
+  if (typeof fn === "function") fn(phase);
+})"#,
+    )?;
+    if let Some(f) = hook_fn.as_function() {
+        let _ = f.call::<_, ()>((process, phase));
+    }
+    Ok(())
+}
+
 pub fn emit_before_exit<'js>(ctx: &Ctx<'js>) -> Result<()> {
     let process: Object = ctx.globals().get("process")?;
     let code = EXIT_CODE.load(Ordering::Relaxed);
@@ -16,13 +30,16 @@ pub fn emit_before_exit<'js>(ctx: &Ctx<'js>) -> Result<()> {
     args.push_arg("beforeExit")?;
     args.push_arg(code)?;
     let _ = emit.call_arg::<Value>(args)?;
+    run_finalization_phase(ctx, "beforeExit")?;
     Ok(())
 }
 
 pub fn emit_process_exit<'js>(ctx: &Ctx<'js>) -> Result<()> {
     let process: Object = ctx.globals().get("process")?;
     let code = EXIT_CODE.load(Ordering::Relaxed);
-    emit_exit(ctx, &process, code)
+    run_finalization_phase(ctx, "exit")?;
+    emit_exit(ctx, &process, code)?;
+    Ok(())
 }
 
 pub fn signal_listener_count<'js>(ctx: &Ctx<'js>, process: &Object<'js>) -> Result<usize> {

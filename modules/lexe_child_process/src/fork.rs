@@ -36,6 +36,7 @@ pub fn fork<'js>(
     module_path: String,
     args_and_opts: Rest<Value<'js>>,
 ) -> Result<Class<'js, ChildProcess<'js>>> {
+    lexe_utils::permissions::ensure_child_process(&ctx)?;
     let module_path = resolve_module_path(&ctx, module_path)?;
     let (exec_args, opts) = parse_fork_args(&ctx, args_and_opts)?;
 
@@ -218,8 +219,8 @@ impl<'js> ChildProcess<'js> {
     ) -> Result<Class<'js, Self>> {
         let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
         let rt_key = lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
-        let loop_ref = EventLoopRef::new_referenced(rt_key);
-        let ipc_loop_ref = EventLoopRef::new_referenced(rt_key);
+        let loop_ref = EventLoopRef::new_referenced_named(rt_key, "ChildProcess");
+        let ipc_loop_ref = EventLoopRef::new_referenced_named(rt_key, "ChildProcessIPC");
         let (kill_tx, kill_rx) = tokio::sync::broadcast::channel::<i32>(1);
 
         let mut spawnargs = Vec::with_capacity(1 + args.as_ref().map_or(0, Vec::len));

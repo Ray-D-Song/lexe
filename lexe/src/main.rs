@@ -28,7 +28,10 @@ use constcat::concat;
 use lexe::{executable, upgrade};
 use lexe_core::modules::{
     module_builder::{ModuleBuilder, ModuleBuilderConfig},
-    process::{argv, set_argv, EXIT_CODE, NO_WARNINGS, TRACE_WARNINGS},
+    process::{
+        argv, set_argv, set_exec_argv, set_source_maps_default, EXIT_CODE, NO_WARNINGS,
+        TRACE_WARNINGS,
+    },
 };
 #[cfg(all(feature = "napi", feature = "v8-compat"))]
 use lexe_core::vm::{run_final_context_gc, shutdown_context_userdata, shutdown_module_state};
@@ -138,8 +141,13 @@ async fn main() -> Result<ExitCode, Box<dyn Error + Send + Sync>> {
 
     let cli = parse_node_cli_flags(env::args().collect());
     set_argv(cli.argv);
+    set_exec_argv(cli.exec_argv);
     NO_WARNINGS.store(cli.no_warnings, Ordering::Relaxed);
     TRACE_WARNINGS.store(cli.trace_warnings, Ordering::Relaxed);
+    set_source_maps_default(cli.source_maps_enabled);
+    if cli.permission_enabled {
+        lexe_utils::permissions::init(cli.permission_config);
+    }
 
     let vm = Vm::from_options(VmOptions {
         sqlite_enabled: cli.sqlite_enabled,
@@ -266,37 +274,135 @@ pub const VERSION_STRING: &str = concat!("lexe v", VERSION, " (", PLATFORM, ", "
 
 struct NodeCliFlags {
     argv: Vec<String>,
+    exec_argv: Vec<String>,
     sqlite_enabled: bool,
     no_warnings: bool,
     trace_warnings: bool,
+    source_maps_enabled: bool,
+    permission_enabled: bool,
+    permission_config: lexe_utils::permissions::PermissionConfig,
 }
 
-fn parse_node_cli_flags(mut argv: Vec<String>) -> NodeCliFlags {
+fn push_comma_paths(out: &mut Vec<String>, raw: &str) {
+    for part in raw.split(',') {
+        let p = part.trim();
+        if !p.is_empty() {
+            out.push(p.to_string());
+        }
+    }
+}
+
+fn parse_node_cli_flags(raw_argv: Vec<String>) -> NodeCliFlags {
     let mut sqlite_enabled = true;
     let mut no_warnings = false;
     let mut trace_warnings = false;
+    let mut source_maps_enabled = false;
+    let mut permission_enabled = false;
+    let mut permission_config = lexe_utils::permissions::PermissionConfig::default();
+    let mut argv = Vec::with_capacity(raw_argv.len());
+    let mut exec_argv = Vec::new();
 
-    argv.retain(|arg| {
-        if arg == "--no-experimental-sqlite" {
-            sqlite_enabled = false;
-            return false;
+    if let Some(first) = raw_argv.first() {
+        argv.push(first.clone());
+    }
+
+    let mut i = 1usize;
+    let mut skip_next_code = false;
+    while i < raw_argv.len() {
+        let arg = &raw_argv[i];
+        if skip_next_code {
+            argv.push(arg.clone());
+            skip_next_code = false;
+            i += 1;
+            continue;
         }
-        if arg == "--no-warnings" {
-            no_warnings = true;
-            return false;
+        if arg == "-e" || arg == "--eval" {
+            argv.push(arg.clone());
+            skip_next_code = true;
+            i += 1;
+            continue;
         }
-        if arg == "--trace-warnings" {
-            trace_warnings = true;
-            return false;
+        match arg.as_str() {
+            "--no-experimental-sqlite" => {
+                sqlite_enabled = false;
+                exec_argv.push(arg.clone());
+            },
+            "--no-warnings" => {
+                no_warnings = true;
+                exec_argv.push(arg.clone());
+            },
+            "--trace-warnings" => {
+                trace_warnings = true;
+                exec_argv.push(arg.clone());
+            },
+            "--enable-source-maps" => {
+                source_maps_enabled = true;
+                exec_argv.push(arg.clone());
+            },
+            "--permission" => {
+                permission_enabled = true;
+                exec_argv.push(arg.clone());
+            },
+            "--allow-child-process" => {
+                permission_config.allow_child = true;
+                exec_argv.push(arg.clone());
+            },
+            "--allow-worker" => {
+                permission_config.allow_worker = true;
+                exec_argv.push(arg.clone());
+            },
+            "--allow-addons" => {
+                permission_config.allow_addon = true;
+                exec_argv.push(arg.clone());
+            },
+            "--allow-wasi" => {
+                permission_config.allow_wasi = true;
+                exec_argv.push(arg.clone());
+            },
+            "--allow-fs-read" => {
+                exec_argv.push(arg.clone());
+                if let Some(next) = raw_argv.get(i + 1) {
+                    push_comma_paths(&mut permission_config.fs_read, next);
+                    exec_argv.push(next.clone());
+                    i += 1;
+                } else {
+                    permission_config.fs_read.push("*".to_string());
+                }
+            },
+            "--allow-fs-write" => {
+                exec_argv.push(arg.clone());
+                if let Some(next) = raw_argv.get(i + 1) {
+                    push_comma_paths(&mut permission_config.fs_write, next);
+                    exec_argv.push(next.clone());
+                    i += 1;
+                } else {
+                    permission_config.fs_write.push("*".to_string());
+                }
+            },
+            _ if arg.starts_with("--allow-fs-read=") => {
+                let rest = &arg["--allow-fs-read=".len()..];
+                push_comma_paths(&mut permission_config.fs_read, rest);
+                exec_argv.push(arg.clone());
+            },
+            _ if arg.starts_with("--allow-fs-write=") => {
+                let rest = &arg["--allow-fs-write=".len()..];
+                push_comma_paths(&mut permission_config.fs_write, rest);
+                exec_argv.push(arg.clone());
+            },
+            _ => argv.push(arg.clone()),
         }
-        true
-    });
+        i += 1;
+    }
 
     NodeCliFlags {
         argv,
+        exec_argv,
         sqlite_enabled,
         no_warnings,
         trace_warnings,
+        source_maps_enabled,
+        permission_enabled,
+        permission_config,
     }
 }
 

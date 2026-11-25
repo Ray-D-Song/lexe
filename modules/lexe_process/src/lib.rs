@@ -1,8 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-use std::collections::HashMap;
-use std::env;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::time::UNIX_EPOCH;
+use std::{collections::HashMap, env};
 
 use std::sync::OnceLock;
 
@@ -40,6 +40,9 @@ pub static NO_WARNINGS: AtomicBool = AtomicBool::new(false);
 pub static TRACE_WARNINGS: AtomicBool = AtomicBool::new(false);
 
 pub mod lifecycle;
+mod stats;
+
+pub use stats::{set_exec_argv, set_source_maps_default};
 
 fn process_id() -> u32 {
     #[cfg(target_family = "wasm")]
@@ -76,17 +79,10 @@ fn emit_warning<'js>(_ctx: Ctx<'js>, message: String, type_or_opts: Opt<Value<'j
         }
     }
 
-    if TRACE_WARNINGS.load(Ordering::Relaxed) {
-        eprintln!(
-            "(node:{pid}) [{warning_type}] {message}",
-            pid = process_id()
-        );
-    } else {
-        eprintln!(
-            "(node:{pid}) [{warning_type}] {message}",
-            pid = process_id()
-        );
-    }
+    eprintln!(
+        "(node:{pid}) [{warning_type}] {message}",
+        pid = process_id()
+    );
     Ok(())
 }
 
@@ -120,12 +116,38 @@ const PROCESS_NAMED_EXPORTS: &[&str] = &[
     "cwd",
     "chdir",
     "argv0",
+    "execPath",
+    "execArgv",
     "id",
     "pid",
+    "ppid",
     "argv",
     "platform",
     "arch",
     "hrtime",
+    "uptime",
+    "memoryUsage",
+    "cpuUsage",
+    "resourceUsage",
+    "constrainedMemory",
+    "availableMemory",
+    "umask",
+    "title",
+    "config",
+    "features",
+    "allowedNodeEnvironmentFlags",
+    "loadEnvFile",
+    "getActiveResourcesInfo",
+    "setUncaughtExceptionCaptureCallback",
+    "hasUncaughtExceptionCaptureCallback",
+    "abort",
+    "finalization",
+    "ref",
+    "unref",
+    "sourceMapsEnabled",
+    "setSourceMapsEnabled",
+    "report",
+    "permission",
     "release",
     "version",
     "versions",
@@ -154,6 +176,7 @@ fn dlopen<'js>(
     filename: String,
     flags: Opt<u32>,
 ) -> Result<()> {
+    lexe_utils::permissions::ensure_addon(&ctx)?;
     let exports: Object = module.get("exports")?;
     let exports_val = exports.clone().into_value().as_raw();
     let ctx_ptr = ctx.as_raw();
@@ -327,8 +350,34 @@ fn exit(ctx: Ctx<'_>, code: Value<'_>) -> Result<()> {
     }
 
     let process: Object = ctx.globals().get("process")?;
+    let _ = lifecycle::run_finalization_phase(&ctx, "exit");
     let _ = emit_exit(&ctx, &process, code);
     std::process::exit(code.into())
+}
+
+fn uptime() -> f64 {
+    let elapsed = time::now_nanos().saturating_sub(time::origin_nanos());
+    (elapsed as f64) / 1_000_000_000.0
+}
+
+fn process_abort() {
+    std::process::abort()
+}
+
+pub fn try_invoke_uncaught_exception_capture<'js>(ctx: &Ctx<'js>, error: Value<'js>) -> bool {
+    let Ok(process) = ctx.globals().get::<_, Object>("process") else {
+        return false;
+    };
+    let Ok(checker) = ctx.eval::<Function, _>(
+        r#"(proc, err) => {
+  const fn = proc[Symbol.for("lexe.invokeUncaughtCapture")];
+  if (typeof fn !== "function") return false;
+  return fn(err) === true;
+}"#,
+    ) else {
+        return false;
+    };
+    checker.call::<_, bool>((process, error)).unwrap_or(false)
 }
 
 fn env_proxy_setter<'js>(
@@ -420,10 +469,15 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let env_proxy = Proxy::with_target(ctx.clone(), env_obj)?;
     env_proxy.setter(Func::from(env_proxy_setter))?;
 
+    let initial_argv0 = args.first().cloned().unwrap_or_default();
+    stats::init_title(initial_argv0.clone());
+
     process.set("env", env_proxy)?;
     process.set("cwd", Func::from(cwd))?;
     process.set("chdir", Func::from(chdir))?;
-    process.set("argv0", args.clone().first().cloned().unwrap_or_default())?;
+    process.set("argv0", initial_argv0.clone())?;
+    process.set("execPath", stats::exec_path(&initial_argv0))?;
+    process.set("execArgv", stats::exec_argv())?;
     // Lexe-legacy name kept for compatibility (ordinary writable data property).
     // Prefer process.pid for Node compatibility.
     process.set("id", process_id())?;
@@ -432,13 +486,77 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         "pid",
         Property::from(process_id()).enumerable().configurable(),
     )?;
+    process.prop(
+        "ppid",
+        Property::from(stats::parent_pid())
+            .enumerable()
+            .configurable(),
+    )?;
     process.set("argv", args)?;
     process.set("platform", PLATFORM)?;
     process.set("arch", ARCH)?;
     process.set("hrtime", hr_time)?;
+    process.set("uptime", Func::from(uptime))?;
+    process.set("abort", Func::from(process_abort))?;
     process.set("release", release)?;
     process.set("version", format!("v{NODE_COMPAT_VERSION}"))?;
     process.set("versions", process_versions)?;
+
+    let mem_fn = Function::new(ctx.clone(), stats::memory_usage)?;
+    mem_fn.set("rss", Func::from(stats::memory_usage_rss))?;
+    process.set("memoryUsage", mem_fn)?;
+    process.set("cpuUsage", Func::from(stats::cpu_usage))?;
+    process.set("resourceUsage", Func::from(stats::resource_usage))?;
+    process.set("constrainedMemory", Func::from(stats::constrained_memory))?;
+    process.set("availableMemory", Func::from(stats::available_memory))?;
+    process.set("umask", Func::from(stats::umask))?;
+    process.prop(
+        "title",
+        Accessor::new(
+            |ctx| {
+                let _ctx: Ctx<'_> = ctx;
+                Ok::<String, Error>(stats::get_title())
+            },
+            |ctx, value: Coerced<String>| {
+                let _ctx: Ctx<'_> = ctx;
+                stats::set_title(value.0);
+                Ok::<(), Error>(())
+            },
+        )
+        .configurable()
+        .enumerable(),
+    )?;
+    process.set("config", stats::build_config_obj(ctx)?)?;
+    process.set("features", stats::build_features_obj(ctx)?)?;
+    process.set(
+        "allowedNodeEnvironmentFlags",
+        stats::build_allowed_env_flags(ctx)?,
+    )?;
+    process.set("loadEnvFile", Func::from(stats::load_env_file))?;
+    process.set(
+        "getActiveResourcesInfo",
+        Func::from(stats::get_active_resources_info),
+    )?;
+    let perm_val = stats::build_permission_obj(ctx)?;
+    if !perm_val.is_undefined() {
+        process.set("permission", perm_val)?;
+    }
+
+    let write_report_fn =
+        Function::new(ctx.clone(), |ctx: Ctx<'_>, path: String, json: String| {
+            stats::write_report_file(&ctx, &path, &json)
+        })?;
+    let iso_start = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as f64 * 1000.0)
+        .unwrap_or(0.0);
+    let extras_installer: Function = ctx.eval(PROCESS_EXTRAS_JS)?;
+    extras_installer.call::<_, ()>((
+        process.clone(),
+        stats::source_maps_default(),
+        write_report_fn,
+        iso_start,
+    ))?;
 
     process.prop(
         "exitCode",
@@ -498,6 +616,241 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
 }
 
 pub struct ProcessModule;
+
+const PROCESS_EXTRAS_JS: &str = r#"(function () {
+  return function installProcessExtras(proc, initialSourceMapsEnabled, writeReportHost, startMs) {
+    "use strict";
+
+    // --- Uncaught exception capture callback ---
+    let captureCallback = null;
+    const symCapture = Symbol.for("lexe.invokeUncaughtCapture");
+    Object.defineProperty(proc, symCapture, {
+      enumerable: false,
+      configurable: true,
+      value(err) {
+        if (typeof captureCallback !== "function") return false;
+        captureCallback(err);
+        return true;
+      },
+    });
+    proc.setUncaughtExceptionCaptureCallback = function setUncaughtExceptionCaptureCallback(fn) {
+      if (fn === null || fn === undefined) {
+        captureCallback = null;
+        return;
+      }
+      if (typeof fn !== "function") {
+        const err = new TypeError('The "fn" argument must be of type function or null');
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      if (captureCallback !== null) {
+        const err = new Error(
+          "process.setUncaughtExceptionCaptureCallback() called while a capture callback is already active"
+        );
+        err.code = "ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET";
+        throw err;
+      }
+      captureCallback = fn;
+    };
+    proc.hasUncaughtExceptionCaptureCallback = function hasUncaughtExceptionCaptureCallback() {
+      return captureCallback !== null;
+    };
+
+    // --- Source maps state shared with node:module ---
+    const symSourceMaps = Symbol.for("lexe.sourceMapsSupport");
+    Object.defineProperty(proc, symSourceMaps, {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: Object.freeze({
+        __proto__: null,
+        enabled: Boolean(initialSourceMapsEnabled),
+        nodeModules: false,
+        generatedCode: false,
+      }),
+    });
+    proc.setSourceMapsEnabled = function setSourceMapsEnabled(val) {
+      if (typeof val !== "boolean") {
+        const err = new TypeError('The "val" argument must be of type boolean');
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      const prev = proc[symSourceMaps] || { nodeModules: false, generatedCode: false };
+      proc[symSourceMaps] = Object.freeze({
+        __proto__: null,
+        enabled: val,
+        nodeModules: Boolean(prev.nodeModules),
+        generatedCode: Boolean(prev.generatedCode),
+      });
+    };
+    Object.defineProperty(proc, "sourceMapsEnabled", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return Boolean(proc[symSourceMaps] && proc[symSourceMaps].enabled);
+      },
+    });
+
+    // --- process.ref() / process.unref() ---
+    proc.ref = function ref(maybeRefable) {
+      if (maybeRefable && typeof maybeRefable.ref === "function") {
+        maybeRefable.ref();
+      }
+    };
+    proc.unref = function unref(maybeRefable) {
+      if (maybeRefable && typeof maybeRefable.unref === "function") {
+        maybeRefable.unref();
+      }
+    };
+
+    // --- process.finalization ---
+    const entries = [];
+    const validateFinalizationArgs = (ref, shutdown) => {
+      if ((typeof ref !== "object" && typeof ref !== "function" && typeof ref !== "symbol") || ref === null) {
+        const err = new TypeError('The "ref" argument must be an object, function, or symbol');
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+      if (typeof shutdown !== "function") {
+        const err = new TypeError('The "shutdown" argument must be of type function');
+        err.code = "ERR_INVALID_ARG_TYPE";
+        throw err;
+      }
+    };
+    const isSymbolTarget = (v) => typeof v === "symbol";
+    const symRunFinalization = Symbol.for("lexe.runFinalization");
+    Object.defineProperty(proc, symRunFinalization, {
+      enumerable: false,
+      configurable: true,
+      value(phase) {
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const item = entries[i];
+          if (phase === "beforeExit" && !item.beforeExit) continue;
+          const target = item.weak ? item.weak.deref() : item.raw;
+          if (phase === "beforeExit" && !item.firedBeforeExit) {
+            item.firedBeforeExit = true;
+            if (target !== undefined) {
+              try { item.shutdown(target, "beforeExit"); } catch {}
+            }
+          } else if (phase === "exit") {
+            entries.splice(i, 1);
+            if (target !== undefined) {
+              try { item.shutdown(target, "exit"); } catch {}
+            }
+          }
+        }
+      },
+    });
+    proc.finalization = {
+      register(ref, shutdown) {
+        validateFinalizationArgs(ref, shutdown);
+        entries.push({
+          weak: isSymbolTarget(ref) ? null : new WeakRef(ref),
+          raw: isSymbolTarget(ref) ? ref : undefined,
+          shutdown,
+          beforeExit: false,
+          firedBeforeExit: false,
+        });
+      },
+      registerBeforeExit(ref, shutdown) {
+        validateFinalizationArgs(ref, shutdown);
+        entries.push({
+          weak: isSymbolTarget(ref) ? null : new WeakRef(ref),
+          raw: isSymbolTarget(ref) ? ref : undefined,
+          shutdown,
+          beforeExit: true,
+          firedBeforeExit: false,
+        });
+      },
+      unregister(ref) {
+        for (let i = entries.length - 1; i >= 0; i--) {
+          const item = entries[i];
+          const target = item.weak ? item.weak.deref() : item.raw;
+          if (target === undefined || target === ref) {
+            entries.splice(i, 1);
+          }
+        }
+      },
+    };
+
+    // --- process.report ---
+    const report = {
+      compact: false,
+      directory: "",
+      filename: "",
+      excludeEnv: false,
+      excludeNetwork: false,
+      reportOnFatalError: false,
+      reportOnSignal: false,
+      reportOnUncaughtException: false,
+      signal: "SIGUSR2",
+      getReport(err) {
+        const now = new Date();
+        const jsStack = err instanceof Error || (err && typeof err === "object" && ("message" in err || "stack" in err))
+          ? {
+              message: String(err.message || err),
+              stack: typeof err.stack === "string" ? err.stack.split("\n") : [],
+            }
+          : { message: "No error" };
+        let envCopy = {};
+        if (!report.excludeEnv && proc.env) {
+          envCopy = { ...proc.env };
+        }
+        return {
+          header: {
+            reportVersion: 5,
+            event: "JavaScript API",
+            trigger: "GetReport",
+            filename: report.filename || null,
+            dumpEventTime: now.toISOString(),
+            dumpEventTimeStamp: String(now.getTime() || Math.floor(startMs)),
+            processId: proc.pid,
+            cwd: proc.cwd(),
+            commandLine: Array.isArray(proc.argv) ? proc.argv.slice() : [],
+            nodejsVersion: proc.version,
+            wordSize: 64,
+            arch: proc.arch,
+            platform: proc.platform,
+            componentVersions: { ...proc.versions },
+            release: { ...proc.release },
+          },
+          javascriptStack: jsStack,
+          resourceUsage: proc.resourceUsage(),
+          environmentVariables: envCopy,
+          libuv: [],
+          sharedObjects: [],
+        };
+      },
+      writeReport(filename, err) {
+        let targetName = filename;
+        let targetErr = err;
+        if (filename !== undefined && typeof filename !== "string") {
+          targetErr = filename;
+          targetName = undefined;
+        }
+        let resolvedName = targetName || report.filename;
+        if (!resolvedName) {
+          const d = new Date();
+          const pad = (n, w = 2) => String(n).padStart(w, "0");
+          const datePart = `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}`;
+          const timePart = `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+          resolvedName = `report.${datePart}.${timePart}.${proc.pid}.0.001.json`;
+        }
+        const sep = proc.platform === "win32" ? "\\" : "/";
+        const baseDir = report.directory || proc.cwd();
+        const isAbs = resolvedName.startsWith("/") || resolvedName.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(resolvedName);
+        const fullPath = isAbs ? resolvedName : `${baseDir.replace(/[\\/]+$/, "")}${sep}${resolvedName}`;
+        const data = report.getReport(targetErr);
+        data.header.trigger = "WriteReport";
+        data.header.filename = fullPath;
+        const json = report.compact ? JSON.stringify(data) : JSON.stringify(data, null, 2);
+        writeReportHost(fullPath, json);
+        return fullPath;
+      },
+    };
+    proc.report = report;
+  };
+})()"#;
 
 impl ModuleDef for ProcessModule {
     fn declare(declare: &Declarations) -> Result<()> {

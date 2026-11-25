@@ -7,7 +7,7 @@
 //! tasks (sockets, timer loop) can stop blocking `AsyncRuntime::idle()`.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use tokio::sync::Notify;
@@ -16,12 +16,16 @@ type RtKey = usize;
 
 pub type RuntimeLoopKey = RtKey;
 
+static NEXT_HANDLE_ID: AtomicU64 = AtomicU64::new(1);
+
 struct RuntimeLoopState {
     refs: AtomicUsize,
     /// In-flight HTTP request handlers (keeps timer loop polling unref timers).
     http_inflight: AtomicUsize,
     /// Fired whenever `refs` transitions to zero.
     quiescent: Arc<Notify>,
+    /// Active referenced handle kinds for `process.getActiveResourcesInfo()`.
+    active: Mutex<HashMap<u64, &'static str>>,
 }
 
 impl RuntimeLoopState {
@@ -30,6 +34,7 @@ impl RuntimeLoopState {
             refs: AtomicUsize::new(0),
             http_inflight: AtomicUsize::new(0),
             quiescent: Arc::new(Notify::new()),
+            active: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -96,12 +101,15 @@ pub async fn wait_until_io_unref(loop_ref: Arc<EventLoopRef>) {
     }
 }
 
-fn increment_ref(rt: RtKey) {
-    state_for(rt).refs.fetch_add(1, Ordering::AcqRel);
+fn increment_ref(rt: RtKey, id: u64, kind: &'static str) {
+    let state = state_for(rt);
+    state.refs.fetch_add(1, Ordering::AcqRel);
+    state.active.lock().unwrap().insert(id, kind);
 }
 
-fn decrement_ref(rt: RtKey) {
+fn decrement_ref(rt: RtKey, id: u64) {
     let state = state_for(rt);
+    state.active.lock().unwrap().remove(&id);
     let prev = state
         .refs
         .try_update(Ordering::AcqRel, Ordering::Acquire, |v| {
@@ -115,6 +123,15 @@ fn decrement_ref(rt: RtKey) {
     }
 }
 
+/// Active referenced resource names for `process.getActiveResourcesInfo()`.
+pub fn active_resource_names(rt: RtKey) -> Vec<&'static str> {
+    let state = state_for(rt);
+    let guard = state.active.lock().unwrap();
+    let mut entries: Vec<(u64, &'static str)> = guard.iter().map(|(&id, &k)| (id, k)).collect();
+    entries.sort_unstable_by_key(|(id, _)| *id);
+    entries.into_iter().map(|(_, k)| k).collect()
+}
+
 /// Shared notify fired when this runtime's ref count hits zero.
 pub fn quiescence_watch(rt: RtKey) -> Arc<Notify> {
     state_for(rt).quiescent.clone()
@@ -123,24 +140,42 @@ pub fn quiescence_watch(rt: RtKey) -> Arc<Notify> {
 /// A single ref/unref handle (timer, socket, message port, …).
 #[derive(Debug)]
 pub struct EventLoopRef {
+    id: u64,
     rt: RtKey,
+    kind: &'static str,
     referenced: AtomicBool,
 }
 
 impl EventLoopRef {
     /// Create a handle that starts referenced (increments the runtime ref count).
     pub fn new_referenced(rt: RtKey) -> Arc<Self> {
-        increment_ref(rt);
+        Self::new_referenced_named(rt, "Handle")
+    }
+
+    /// Create a named handle that starts referenced.
+    pub fn new_referenced_named(rt: RtKey, kind: &'static str) -> Arc<Self> {
+        let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::Relaxed);
+        increment_ref(rt, id, kind);
         Arc::new(Self {
+            id,
             rt,
+            kind,
             referenced: AtomicBool::new(true),
         })
     }
 
     /// Create an unreferenced handle (does not increment the runtime ref count).
     pub fn new_unreferenced(rt: RtKey) -> Arc<Self> {
+        Self::new_unreferenced_named(rt, "Handle")
+    }
+
+    /// Create a named unreferenced handle.
+    pub fn new_unreferenced_named(rt: RtKey, kind: &'static str) -> Arc<Self> {
+        let id = NEXT_HANDLE_ID.fetch_add(1, Ordering::Relaxed);
         Arc::new(Self {
+            id,
             rt,
+            kind,
             referenced: AtomicBool::new(false),
         })
     }
@@ -155,13 +190,13 @@ impl EventLoopRef {
 
     pub fn reference(&self) {
         if !self.referenced.swap(true, Ordering::AcqRel) {
-            increment_ref(self.rt);
+            increment_ref(self.rt, self.id, self.kind);
         }
     }
 
     pub fn unreference(&self) {
         if self.referenced.swap(false, Ordering::AcqRel) {
-            decrement_ref(self.rt);
+            decrement_ref(self.rt, self.id);
         }
     }
 }
@@ -169,7 +204,7 @@ impl EventLoopRef {
 impl Drop for EventLoopRef {
     fn drop(&mut self) {
         if self.referenced.load(Ordering::Acquire) {
-            decrement_ref(self.rt);
+            decrement_ref(self.rt, self.id);
         }
     }
 }

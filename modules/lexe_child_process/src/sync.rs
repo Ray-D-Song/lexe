@@ -27,9 +27,9 @@ use crate::options::{
 };
 
 enum SyncMode {
-    SpawnSync,
-    ExecSync,
-    ExecFileSync,
+    Spawn,
+    Exec,
+    ExecFile,
 }
 
 pub fn spawn_sync<'js>(
@@ -48,7 +48,7 @@ pub fn spawn_sync<'js>(
         vec![StdioSpec::Pipe, StdioSpec::Pipe, StdioSpec::Pipe],
         false,
     )?;
-    run_sync(&ctx, raw_cmd, raw_args, opts, SyncMode::SpawnSync).and_then(|res| Ok(res.obj))
+    run_sync(&ctx, raw_cmd, raw_args, opts, SyncMode::Spawn).map(|res| res.obj)
 }
 
 pub fn exec_sync<'js>(
@@ -65,7 +65,7 @@ pub fn exec_sync<'js>(
         vec![StdioSpec::Pipe, StdioSpec::Pipe, StdioSpec::Inherit],
         false,
     )?;
-    let out = run_sync(&ctx, raw_cmd, raw_args, opts, SyncMode::ExecSync)?;
+    let out = run_sync(&ctx, raw_cmd, raw_args, opts, SyncMode::Exec)?;
     if let Some(err_val) = out.throw_err {
         return Err(ctx.throw(err_val));
     }
@@ -88,7 +88,7 @@ pub fn exec_file_sync<'js>(
         vec![StdioSpec::Pipe, StdioSpec::Pipe, StdioSpec::Inherit],
         false,
     )?;
-    let out = run_sync(&ctx, raw_cmd, raw_args, opts, SyncMode::ExecFileSync)?;
+    let out = run_sync(&ctx, raw_cmd, raw_args, opts, SyncMode::ExecFile)?;
     if let Some(err_val) = out.throw_err {
         return Err(ctx.throw(err_val));
     }
@@ -176,7 +176,8 @@ fn run_sync<'js>(
     opts: ParsedOptions<'js>,
     mode: SyncMode,
 ) -> Result<SyncResult<'js>> {
-    let is_exec_variant = matches!(mode, SyncMode::ExecSync | SyncMode::ExecFileSync);
+    lexe_utils::permissions::ensure_child_process(ctx)?;
+    let is_exec_variant = matches!(mode, SyncMode::Exec | SyncMode::ExecFile);
     let capture_implicit_stderr = is_exec_variant && !opts.stdio_explicit;
     let stdin_spec = opts.stdio.first().unwrap_or(&StdioSpec::Pipe);
     let stdout_spec = opts.stdio.get(1).unwrap_or(&StdioSpec::Pipe);
@@ -184,15 +185,12 @@ fn run_sync<'js>(
 
     let (mut command, exec_cmd, spawnargs) = build_command(raw_cmd.clone(), raw_args, &opts);
 
-    let use_stdin_pipe = opts.input.is_some() || matches!(stdin_spec, StdioSpec::Pipe);
-    if use_stdin_pipe
-        && !matches!(
+    if opts.input.is_some()
+        || !matches!(
             stdin_spec,
             StdioSpec::Ignore | StdioSpec::Inherit | StdioSpec::Fd(_)
         )
     {
-        command.stdin(Stdio::piped());
-    } else if opts.input.is_some() {
         command.stdin(Stdio::piped());
     } else {
         command.stdin(spec_to_sync_stdio(ctx, stdin_spec, false)?);
@@ -209,10 +207,7 @@ fn run_sync<'js>(
         capture_implicit_stderr,
     )?);
 
-    let syscall_name = match mode {
-        SyncMode::SpawnSync => format!("spawnSync {exec_cmd}"),
-        SyncMode::ExecSync | SyncMode::ExecFileSync => format!("spawnSync {exec_cmd}"),
-    };
+    let syscall_name = format!("spawnSync {exec_cmd}");
 
     let spawn_res = command.spawn();
     let mut child = match spawn_res {
@@ -370,7 +365,7 @@ fn run_sync<'js>(
 
     let error_val = if overflow.load(Ordering::SeqCst) {
         let msg = match mode {
-            SyncMode::SpawnSync => format!("{syscall_name} ENOBUFS"),
+            SyncMode::Spawn => format!("{syscall_name} ENOBUFS"),
             _ => "maxBuffer length exceeded".to_string(),
         };
         #[cfg(unix)]

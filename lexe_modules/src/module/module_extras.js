@@ -293,7 +293,9 @@
   const kSourceMappingURLMagicComment = /\/[*/]#\s+sourceMappingURL=(?<sourceMappingURL>[^\s]+)/g;
   const kNodeModulesRE = /^(?:.*)[\\/]node_modules[\\/]/;
 
-  let sourceMapsSupport = Object.freeze({
+  const kSourceMapsSym = Symbol.for("lexe.sourceMapsSupport");
+
+  let fallbackSourceMapsSupport = Object.freeze({
     __proto__: null,
     enabled: false,
     nodeModules: false,
@@ -301,23 +303,30 @@
   });
 
   function getSourceMapsSupport() {
-    return sourceMapsSupport;
+    if (typeof process !== "undefined" && process && process[kSourceMapsSym]) {
+      return process[kSourceMapsSym];
+    }
+    return fallbackSourceMapsSupport;
   }
 
   // Lexe does not rewrite `Error.prepareStackTrace`; this flag only governs
-  // what `findSourceMap` returns.
+  // what `findSourceMap` returns. Keeps `process.setSourceMapsEnabled` synced.
   function setSourceMapsSupport(enabled, options = {}) {
     validateBoolean(enabled, "enabled");
     validateObject(options, "options");
     const { nodeModules = false, generatedCode = false } = options;
     validateBoolean(nodeModules, "options.nodeModules");
     validateBoolean(generatedCode, "options.generatedCode");
-    sourceMapsSupport = Object.freeze({
+    const next = Object.freeze({
       __proto__: null,
       enabled,
       nodeModules,
       generatedCode,
     });
+    fallbackSourceMapsSupport = next;
+    if (typeof process !== "undefined" && process && Object.prototype.hasOwnProperty.call(process, kSourceMapsSym)) {
+      process[kSourceMapsSym] = next;
+    }
   }
 
   function isUnderNodeModules(filename) {
