@@ -28,7 +28,7 @@ use rquickjs::{
     promise::PromiseState,
     qjs, CaughtError, Coerced, Ctx,
     Error::{self},
-    Function, Object, Result, Symbol, Type, Value,
+    Function, Null, Object, Result, Symbol, Type, Value,
 };
 
 pub const NEWLINE: char = '\n';
@@ -37,8 +37,8 @@ const SPACING: char = ' ';
 const CIRCULAR: &str = "[Circular]";
 pub const TIME_FORMAT: &str = "%Y-%m-%dT%H:%M:%S%.3fZ";
 
-const MAX_INDENTATION_LEVEL: usize = 4;
-const MAX_EXPANSION_DEPTH: usize = 4;
+const DEFAULT_MAX_DEPTH: i64 = 3;
+const DEFAULT_MAX_ARRAY_LENGTH: usize = 100;
 
 /// Node prints at most this many bytes of a Buffer before eliding the rest
 /// (`<Buffer 00 01 ... 30 more bytes>`).
@@ -82,9 +82,6 @@ fn format_buffer_inspect(bytes: &[u8]) -> String {
     out.push('>');
     out
 }
-
-const INDENTATION_LOOKUP: [&str; MAX_INDENTATION_LEVEL + 1] =
-    ["", "  ", "    ", "        ", "                "];
 
 macro_rules! ascii_colors {
     ( $( $name:ident => $value:expr ),* ) => {
@@ -181,9 +178,23 @@ impl LogLevel {
     }
 }
 
+#[derive(Clone)]
+pub enum SortedMode<'js> {
+    Default,
+    Custom(Function<'js>),
+}
+
 pub struct FormatOptions<'js> {
-    color: bool,
-    newline: bool,
+    pub color: bool,
+    pub newline: bool,
+    pub max_depth: Option<i64>,
+    pub show_hidden: bool,
+    pub max_array_length: Option<usize>,
+    pub max_string_length: Option<usize>,
+    pub compact: Option<bool>,
+    pub sorted: Option<SortedMode<'js>>,
+    pub custom_inspect: bool,
+    pub quote_root_string: bool,
     get_own_property_desc_fn: Function<'js>,
     object_prototype: Object<'js>,
     number_function: Function<'js>,
@@ -212,6 +223,14 @@ impl<'js> FormatOptions<'js> {
         let options = FormatOptions {
             color,
             newline,
+            max_depth: Some(DEFAULT_MAX_DEPTH),
+            show_hidden: false,
+            max_array_length: Some(DEFAULT_MAX_ARRAY_LENGTH),
+            max_string_length: None,
+            compact: None,
+            sorted: None,
+            custom_inspect: true,
+            quote_root_string: false,
             object_filter,
             get_own_property_desc_fn,
             object_prototype,
@@ -221,6 +240,86 @@ impl<'js> FormatOptions<'js> {
             custom_inspect_symbol,
         };
         Ok(options)
+    }
+
+    pub fn from_js_options(
+        ctx: &Ctx<'js>,
+        default_color: bool,
+        default_newline: bool,
+        opts: Option<&Object<'js>>,
+    ) -> Result<Self> {
+        let mut out = Self::new(ctx, default_color, default_newline)?;
+        let Some(obj) = opts else {
+            return Ok(out);
+        };
+
+        if let Ok(Some(colors)) = obj.get::<_, Option<bool>>("colors") {
+            out.color = colors;
+        }
+
+        if let Ok(depth_val) = obj.get::<_, Value<'js>>("depth") {
+            if depth_val.is_null() {
+                out.max_depth = None;
+            } else if let Some(n) = depth_val.as_number() {
+                if n.is_infinite() && n.is_sign_positive() {
+                    out.max_depth = None;
+                } else if n.is_finite() {
+                    out.max_depth = Some(n.floor() as i64);
+                }
+            }
+        }
+
+        if let Ok(Some(show_hidden)) = obj.get::<_, Option<bool>>("showHidden") {
+            out.show_hidden = show_hidden;
+        }
+
+        if let Ok(max_arr_val) = obj.get::<_, Value<'js>>("maxArrayLength") {
+            if max_arr_val.is_null() {
+                out.max_array_length = None;
+            } else if let Some(n) = max_arr_val.as_number() {
+                if n.is_infinite() && n.is_sign_positive() {
+                    out.max_array_length = None;
+                } else if n.is_finite() {
+                    out.max_array_length = Some((n.max(0.0).floor()) as usize);
+                }
+            }
+        }
+
+        if let Ok(max_str_val) = obj.get::<_, Value<'js>>("maxStringLength") {
+            if max_str_val.is_null() {
+                out.max_string_length = None;
+            } else if let Some(n) = max_str_val.as_number() {
+                if n.is_infinite() && n.is_sign_positive() {
+                    out.max_string_length = None;
+                } else if n.is_finite() {
+                    out.max_string_length = Some((n.max(0.0).floor()) as usize);
+                }
+            }
+        }
+
+        if let Ok(compact_val) = obj.get::<_, Value<'js>>("compact") {
+            if let Some(b) = compact_val.as_bool() {
+                out.compact = Some(b);
+            } else if let Some(n) = compact_val.as_number() {
+                if n == 0.0 {
+                    out.compact = Some(false);
+                }
+            }
+        }
+
+        if let Ok(sorted_val) = obj.get::<_, Value<'js>>("sorted") {
+            if let Some(f) = sorted_val.as_function() {
+                out.sorted = Some(SortedMode::Custom(f.clone()));
+            } else if sorted_val.as_bool() == Some(true) {
+                out.sorted = Some(SortedMode::Default);
+            }
+        }
+
+        if let Ok(Some(ci)) = obj.get::<_, Option<bool>>("customInspect") {
+            out.custom_inspect = ci;
+        }
+
+        Ok(out)
     }
 }
 
@@ -241,6 +340,27 @@ pub fn format_values<'js>(
     let mut result = String::with_capacity(64);
     let mut options = FormatOptions::new(ctx, tty, newline)?;
     build_formatted_string(&mut result, ctx, args, &mut options)?;
+    Ok(result)
+}
+
+pub fn format_values_with_options<'js>(
+    ctx: &Ctx<'js>,
+    args: Rest<Value<'js>>,
+    options: &mut FormatOptions<'js>,
+) -> Result<String> {
+    let mut result = String::with_capacity(64);
+    build_formatted_string(&mut result, ctx, args, options)?;
+    Ok(result)
+}
+
+pub fn format_inspect<'js>(
+    _ctx: &Ctx<'js>,
+    value: Value<'js>,
+    options: &mut FormatOptions<'js>,
+) -> Result<String> {
+    let mut result = String::with_capacity(64);
+    options.quote_root_string = true;
+    format_raw(&mut result, value, options)?;
     Ok(result)
 }
 
@@ -415,7 +535,21 @@ fn format_raw_inner<'js>(
         Type::String => {
             //FIXME can be removed if https://github.com/DelSkayn/rquickjs/pull/447 is merged
             let lossy_string = get_lossy_string(value)?;
-            format_raw_string_inner(result, lossy_string, !is_root, color_enabled);
+            let quoted = !is_root || options.quote_root_string;
+            let truncated = format_raw_string_inner(
+                result,
+                lossy_string,
+                quoted,
+                color_enabled,
+                if quoted {
+                    options.max_string_length
+                } else {
+                    None
+                },
+            );
+            if truncated {
+                return Ok(());
+            }
         },
         Type::Symbol => {
             if color_enabled {
@@ -423,7 +557,9 @@ fn format_raw_inner<'js>(
             }
             let description = unsafe { value.as_symbol().unwrap_unchecked() }.description()?;
             result.push_str("Symbol(");
-            result.push_str(&unsafe { description.get::<String>().unwrap_unchecked() });
+            if let Some(desc) = description.as_string() {
+                result.push_str(&desc.to_string()?);
+            }
             result.push(')');
         },
         Type::Function | Type::Constructor => {
@@ -582,46 +718,77 @@ fn format_raw_inner<'js>(
                 }
             }
 
-            if depth < MAX_EXPANSION_DEPTH {
-                // `Buffer` has its own inspect form in Node: `<Buffer 00 01 ff>`
-                // with hex bytes, hard-truncated at 50 bytes. It is not the
-                // generic typed-array form, and it does not consult
-                // `maxArrayLength` or `depth` — Node's Buffer inspect is a
-                // custom implementation with those values baked in.
-                if let Some(class_name) = class_name.as_deref() {
-                    if class_name == "Buffer" {
-                        let bytes = bytes_of_buffer(&obj)?;
-                        result.push_str(&format_buffer_inspect(&bytes));
-                        return Ok(());
-                    }
+            // `Buffer` has its own inspect form in Node: `<Buffer 00 01 ff>`
+            // with hex bytes, hard-truncated at 50 bytes. It is not the
+            // generic typed-array form, and it does not consult
+            // `maxArrayLength` or `depth` — Node's Buffer inspect is a
+            // custom implementation with those values baked in.
+            if let Some(class_name) = class_name.as_deref() {
+                if class_name == "Buffer" {
+                    let bytes = bytes_of_buffer(obj)?;
+                    result.push_str(&format_buffer_inspect(&bytes));
+                    return Ok(());
                 }
+            }
 
+            let within_depth = options.max_depth.is_none_or(|max| (depth as i64) <= max);
+            if within_depth {
                 // `util.inspect.custom` in function form (Node's protocol) must run
                 // before the class prefix is written: Node's implementations return
                 // the complete rendering, prefix included.
-                if let Ok(inspector) = &obj.get::<_, Value>(options.custom_inspect_symbol.as_atom())
-                {
-                    if let Some(f) = inspector.as_function() {
-                        let custom_options = Object::new(obj.ctx().clone())?;
-                        let inspect_fn: Function = obj
-                            .ctx()
-                            .globals()
-                            .get::<_, Object>("__lexeInspectForCustom")
-                            .ok()
-                            .and_then(|o| o.get::<_, Function>("fn").ok())
-                            .unwrap_or_else(|| f.clone());
-                        // Node calls the custom inspect with `this` bound to the
-                        // value being inspected and `(depth, options, inspect)` as
-                        // arguments — the receiver is not an argument.
-                        let mut call = rquickjs::function::Args::new(obj.ctx().clone(), 3);
-                        call.this(obj.clone().into_value())?;
-                        call.push_arg(depth)?;
-                        call.push_arg(custom_options)?;
-                        call.push_arg(inspect_fn)?;
-                        if let Ok(inspected) = f.call_arg::<Value>(call) {
-                            if let Some(text) = inspected.as_string() {
-                                result.push_str(&text.to_string()?);
-                                return Ok(());
+                if options.custom_inspect {
+                    if let Ok(inspector) =
+                        &obj.get::<_, Value>(options.custom_inspect_symbol.as_atom())
+                    {
+                        if let Some(f) = inspector.as_function() {
+                            let ctx = obj.ctx();
+                            let custom_options = Object::new(ctx.clone())?;
+                            let remaining_depth = options.max_depth.map(|max| max - depth as i64);
+                            if let Some(rem) = remaining_depth {
+                                custom_options.set("depth", rem)?;
+                            } else {
+                                custom_options.set("depth", Null)?;
+                            }
+                            custom_options.set("colors", options.color)?;
+                            custom_options.set("showHidden", options.show_hidden)?;
+                            if let Some(m) = options.max_array_length {
+                                custom_options.set("maxArrayLength", m)?;
+                            } else {
+                                custom_options.set("maxArrayLength", Null)?;
+                            }
+                            if let Some(m) = options.max_string_length {
+                                custom_options.set("maxStringLength", m)?;
+                            } else {
+                                custom_options.set("maxStringLength", Null)?;
+                            }
+                            if let Some(c) = options.compact {
+                                custom_options.set("compact", c)?;
+                            }
+                            custom_options.set("customInspect", options.custom_inspect)?;
+
+                            let inspect_fn: Function = ctx
+                                .globals()
+                                .get::<_, Object>("__lexeInspectForCustom")
+                                .ok()
+                                .and_then(|o| o.get::<_, Function>("fn").ok())
+                                .unwrap_or_else(|| f.clone());
+                            // Node calls the custom inspect with `this` bound to the
+                            // value being inspected and `(depth, options, inspect)` as
+                            // arguments — the receiver is not an argument.
+                            let mut call = rquickjs::function::Args::new(ctx.clone(), 3);
+                            call.this(obj.clone().into_value())?;
+                            if let Some(rem) = remaining_depth {
+                                call.push_arg(rem)?;
+                            } else {
+                                call.push_arg(Null)?;
+                            }
+                            call.push_arg(custom_options)?;
+                            call.push_arg(inspect_fn)?;
+                            if let Ok(inspected) = f.call_arg::<Value>(call) {
+                                if let Some(text) = inspected.as_string() {
+                                    result.push_str(&text.to_string()?);
+                                    return Ok(());
+                                }
                             }
                         }
                     }
@@ -655,22 +822,25 @@ fn format_raw_inner<'js>(
                 // A getter form of `util.inspect.custom` (what `Headers` uses)
                 // returns a descriptor object; inspect its fields under the class
                 // prefix written above. Function-form was handled earlier.
-                if let Ok(inspector) = &obj.get::<_, Value>(options.custom_inspect_symbol.as_atom())
-                {
-                    if inspector.as_function().is_none()
-                        && !inspector.is_undefined()
-                        && !inspector.is_null()
+                if options.custom_inspect {
+                    if let Ok(inspector) =
+                        &obj.get::<_, Value>(options.custom_inspect_symbol.as_atom())
                     {
-                        if let Some(custom_obj) = inspector.as_object() {
-                            return write_object(
-                                result,
-                                custom_obj,
-                                options,
-                                visited,
-                                depth,
-                                color_enabled,
-                                custom_obj.is_array(),
-                            );
+                        if inspector.as_function().is_none()
+                            && !inspector.is_undefined()
+                            && !inspector.is_null()
+                        {
+                            if let Some(custom_obj) = inspector.as_object() {
+                                return write_object(
+                                    result,
+                                    custom_obj,
+                                    options,
+                                    visited,
+                                    depth,
+                                    color_enabled,
+                                    custom_obj.is_array(),
+                                );
+                            }
                         }
                     }
                 }
@@ -729,20 +899,173 @@ pub fn get_lossy_string(string_value: Value) -> Result<String> {
 }
 
 fn format_raw_string(result: &mut String, value: String, options: &FormatOptions<'_>) {
-    format_raw_string_inner(result, value, false, options.color);
+    format_raw_string_inner(result, value, false, options.color, None);
 }
 
-fn format_raw_string_inner(result: &mut String, value: String, quoted: bool, color_enabled: bool) {
+fn format_raw_string_inner(
+    result: &mut String,
+    value: String,
+    quoted: bool,
+    color_enabled: bool,
+    max_string_length: Option<usize>,
+) -> bool {
     if quoted {
+        let mut truncated = None;
+        if let Some(limit) = max_string_length {
+            let total_chars = value.chars().count();
+            if total_chars > limit {
+                let prefix: String = value.chars().take(limit).collect();
+                truncated = Some((prefix, total_chars - limit));
+            }
+        }
         if color_enabled {
             Color::GREEN.push(result);
         }
         result.push('\'');
-    }
-    result.push_str(&value);
-    if quoted {
+        if let Some((prefix, rem)) = truncated {
+            result.push_str(&prefix);
+            result.push('\'');
+            if color_enabled {
+                Color::reset(result);
+            }
+            result.push_str("... ");
+            let mut buffer = itoa::Buffer::new();
+            result.push_str(buffer.format(rem));
+            result.push_str(if rem == 1 {
+                " more character"
+            } else {
+                " more characters"
+            });
+            return true;
+        }
+        result.push_str(&value);
         result.push('\'');
+        false
+    } else {
+        result.push_str(&value);
+        false
     }
+}
+
+fn format_symbol_label(sym: &Symbol<'_>) -> String {
+    let desc = sym
+        .description()
+        .ok()
+        .and_then(|v| v.as_string().and_then(|s| s.to_string().ok()));
+    match desc {
+        Some(text) => format!("Symbol({text})"),
+        None => "Symbol()".to_string(),
+    }
+}
+
+fn collect_object_entries<'js>(
+    ctx: &Ctx<'js>,
+    obj: &Object<'js>,
+    options: &FormatOptions<'js>,
+) -> Result<Vec<(String, String, Value<'js>)>> {
+    // Each tuple is (sort_key, rendered_label, value).
+    let mut entries: Vec<(String, String, Value<'js>)> = Vec::new();
+    let get_desc = &options.get_own_property_desc_fn;
+    let sym_filter = Filter::new().symbol();
+
+    if options.show_hidden {
+        let object_ctor: Object = ctx.globals().get("Object")?;
+        if let Ok(names_fn) = object_ctor.get::<_, Function>("getOwnPropertyNames") {
+            if let Ok(names) = names_fn.call::<_, Vec<String>>((obj.clone(),)) {
+                for key in names {
+                    let enumerable = get_desc
+                        .call::<_, Object>((obj.clone(), key.as_str()))
+                        .ok()
+                        .and_then(|d| d.get::<_, bool>(PredefinedAtom::Enumerable).ok())
+                        .unwrap_or(true);
+                    let value = obj
+                        .get::<&str, Value>(key.as_str())
+                        .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                    let label = if enumerable {
+                        key.clone()
+                    } else {
+                        format!("[{key}]")
+                    };
+                    entries.push((key, label, value));
+                }
+            }
+        }
+        for sym in obj.own_keys::<Value>(sym_filter).flatten() {
+            if let Some(sym_ref) = sym.as_symbol() {
+                let sym_label = format_symbol_label(sym_ref);
+                let enumerable = get_desc
+                    .call::<_, Object>((obj.clone(), sym.clone()))
+                    .ok()
+                    .and_then(|d| d.get::<_, bool>(PredefinedAtom::Enumerable).ok())
+                    .unwrap_or(true);
+                let label = if enumerable {
+                    sym_label.clone()
+                } else {
+                    format!("[{sym_label}]")
+                };
+                let value = obj
+                    .get::<_, Value>(sym_ref.as_atom())
+                    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                entries.push((sym_label, label, value));
+            }
+        }
+    } else {
+        for key in obj.keys::<String>().flatten() {
+            let value: Value = obj.get::<&str, _>(key.as_str())?;
+            entries.push((key.clone(), key, value));
+        }
+        for sym in obj.own_keys::<Value>(sym_filter).flatten() {
+            if let Some(sym_ref) = sym.as_symbol() {
+                let enumerable = get_desc
+                    .call::<_, Object>((obj.clone(), sym.clone()))
+                    .ok()
+                    .and_then(|d| d.get::<_, bool>(PredefinedAtom::Enumerable).ok())
+                    .unwrap_or(false);
+                if enumerable {
+                    let sym_label = format_symbol_label(sym_ref);
+                    let value = obj
+                        .get::<_, Value>(sym_ref.as_atom())
+                        .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                    entries.push((sym_label.clone(), sym_label, value));
+                }
+            }
+        }
+    }
+
+    if let Some(mode) = &options.sorted {
+        match mode {
+            SortedMode::Default => {
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+            },
+            SortedMode::Custom(cmp_fn) => {
+                entries.sort_by(|a, b| {
+                    let n = cmp_fn
+                        .call::<_, f64>((a.0.as_str(), b.0.as_str()))
+                        .unwrap_or(0.0);
+                    if n < 0.0 {
+                        std::cmp::Ordering::Less
+                    } else if n > 0.0 {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                });
+            },
+        }
+    }
+
+    Ok(entries)
+}
+
+fn push_more_items(result: &mut String, remaining: usize) {
+    result.push_str("... ");
+    let mut buffer = itoa::Buffer::new();
+    result.push_str(buffer.format(remaining));
+    result.push_str(if remaining == 1 {
+        " more item"
+    } else {
+        " more items"
+    });
 }
 
 fn write_object<'js>(
@@ -755,6 +1078,49 @@ fn write_object<'js>(
     is_array: bool,
 ) -> Result<()> {
     result.push(if is_array { '[' } else { '{' });
+
+    let use_newline = options.compact.map(|c| !c).unwrap_or(options.newline);
+    let apply_indentation = match options.compact {
+        Some(true) => false,
+        Some(false) => !is_array,
+        None => !is_array && depth < 2 && options.newline,
+    };
+
+    if !is_array && (options.show_hidden || options.sorted.is_some()) {
+        let entries = collect_object_entries(obj.ctx(), obj, options)?;
+        if !entries.is_empty() {
+            let mut first = false;
+            for (_sort_key, label, value) in entries {
+                let numeric_key = label.parse::<f64>().is_ok();
+                write_sep(result, first, apply_indentation, use_newline);
+                if apply_indentation {
+                    push_indentation(result, depth + 1);
+                }
+                let _ = format_raw_string_inner(
+                    result,
+                    label,
+                    numeric_key,
+                    numeric_key & color_enabled,
+                    None,
+                );
+                if numeric_key && color_enabled {
+                    Color::reset(result);
+                }
+                result.push(':');
+                result.push(SPACING);
+                format_raw_inner(result, value, options, visited, depth + 1)?;
+                first = true;
+            }
+            if apply_indentation {
+                result.push(NEWLINE);
+                push_indentation(result, depth);
+            } else {
+                result.push(SPACING);
+            }
+            result.push('}');
+            return Ok(());
+        }
+    }
 
     let mut keys = obj.keys();
     let mut filter_functions = false;
@@ -771,24 +1137,20 @@ fn write_object<'js>(
             .and_then(|f| f.call::<_, Vec<String>>((obj.clone(),)).ok());
         if let Some(pk) = proxy_keys {
             if !pk.is_empty() {
-                let apply_indentation = depth < 2 && options.newline;
                 let mut first = false;
-                let length = pk.len();
-                for (i, key) in pk.iter().enumerate() {
+                for key in pk.iter() {
                     let value: Value = obj.get::<&str, _>(key.as_str())?;
                     let numeric_key = key.parse::<f64>().is_ok();
-                    write_sep(result, first, apply_indentation, options.newline);
+                    write_sep(result, first, apply_indentation, use_newline);
                     if apply_indentation {
                         push_indentation(result, depth + 1);
                     }
-                    if depth > MAX_INDENTATION_LEVEL - 1 {
-                        result.push(SPACING);
-                    }
-                    format_raw_string_inner(
+                    let _ = format_raw_string_inner(
                         result,
                         key.clone(),
                         numeric_key,
                         numeric_key & color_enabled,
+                        None,
                     );
                     if numeric_key && color_enabled {
                         Color::reset(result);
@@ -797,13 +1159,6 @@ fn write_object<'js>(
                     result.push(SPACING);
                     format_raw_inner(result, value, options, visited, depth + 1)?;
                     first = true;
-                    if i > 99 {
-                        result.push_str("... ");
-                        let mut buffer = itoa::Buffer::new();
-                        result.push_str(buffer.format(length - i));
-                        result.push_str(" more items");
-                        break;
-                    }
                 }
                 if first {
                     if apply_indentation {
@@ -824,45 +1179,75 @@ fn write_object<'js>(
             }
         }
     }
-    // Compact form (`util.inspect` of a short object) prints on one line, so
-    // indentation only applies when the caller asked for the multi-line layout.
-    let apply_indentation = !is_array && depth < 2 && options.newline;
 
     let mut first = false;
     let mut numeric_key;
     let length = keys.len();
-    for (i, key) in keys.flatten().enumerate() {
-        let value: Value = obj.get::<&String, _>(&key)?;
-        if !(value.is_function() && filter_functions) {
-            numeric_key = key.parse::<f64>().is_ok();
-            write_sep(result, first, apply_indentation, options.newline);
+    if is_array && options.max_array_length == Some(0) && length > 0 {
+        write_sep(result, false, apply_indentation, use_newline);
+        if apply_indentation {
+            push_indentation(result, depth + 1);
+        }
+        push_more_items(result, length);
+        first = true;
+    } else {
+        for (i, key) in keys.flatten().enumerate() {
+            let value: Value = obj.get::<&String, _>(&key)?;
+            if !(value.is_function() && filter_functions) {
+                numeric_key = key.parse::<f64>().is_ok();
+                write_sep(result, first, apply_indentation, use_newline);
 
-            if apply_indentation {
-                push_indentation(result, depth + 1);
-            }
-            if depth > MAX_INDENTATION_LEVEL - 1 {
-                result.push(SPACING);
-            }
-            if !is_array {
-                format_raw_string_inner(result, key, numeric_key, numeric_key & color_enabled);
-                if numeric_key && color_enabled {
-                    Color::reset(result);
+                if apply_indentation {
+                    push_indentation(result, depth + 1);
+                }
+                if !is_array {
+                    let _ = format_raw_string_inner(
+                        result,
+                        key,
+                        numeric_key,
+                        numeric_key & color_enabled,
+                        None,
+                    );
+                    if numeric_key && color_enabled {
+                        Color::reset(result);
+                    }
+
+                    result.push(':');
+                    result.push(SPACING);
                 }
 
-                result.push(':');
-                result.push(SPACING);
-            }
-
-            format_raw_inner(result, value, options, visited, depth + 1)?;
-            first = true;
-            if i > 99 {
-                result.push_str("... ");
-                let mut buffer = itoa::Buffer::new();
-                result.push_str(buffer.format(length - i));
-                result.push_str(" more items");
-                break;
+                format_raw_inner(result, value, options, visited, depth + 1)?;
+                first = true;
+                if is_array {
+                    if let Some(limit) = options.max_array_length {
+                        if i + 1 >= limit && i + 1 < length {
+                            write_sep(result, first, apply_indentation, use_newline);
+                            if apply_indentation {
+                                push_indentation(result, depth + 1);
+                            }
+                            push_more_items(result, length - (i + 1));
+                            break;
+                        }
+                    }
+                }
             }
         }
+    }
+    if is_array && options.show_hidden {
+        write_sep(result, first, apply_indentation, use_newline);
+        if apply_indentation {
+            push_indentation(result, depth + 1);
+        }
+        result.push_str("[length]: ");
+        if color_enabled {
+            Color::YELLOW.push(result);
+        }
+        let mut buffer = itoa::Buffer::new();
+        result.push_str(buffer.format(length));
+        if color_enabled {
+            Color::reset(result);
+        }
+        first = true;
     }
     if first {
         if apply_indentation {
@@ -896,7 +1281,9 @@ fn write_sep(result: &mut String, add_comma: bool, has_indentation: bool, newlin
 
 #[inline(always)]
 fn push_indentation(result: &mut String, depth: usize) {
-    result.push_str(INDENTATION_LOOKUP[depth]);
+    for _ in 0..depth {
+        result.push_str("  ");
+    }
 }
 
 pub fn replace_newline_with_carriage_return(result: &mut str) {

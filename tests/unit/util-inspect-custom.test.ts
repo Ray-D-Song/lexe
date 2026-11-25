@@ -152,14 +152,7 @@ describe("util.inspect dispatches to custom inspect", () => {
   });
 });
 
-// KNOWN GAP — the `depth` option is dropped by util.inspect: `format_with_options`
-// only reads `colors`, so depth never reaches `FormatOptions`. As a result a URL
-// nested inside an object still renders its `searchParams` in full where Node
-// degrades it to `[Object]` at depth 0.
-//
-// Remove this skip once `depth` is threaded through; the expectation below is
-// already what Node produces.
-it.skip("degrades nested searchParams to [Object] at depth 0", () => {
+it("degrades nested searchParams to [Object] at depth 0", () => {
   const url = new URL("file:///tmp/a");
   expect(util.inspect(url, { depth: 0 })).toContain("searchParams: [Object]");
 });

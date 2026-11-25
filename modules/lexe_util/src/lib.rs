@@ -3,15 +3,14 @@
 pub mod text_decoder;
 pub mod text_encoder;
 
-use lexe_logging::format_plain;
-use lexe_logging::format_values;
+use lexe_logging::{format_inspect, format_plain, format_values_with_options, FormatOptions};
 use lexe_utils::{
     class::CUSTOM_INSPECT_SYMBOL_DESCRIPTION,
     module::{export_default, ModuleInfo},
 };
 use rquickjs::{
     atom::PredefinedAtom,
-    function::Func,
+    function::{Func, Opt},
     module::{Declarations, Exports, ModuleDef},
     prelude::Rest,
     ArrayBuffer, Class, Ctx, Exception, Function, Object, Result, Symbol, Value,
@@ -1366,24 +1365,49 @@ fn install_type_predicates(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
-fn inspect_value<'js>(ctx: Ctx<'js>, value: Value<'js>) -> Result<String> {
-    // Compact form: short objects print on one line (`{ a: 1, b: 2 }`), which is
-    // what `util.inspect` does. `write_sep` handles the separators, so this no
-    // longer emits a carriage return either.
-    format_plain(ctx, false, rquickjs::prelude::Rest(vec![value]))
+fn inspect_value<'js>(
+    ctx: Ctx<'js>,
+    value: Value<'js>,
+    options: Opt<Value<'js>>,
+    depth: Opt<Value<'js>>,
+    colors: Opt<Value<'js>>,
+) -> Result<String> {
+    let mut format_opts = if let Some(opts_val) = options.0 {
+        if let Some(obj) = opts_val.as_object() {
+            FormatOptions::from_js_options(&ctx, false, false, Some(obj))?
+        } else if let Some(show_hidden) = opts_val.as_bool() {
+            let color = colors.0.and_then(|v| v.as_bool()).unwrap_or(false);
+            let mut opts = FormatOptions::new(&ctx, color, false)?;
+            opts.show_hidden = show_hidden;
+            if let Some(depth_val) = depth.0 {
+                if depth_val.is_null() {
+                    opts.max_depth = None;
+                } else if let Some(n) = depth_val.as_number() {
+                    if n.is_infinite() && n.is_sign_positive() {
+                        opts.max_depth = None;
+                    } else if n.is_finite() {
+                        opts.max_depth = Some(n.floor() as i64);
+                    }
+                }
+            }
+            opts
+        } else {
+            FormatOptions::new(&ctx, false, false)?
+        }
+    } else {
+        FormatOptions::new(&ctx, false, false)?
+    };
+    format_inspect(&ctx, value, &mut format_opts)
 }
 
 fn format_with_options<'js>(
     ctx: Ctx<'js>,
-    options: Object<'js>,
+    options: Value<'js>,
     args: rquickjs::prelude::Rest<Value<'js>>,
 ) -> Result<String> {
-    let colors = options
-        .get::<_, Option<bool>>("colors")
-        .ok()
-        .flatten()
-        .unwrap_or(false);
-    format_values(&ctx, args, colors, false)
+    let opts_obj = options.as_object();
+    let mut format_opts = FormatOptions::from_js_options(&ctx, false, false, opts_obj)?;
+    format_values_with_options(&ctx, args, &mut format_opts)
 }
 
 fn format_export<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<String> {
@@ -1497,6 +1521,18 @@ impl ModuleDef for UtilModule {
                 .as_object()
                 .expect("inspect export")
                 .set("custom", inspect_symbol.clone())?;
+
+            let set_custom_inspect_global: Function = ctx.eval(
+                r#"(function (fn) {
+  Object.defineProperty(globalThis, "__lexeInspectForCustom", {
+    value: { fn },
+    writable: true,
+    enumerable: false,
+    configurable: true,
+  });
+})"#,
+            )?;
+            set_custom_inspect_global.call::<_, ()>((inspect_value.clone(),))?;
 
             // Give the five built-ins that have `util.inspect.custom` in Node a
             // function-form implementation. See `inspect_custom.js`.

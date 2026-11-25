@@ -276,7 +276,7 @@ Everything else inherited from [Uint8Array](https://developer.mozilla.org/en-US/
 
 [Console](https://nodejs.org/api/console.html#class-console)
 
-Global `console` is a `Console` instance with methods bound to itself (matching Node.js).
+Global `console` conforms to the WHATWG Console namespace and exposes bound methods matching Node.js. `new Console(stdout[, stderr[, ignoreErrors]])` and `new Console({ stdout, stderr, ignoreErrors, colorMode, inspectOptions, groupIndentation })` are supported.
 
 [assert](https://nodejs.org/api/console.html#consoleassertvalue-message)
 
@@ -290,11 +290,21 @@ Global `console` is a `Console` instance with methods bound to itself (matching 
 
 [dir](https://nodejs.org/api/console.html#consoledirobj-options)
 
+[dirxml](https://nodejs.org/api/console.html#consoledirxmldata)
+
 [error](https://nodejs.org/api/console.html#consoleerrordata-args)
+
+[group](https://nodejs.org/api/console.html#consolegrouplabel)
+
+[groupCollapsed](https://nodejs.org/api/console.html#consolegroupcollapsed)
+
+[groupEnd](https://nodejs.org/api/console.html#consolegroupend)
 
 [info](https://nodejs.org/api/console.html#consoleinfodata-args)
 
 [log](https://nodejs.org/api/console.html#consolelogdata-args)
+
+[table](https://nodejs.org/api/console.html#consoletabletabulardata-properties)
 
 [time](https://nodejs.org/api/console.html#consoletimelabel)
 
@@ -306,8 +316,10 @@ Global `console` is a `Console` instance with methods bound to itself (matching 
 
 [warn](https://nodejs.org/api/console.html#consolewarndata-args)
 
+Inspector / devtools methods on `console`: `profile()`, `profileEnd()`, `timeStamp()`.
+
 > [!NOTE]
-> `count`, `countReset`, `time`, `timeLog`, and `timeEnd` coerce labels with JavaScript `ToString` (numbers and objects are accepted). `dir` supports a `colors` option; other Node `dir` options are not implemented.
+> `count`, `countReset`, `time`, `timeLog`, and `timeEnd` coerce labels with JavaScript `ToString` (numbers and objects are accepted). `dir` and `inspectOptions` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, and `customInspect`.
 
 ## crypto
 

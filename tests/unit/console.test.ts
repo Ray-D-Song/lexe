@@ -316,3 +316,273 @@ it("count keeps working alongside groups", () => {
   c.countReset("c");
   c.count("c");
 });
+
+function makeMemorySink(extra: Record<string, unknown> = {}) {
+  let output = "";
+  const sink: any = {
+    write(chunk: unknown) {
+      output += String(chunk);
+      return true;
+    },
+    getOutput() {
+      return output;
+    },
+    clearOutput() {
+      output = "";
+    },
+    ...extra,
+  };
+  return sink;
+}
+
+describe("Symbol formatting and WHATWG console namespace", () => {
+  it("formats anonymous and described symbols without crashing", () => {
+    expect(util.format(Symbol())).toBe("Symbol()");
+    expect(util.format(Symbol("label"))).toBe("Symbol(label)");
+    expect(util.format("prefix", Symbol())).toBe("prefix Symbol()");
+    expect(util.inspect(Symbol())).toBe("Symbol()");
+    expect(util.inspect(Symbol("abc"))).toBe("Symbol(abc)");
+
+    const out = makeMemorySink();
+    const c = new Console({ stdout: out, stderr: out, colorMode: false });
+    c.log(Symbol(), Symbol("tag"));
+    expect(out.getOutput()).toBe("Symbol() Symbol(tag)\n");
+  });
+
+  it("matches WHATWG Console WebIDL namespace & Node globalThis.console invariants", () => {
+    const desc = Object.getOwnPropertyDescriptor(globalThis, "console")!;
+    expect(desc.value).toBe(console);
+    expect(desc.writable).toBe(true);
+    expect(desc.enumerable).toBe(false);
+    expect(desc.configurable).toBe(true);
+    expect("get" in desc).toBe(false);
+    expect("set" in desc).toBe(false);
+
+    expect(typeof console).toBe("object");
+    expect((globalThis as any).Console).toBeUndefined();
+    expect(require("node:console")).toBe(console);
+    expect(require("console")).toBe(console);
+    expect(Object.getOwnPropertyDescriptor(console, "length")).toBeUndefined();
+    expect(Object.getOwnPropertyDescriptor(console, "name")).toBeUndefined();
+    expect((console as any)[Symbol.toStringTag]).toBe("console");
+    expect(Object.prototype.toString.call(console)).toBe("[object console]");
+    expect(console instanceof Console).toBe(true);
+
+    const nsProto = Object.getPrototypeOf(console);
+    expect(Reflect.ownKeys(nsProto)).toEqual([]);
+    expect(Object.getPrototypeOf(nsProto)).toBe(Object.prototype);
+
+    const methods = [
+      "assert",
+      "clear",
+      "count",
+      "countReset",
+      "debug",
+      "dir",
+      "dirxml",
+      "error",
+      "group",
+      "groupCollapsed",
+      "groupEnd",
+      "info",
+      "log",
+      "table",
+      "time",
+      "timeEnd",
+      "timeLog",
+      "trace",
+      "warn",
+      "profile",
+      "profileEnd",
+      "timeStamp",
+    ];
+    for (const name of methods) {
+      const fn = (console as any)[name];
+      expect(typeof fn).toBe("function");
+      expect(fn.name).toBe(name);
+      expect(fn.length).toBe(0);
+      expect(fn.prototype).toBeUndefined();
+      expect(() => new fn()).toThrow(TypeError);
+    }
+  });
+});
+
+describe("Console constructor, streams, and options", () => {
+  it("routes stdout/stderr for both options-object and positional constructors", () => {
+    const out1 = makeMemorySink();
+    const err1 = makeMemorySink();
+    const c1 = new Console({ stdout: out1, stderr: err1, colorMode: false });
+    c1.log("out");
+    c1.info("info");
+    c1.debug("debug");
+    c1.dirxml("xml", { x: 1 });
+    c1.warn("warn");
+    c1.error("err");
+    expect(out1.getOutput()).toBe("out\ninfo\ndebug\nxml {\n  x: 1\n}\n");
+    expect(err1.getOutput()).toBe("warn\nerr\n");
+
+    const out2 = makeMemorySink();
+    const err2 = makeMemorySink();
+    const c2 = new Console(out2, err2);
+    c2.log("p-out");
+    c2.error("p-err");
+    expect(out2.getOutput()).toBe("p-out\n");
+    expect(err2.getOutput()).toBe("p-err\n");
+
+    // stderr defaults to stdout when omitted
+    const single = makeMemorySink();
+    const c3 = new Console(single);
+    c3.log("a");
+    c3.error("b");
+    expect(single.getOutput()).toBe("a\nb\n");
+  });
+
+  it("validates Console constructor arguments like Node", () => {
+    const out = makeMemorySink();
+    const badStream = (fn: () => unknown) => {
+      try {
+        fn();
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e).toBeInstanceOf(TypeError);
+        expect(e.code).toBe("ERR_CONSOLE_WRITABLE_STREAM");
+      }
+    };
+    badStream(() => new (Console as any)());
+    badStream(() => new (Console as any)({}));
+    badStream(() => new (Console as any)({ stdout: null }));
+    badStream(() => new (Console as any)({ stdout: out, stderr: {} }));
+
+    try {
+      new Console({ stdout: out, colorMode: "invalid" as any });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(TypeError);
+      expect(e.code).toBe("ERR_INVALID_ARG_VALUE");
+    }
+
+    for (const badIndent of [-1, 1001, 1.5]) {
+      try {
+        new Console({ stdout: out, groupIndentation: badIndent });
+        expect.unreachable();
+      } catch (e: any) {
+        expect(e).toBeInstanceOf(RangeError);
+        expect(e.code).toBe("ERR_OUT_OF_RANGE");
+      }
+    }
+  });
+
+  it("honors colorMode, groupIndentation, ignoreErrors, and inspectOptions", () => {
+    const outTrue = makeMemorySink();
+    const cTrue = new Console({ stdout: outTrue, colorMode: true });
+    cTrue.log(42);
+    expect(outTrue.getOutput()).toBe("\u001b[33m42\u001b[0m\n");
+
+    const outAuto = makeMemorySink({ isTTY: true });
+    const cAuto = new Console({ stdout: outAuto, colorMode: "auto" });
+    cAuto.log(42);
+    expect(outAuto.getOutput()).toBe("\u001b[33m42\u001b[0m\n");
+
+    const outIndent = makeMemorySink();
+    const cIndent = new Console({
+      stdout: outIndent,
+      colorMode: false,
+      groupIndentation: 4,
+      inspectOptions: { depth: 1, sorted: true, maxArrayLength: 2 },
+    });
+    cIndent.group("grp");
+    cIndent.log({ z: 1, a: { b: { c: 3 } }, arr: [1, 2, 3, 4] });
+    cIndent.groupEnd();
+    cIndent.dir({ b: { c: { d: 1 } }, a: 1 });
+    cIndent.dir({ b: { c: { d: 1 } }, a: 1 }, { depth: 2 });
+    cIndent.dir("quoted");
+    cIndent.dir({ z: 1, a: 2 }, { compact: false });
+    expect(outIndent.getOutput()).toBe(
+      "grp\n" +
+        "    {\n" +
+        "      a: {\n" +
+        "        b: [Object]\n" +
+        "      },\n" +
+        "      arr: [ 1, 2, ... 2 more items ],\n" +
+        "      z: 1\n" +
+        "    }\n" +
+        "{ a: 1, b: { c: [Object] } }\n" +
+        "{ a: 1, b: { c: { d: 1 } } }\n" +
+        "'quoted'\n" +
+        "{\n  a: 2,\n  z: 1\n}\n"
+    );
+
+    const throwingStream = {
+      write() {
+        throw new Error("write boom");
+      },
+    };
+    const cIgnore = new Console({ stdout: throwingStream, ignoreErrors: true });
+    expect(() => cIgnore.log("safe")).not.toThrow();
+
+    const cThrow = new Console({ stdout: throwingStream, ignoreErrors: false });
+    expect(() => cThrow.log("fail")).toThrow("write boom");
+  });
+
+  it("supports assert truthiness, trace stack output, and devtools no-op methods", () => {
+    const out = makeMemorySink();
+    const err = makeMemorySink();
+    const c = new Console({ stdout: out, stderr: err, colorMode: false });
+
+    c.assert();
+    c.assert(0 as any, "zero failed");
+    c.assert("" as any, "fmt %d", 42);
+    c.assert(1 as any, "not printed");
+    c.trace("my trace %s", "arg");
+
+    const lines = err.getOutput().split("\n");
+    expect(lines[0]).toBe("Assertion failed");
+    expect(lines[1]).toBe("Assertion failed: zero failed");
+    expect(lines[2]).toBe("Assertion failed: fmt 42");
+    expect(lines[3]).toBe("Trace: my trace arg");
+    expect(err.getOutput()).toContain("at ");
+    expect(out.getOutput()).toBe("");
+
+    expect(console.profile("p")).toBeUndefined();
+    expect(console.profileEnd("p")).toBeUndefined();
+    expect(console.timeStamp("ts")).toBeUndefined();
+  });
+
+  it("wires full inspect options into util.inspect and util.formatWithOptions", () => {
+    const nested = { a: { b: { c: { d: 1 } } } };
+    expect(util.inspect(nested, { depth: 0 })).toBe("{ a: [Object] }");
+    expect(util.inspect(nested, { depth: 1 })).toBe("{ a: { b: [Object] } }");
+    expect(util.inspect(nested, { depth: 2 })).toBe("{ a: { b: { c: [Object] } } }");
+    expect(util.inspect(nested, { depth: null })).toBe("{ a: { b: { c: { d: 1 } } } }");
+    expect(util.inspect(nested, { depth: null, compact: false })).toBe(
+      "{\n  a: {\n    b: {\n      c: {\n        d: 1\n      }\n    }\n  }\n}"
+    );
+    expect(util.inspect("hello")).toBe("'hello'");
+    expect(util.inspect("abcdef", { maxStringLength: 3 })).toBe("'abc'... 3 more characters");
+    expect(util.inspect([1, 2, 3, 4], { maxArrayLength: 2 })).toBe("[ 1, 2, ... 2 more items ]");
+    expect(util.inspect([1, 2, 3], { maxArrayLength: 0 })).toBe("[ ... 3 more items ]");
+    expect(util.inspect({ c: 1, a: 2, b: 3 }, { sorted: true })).toBe("{ a: 2, b: 3, c: 1 }");
+    expect(
+      util.inspect(
+        { c: 1, a: 2, b: 3 },
+        { sorted: (a, b) => (a < b ? 1 : a > b ? -1 : 0) }
+      )
+    ).toBe("{ c: 1, b: 3, a: 2 }");
+
+    const hiddenObj: Record<string, unknown> = { a: 1 };
+    Object.defineProperty(hiddenObj, "secret", { value: 2, enumerable: false });
+    expect(util.inspect(hiddenObj, { showHidden: false })).toBe("{ a: 1 }");
+    expect(util.inspect(hiddenObj, { showHidden: true })).toBe("{ a: 1, [secret]: 2 }");
+
+    const customObj = {
+      a: 1,
+      [util.inspect.custom]() {
+        return "CUSTOM";
+      },
+    };
+    expect(util.inspect(customObj, { customInspect: false })).not.toBe("CUSTOM");
+    expect(util.formatWithOptions({ depth: 0, sorted: true }, { z: { inner: 1 }, a: 2 })).toBe(
+      "{ a: 2, z: [Object] }"
+    );
+  });
+});

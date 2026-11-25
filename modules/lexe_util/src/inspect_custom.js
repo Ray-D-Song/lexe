@@ -35,9 +35,14 @@
       "port: " + quote(url.port),
       "pathname: " + quote(url.pathname),
       "search: " + quote(url.search),
-      // Node inspects the nested URLSearchParams with the same options, so a
+      // Node inspects the nested URLSearchParams with decremented depth, so a
       // `depth: 0` call renders it as `[Object]`.
-      "searchParams: " + inspect(url.searchParams, options),
+      "searchParams: " + inspect(
+        url.searchParams,
+        options && typeof options.depth === "number"
+          ? Object.assign({}, options, { depth: options.depth - 1 })
+          : options
+      ),
       "hash: " + quote(url.hash),
     ];
     return "URL {\n  " + lines.join(",\n  ") + "\n}";

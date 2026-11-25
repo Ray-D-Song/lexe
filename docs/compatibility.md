@@ -10,7 +10,7 @@
 | node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`); no slab pooling; no `Buffer.prototype.inspect` or `INSPECT_MAX_BYTES` truncation; no `Uint64` paths ([details](#nodebuffer)) |
 | node:child_process | ✔︎ | ✔︎⚠️ | Missing `spawnSync`; limited `stdio` (`pipe`/`ignore`/`inherit`) and `spawn` options; `unref()` detaches wait handle ([details](#nodechild_process)) |
 | node:cluster | ✔︎ | ✘ | Not implemented |
-| node:console | ✔︎ | ✔︎⚠️ | Missing `dirxml`, `profile`/`profileEnd`, `timeStamp`; `Console` options and most `dir` inspect options are ignored ([details](#nodeconsole)) |
+| node:console | ✔︎ | ✔︎ | — |
 | node:constants | ✔︎ | ✔︎ | — |
 | node:crypto | ✔︎ | ✔︎⚠️ | Missing classic Cipher/Decipher, top-level Sign/Verify, `KeyObject`, X509, DH/ECDH, and KDF sync/async exports; depends on WebCrypto `subtle` ([details](#nodecrypto)) |
 | node:dgram | ✔︎ | ✔︎ | — |
@@ -46,7 +46,7 @@
 | node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎⚠️ | Missing `URLPattern`; minor `url`-crate parser quirks ([details](#nodeurl)) |
-| node:util | ✔︎ | ✔︎⚠️ | Missing `parseArgs` and `transferableAbort*`; `inspect` ignores options; `formatWithOptions` only honors `colors`; limited `TextDecoder` encodings ([details](#nodeutil-and-nodeutiltypes)) |
+| node:util | ✔︎ | ✔︎⚠️ | Missing `parseArgs` and `transferableAbort*`; limited `TextDecoder` encodings ([details](#nodeutil-and-nodeutiltypes)) |
 | node:util/types | ✔︎ | ✔︎⚠️ | Missing `isWebAssemblyCompiledModule`; `isExternal`, `isKeyObject`, and `isCryptoKey` always return `false` ([details](#nodeutil-and-nodeutiltypes)) |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎⚠️ | Exports `runInNewContext` only (no `Script`/`createContext`/modules); only `{ filename }` option; shared QuickJS runtime ([details](#nodevm)) |
@@ -64,7 +64,7 @@
 | [Web Platform API](https://min-common-api.proposal.wintertc.org/) | lexe | Key differences from standard / Node.js |
 | --- | --- | --- |
 | COMPRESSION | ✔︎⚠️ | Supports `gzip`/`deflate`/`deflate-raw` via `node:zlib`; inherits `node:stream/web` streaming limits ([details](#compression)) |
-| CONSOLE | ✔︎⚠️ | Missing `dirxml`, `profile`/`profileEnd`, `timeStamp`, plus `console-log-symbol` and `idlharness` WPT edge cases ([details](#console)) |
+| CONSOLE | ✔︎ | — |
 | DOM | ✔︎⚠️ | WinterTC `Event`/`EventTarget`/`AbortController`/`AbortSignal` subset only; no `ErrorEvent`, `CloseEvent`, or browser DOM ([details](#dom)) |
 | ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
 | ENCODING | ✔︎⚠️ | Supports `utf-8`, `utf-16le`, `utf-16be`, `windows-1252` (plus `hex`/`base64`) only; missing WHATWG legacy encodings ([details](#encoding)) |
@@ -128,12 +128,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `stdio` only accepts `"pipe"`, `"ignore"`, and `"inherit"` (no `"overlapped"`, raw numeric file descriptors, or arbitrary stream objects; fds beyond `0`/`1`/`2` are ignored outside `fork` IPC).
 - `spawn` supports a limited option set (`cwd`, `env`, `stdio`, `shell`, `detached`, `uid`, `gid`, `windowsVerbatimArguments`); options such as `argv0`, `signal`, `timeout`, `killSignal`, `serialization`, and `windowsHide` are not implemented.
 - Calling `ChildProcess.unref()` detaches the wait handle immediately, so the parent process may exit without receiving `exit`/`close` events.
-
-#### `node:console`
-
-- Missing `console.dirxml()`, `console.profile()`, `console.profileEnd()`, and `console.timeStamp()`.
-- `new Console(options)` does not honor `colorMode`, `inspectOptions`, or `groupIndentation`.
-- `console.dir(obj, options)` only honors `options.colors`; other `util.inspect` options (`depth`, `showHidden`, `maxArrayLength`, etc.) are ignored.
 
 #### `node:crypto`
 
@@ -229,8 +223,8 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `node:util` and `node:util/types`
 
-- `node:util` missing exports: `parseArgs()`, `transferableAbortController()`, `transferableAbortSignal()`, and `inspect.styles` / `inspect.defaultOptions`.
-- `util.inspect(value)` ignores its `options` argument, and `util.formatWithOptions(options, ...args)` honors only `options.colors` (ignoring `depth`, `showHidden`, `maxArrayLength`, `compact`, `sorted`, etc.).
+- `node:util` missing exports: `parseArgs()`, `transferableAbortController()`, and `transferableAbortSignal()`.
+- `util.inspect()` and `util.formatWithOptions()` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, and `customInspect` (while `showProxy`, `getters`, `numericSeparator`, and line-wrapping `breakLength` are not implemented).
 - `util.styleText()` does not support hex/RGB truecolor formats.
 - `util.TextDecoder` supports only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus `hex`/`base64`), lacking full WHATWG legacy encodings.
 - `node:util/types` omits `isWebAssemblyCompiledModule()`, and `isExternal()`, `isKeyObject()`, and `isCryptoKey()` always return `false` (even for WebCrypto `CryptoKey` objects) because their host hooks are not registered.
@@ -258,10 +252,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 #### `COMPRESSION`
 
 - Supports `CompressionStream` and `DecompressionStream` for `gzip`, `deflate`, and `deflate-raw` via `node:zlib`, inheriting `node:stream/web` streaming limitations.
-
-#### `CONSOLE`
-
-- Missing WHATWG Console methods `dirxml()`, `profile()`, `profileEnd()`, and `timeStamp()`, plus `console-log-symbol` and `idlharness` WPT edge cases.
 
 #### `DOM`
 
