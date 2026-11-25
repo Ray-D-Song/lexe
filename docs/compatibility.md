@@ -8,7 +8,7 @@
 | node:assert | ✔︎ | ✔︎ | — |
 | node:async_hooks | ✔︎ | ✔︎⚠️ | Public `createHook()` disabled by default (`LEXE_ASYNC_HOOKS=1`); missing `executionAsyncResource`, `asyncWrapProviders`, and `AsyncLocalStorage` Node 24 options ([details](#nodeasync_hooks)) |
 | node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`); no slab pooling; no `Buffer.prototype.inspect` or `INSPECT_MAX_BYTES` truncation; no `Uint64` paths ([details](#nodebuffer)) |
-| node:child_process | ✔︎ | ✔︎⚠️ | Missing `spawnSync`; limited `stdio` (`pipe`/`ignore`/`inherit`) and `spawn` options; `unref()` detaches wait handle ([details](#nodechild_process)) |
+| node:child_process | ✔︎ | — |
 | node:cluster | ✔︎ | ✘ | Not implemented |
 | node:console | ✔︎ | ✔︎ | — |
 | node:constants | ✔︎ | ✔︎ | — |
@@ -121,13 +121,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `Buffer.poolSize` is exposed as a numeric property only; Lexe does not use slab-pooled backing allocations.
 - `Buffer.prototype.inspect` is not implemented, and `INSPECT_MAX_BYTES` does not limit `util.inspect()` output.
 - `Uint64` typed-array conversion paths throw `"Uint64 is not supported"`.
-
-#### `node:child_process`
-
-- Missing `spawnSync()` (only `spawn`, `fork`, `exec`, `execFile`, `execSync`, and `execFileSync` are exported).
-- `stdio` only accepts `"pipe"`, `"ignore"`, and `"inherit"` (no `"overlapped"`, raw numeric file descriptors, or arbitrary stream objects; fds beyond `0`/`1`/`2` are ignored outside `fork` IPC).
-- `spawn` supports a limited option set (`cwd`, `env`, `stdio`, `shell`, `detached`, `uid`, `gid`, `windowsVerbatimArguments`); options such as `argv0`, `signal`, `timeout`, `killSignal`, `serialization`, and `windowsHide` are not implemented.
-- Calling `ChildProcess.unref()` detaches the wait handle immediately, so the parent process may exit without receiving `exit`/`close` events.
 
 #### `node:crypto`
 

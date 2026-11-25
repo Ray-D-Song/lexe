@@ -6,50 +6,46 @@
 mod fork;
 #[cfg(unix)]
 mod ipc_channel;
+mod options;
+mod sync;
 
 #[cfg(unix)]
 pub use fork::fork;
 #[cfg(unix)]
 pub use ipc_channel::install_child_process_ipc;
 
-#[cfg(windows)]
-use std::os::windows::{
-    io::{FromRawHandle, RawHandle},
-    process::CommandExt,
-};
 #[cfg(unix)]
 use std::os::{
-    fd::FromRawFd,
+    fd::IntoRawFd,
+    unix::net::UnixStream as StdUnixStream,
     unix::process::{CommandExt, ExitStatusExt},
 };
 use std::{
-    collections::HashMap,
-    io::Result as IoResult,
-    process::{Command as StdCommand, Stdio},
+    process::Stdio,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 
 use lexe_context::CtxExtension;
-use lexe_events::{EmitError, Emitter, EventEmitter, EventList};
+use lexe_events::{EmitError, Emitter, EventEmitter, EventKey, EventList};
 use lexe_stream::{
-    readable::{DefaultReadableStream, ReadableStream},
-    writable::{DefaultWritableStream, WritableStream},
+    impl_stream_events,
+    readable::{DefaultReadableStream, ReadableStream, ReadableStreamInner},
+    writable::{DefaultWritableStream, WritableStream, WritableStreamInner},
 };
 use lexe_utils::{
-    clone_wire::CloneWirePayload,
-    event_loop::EventLoopRef,
+    event_loop::{keeps_event_loop_alive, should_keep_process_alive, EventLoopRef},
     module::{export_default, ModuleInfo},
-    object::ObjectExt,
     result::ResultExt,
 };
 use rquickjs::{
     class::{Trace, Tracer},
-    convert::Coerced,
     module::{Declarations, Exports, ModuleDef},
     prelude::{Func, Opt, Rest, This},
-    Class, Ctx, Error, Exception, IntoJs, Result, Value,
+    Array, Class, Ctx, Error, Function, IntoJs, JsLifetime, Null, Result, Value,
 };
-use tokio::sync::mpsc::UnboundedSender;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio::{
     io::AsyncRead,
     process::{Child, Command},
@@ -59,60 +55,104 @@ use tokio::{
     },
 };
 
-#[cfg(unix)]
-use lexe_utils::signals::{kill, signal_str_from_i32};
-
+use crate::options::{
+    attach_abort_error_helper, build_command, dup_fd_stdio, make_abort_error,
+    parse_cmd_args_and_opts, SerializationMode, StdioSpec,
+};
 #[cfg(not(unix))]
-use lexe_utils::signals::{kill_process_raw, parse_signal};
+use lexe_utils::signals::kill_process_raw;
+use lexe_utils::signals::parse_signal;
+#[cfg(unix)]
+use lexe_utils::signals::{kill, kill_process_raw, signal_str_from_i32};
 
-#[allow(unused_variables)]
-fn prepare_shell_args(
-    shell: &str,
-    windows_verbatim_arguments: &mut bool,
-    cmd: String,
-    command_args: Option<Vec<String>>,
-) -> Vec<String> {
-    let mut string_args = cmd;
+#[cfg(unix)]
+#[rquickjs::class]
+pub struct ChildPipe<'js> {
+    emitter: EventEmitter<'js>,
+    readable: ReadableStreamInner<'js>,
+    writable: WritableStreamInner<'js>,
+}
 
-    #[cfg(windows)]
-    let shell_is_cmd = shell.ends_with("cmd") || shell.ends_with("cmd.exe");
+#[cfg(unix)]
+impl<'js> Trace<'js> for ChildPipe<'js> {
+    fn trace<'a>(&self, tracer: Tracer<'a, 'js>) {
+        self.emitter.trace(tracer);
+        self.readable.trace(tracer);
+        self.writable.trace(tracer);
+    }
+}
 
-    #[cfg(windows)]
-    {
-        if shell_is_cmd {
-            *windows_verbatim_arguments = true;
-            string_args.insert(0, '"');
-        }
+#[cfg(unix)]
+unsafe impl<'js> JsLifetime<'js> for ChildPipe<'js> {
+    type Changed<'to> = ChildPipe<'to>;
+}
+
+#[cfg(unix)]
+impl_stream_events!(ChildPipe);
+
+#[cfg(unix)]
+impl<'js> Emitter<'js> for ChildPipe<'js> {
+    fn get_event_list(&self) -> Arc<RwLock<EventList<'js>>> {
+        self.emitter.get_event_list()
     }
 
-    if let Some(command_args) = command_args {
-        //reserve at least arg length +1
-        let total_length = command_args.iter().map(|s| s.len() + 1).sum();
-        string_args.reserve(total_length);
-        string_args.push(' ');
+    fn on_event_changed(&mut self, event: EventKey<'js>, added: bool) -> Result<()> {
+        self.readable.on_event_changed(event, added)
+    }
+}
 
-        for arg in command_args.iter() {
-            string_args.push_str(arg);
-            string_args.push(' ');
-        }
-    } else {
-        string_args.push(' ');
+#[cfg(unix)]
+impl<'js> ReadableStream<'js> for ChildPipe<'js> {
+    fn inner_mut(&mut self) -> &mut ReadableStreamInner<'js> {
+        &mut self.readable
     }
 
-    #[cfg(windows)]
-    {
-        if shell_is_cmd {
-            string_args.push('"');
-            return vec![
-                String::from("/d"),
-                String::from("/s"),
-                String::from("/c"),
-                string_args,
-            ];
-        }
+    fn inner(&self) -> &ReadableStreamInner<'js> {
+        &self.readable
+    }
+}
+
+#[cfg(unix)]
+impl<'js> WritableStream<'js> for ChildPipe<'js> {
+    fn inner_mut(&mut self) -> &mut WritableStreamInner<'js> {
+        &mut self.writable
     }
 
-    vec!["-c".into(), string_args]
+    fn inner(&self) -> &WritableStreamInner<'js> {
+        &self.writable
+    }
+}
+
+#[cfg(unix)]
+#[rquickjs::methods]
+impl<'js> ChildPipe<'js> {
+    pub fn destroy(this: This<Class<'js, Self>>, error: Opt<Value<'js>>) -> Class<'js, Self> {
+        ReadableStream::destroy(This(this.clone()), Opt(error.0.clone()));
+        WritableStream::destroy(This(this.clone()), error);
+        this.0
+    }
+}
+
+#[cfg(unix)]
+impl<'js> ChildPipe<'js> {
+    fn from_unix_stream(
+        ctx: &Ctx<'js>,
+        stream: UnixStream,
+    ) -> Result<(Class<'js, Self>, OneshotReceiver<bool>)> {
+        let emitter = EventEmitter::new();
+        let instance = Class::instance(
+            ctx.clone(),
+            Self {
+                emitter: emitter.clone(),
+                readable: ReadableStreamInner::new(emitter.clone(), false),
+                writable: WritableStreamInner::new(emitter, false),
+            },
+        )?;
+        let (reader, writer) = stream.into_split();
+        let read_rx = ReadableStream::process(instance.clone(), ctx, reader)?;
+        let _write_rx = WritableStream::process(instance.clone(), ctx, writer)?;
+        Ok((instance, read_rx))
+    }
 }
 
 #[allow(dead_code)]
@@ -120,12 +160,21 @@ fn prepare_shell_args(
 #[derive(rquickjs::JsLifetime)]
 pub struct ChildProcess<'js> {
     emitter: EventEmitter<'js>,
+    spawnfile: String,
+    spawnargs: Vec<String>,
     args: Option<Vec<String>>,
     command: String,
-    kill_tx: Option<Sender<()>>,
+    kill_tx: Option<Sender<i32>>,
     pid: Option<u32>,
+    killed: bool,
+    exit_code: Option<i32>,
+    signal_code: Option<String>,
+    connected: bool,
+    serialization: SerializationMode,
     loop_ref: Arc<EventLoopRef>,
-    ipc_outbound: Option<UnboundedSender<CloneWirePayload>>,
+    ipc_loop_ref: Option<Arc<EventLoopRef>>,
+    #[cfg(unix)]
+    ipc_outbound: Option<tokio::sync::mpsc::UnboundedSender<ipc_channel::IpcPacket>>,
 }
 
 impl<'js> Trace<'js> for ChildProcess<'js> {
@@ -134,46 +183,90 @@ impl<'js> Trace<'js> for ChildProcess<'js> {
     }
 }
 
-#[derive(Clone)]
-enum StdioEnum {
-    Piped,
-    Ignore,
-    Inherit,
-    Fd(i32),
-}
-impl StdioEnum {
-    fn to_stdio(&self) -> Stdio {
-        match self {
-            StdioEnum::Piped => Stdio::piped(),
-            StdioEnum::Ignore => Stdio::null(),
-            StdioEnum::Inherit => Stdio::inherit(),
-            StdioEnum::Fd(id) => {
-                #[cfg(unix)]
-                unsafe {
-                    Stdio::from_raw_fd(*id)
-                }
-                #[cfg(windows)]
-                unsafe {
-                    Stdio::from_raw_handle(*id as RawHandle)
-                }
-            },
-        }
-    }
-}
-
 #[rquickjs::methods]
 impl<'js> ChildProcess<'js> {
-    #[qjs(get)]
+    #[qjs(constructor)]
+    pub fn js_ctor(ctx: Ctx<'js>) -> Result<Class<'js, Self>> {
+        let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
+        let rt_key = lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
+        Class::instance(
+            ctx,
+            Self {
+                emitter: EventEmitter::new(),
+                spawnfile: String::new(),
+                spawnargs: Vec::new(),
+                args: None,
+                command: String::new(),
+                kill_tx: None,
+                pid: None,
+                killed: false,
+                exit_code: None,
+                signal_code: None,
+                connected: false,
+                serialization: SerializationMode::Advanced,
+                loop_ref: EventLoopRef::new_unreferenced(rt_key),
+                ipc_loop_ref: None,
+                #[cfg(unix)]
+                ipc_outbound: None,
+            },
+        )
+    }
+
+    #[qjs(get, enumerable)]
     fn pid(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
         self.pid.into_js(&ctx)
     }
 
+    #[qjs(get, enumerable)]
+    fn spawnfile(&self) -> String {
+        self.spawnfile.clone()
+    }
+
+    #[qjs(get, enumerable)]
+    fn spawnargs(&self) -> Vec<String> {
+        self.spawnargs.clone()
+    }
+
+    #[qjs(get, enumerable)]
+    fn killed(&self) -> bool {
+        self.killed
+    }
+
+    #[qjs(get, enumerable, rename = "exitCode")]
+    fn exit_code(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        match self.exit_code {
+            Some(c) => c.into_js(&ctx),
+            None => Ok(Null.into_value(ctx)),
+        }
+    }
+
+    #[qjs(get, enumerable, rename = "signalCode")]
+    fn signal_code(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        match &self.signal_code {
+            Some(s) => s.into_js(&ctx),
+            None => Ok(Null.into_value(ctx)),
+        }
+    }
+
+    #[qjs(get, enumerable)]
+    fn connected(&self) -> bool {
+        self.connected
+    }
+
     #[allow(unused_variables)]
     fn kill(&mut self, ctx: Ctx<'js>, signal: Opt<Value<'js>>) -> Result<bool> {
+        if self.exit_code.is_some() || self.signal_code.is_some() {
+            return Ok(false);
+        }
         if let Some(pid) = self.pid {
             #[cfg(unix)]
             {
-                return kill(&ctx, pid, signal);
+                let sig = parse_signal(signal.0.clone())?;
+                let ok = kill(&ctx, pid, signal)?;
+                if ok && sig != 0 {
+                    self.killed = true;
+                }
+                return Ok(ok);
             }
 
             #[cfg(windows)]
@@ -186,7 +279,11 @@ impl<'js> ChildProcess<'js> {
                 }
 
                 if let Some(tx) = self.kill_tx.take() {
-                    return Ok(tx.send(()).is_ok());
+                    let ok = tx.send(signal).is_ok();
+                    if ok {
+                        self.killed = true;
+                    }
+                    return Ok(ok);
                 }
             }
         }
@@ -196,13 +293,27 @@ impl<'js> ChildProcess<'js> {
 
     #[qjs(rename = "ref")]
     fn js_ref(this: This<Class<'js, Self>>) -> Class<'js, Self> {
-        this.borrow().loop_ref.reference();
+        {
+            let borrow = this.borrow();
+            borrow.loop_ref.reference();
+            if borrow.connected {
+                if let Some(ipc_ref) = &borrow.ipc_loop_ref {
+                    ipc_ref.reference();
+                }
+            }
+        }
         this.0
     }
 
     #[qjs(rename = "unref")]
     fn js_unref(this: This<Class<'js, Self>>) -> Class<'js, Self> {
-        this.borrow().loop_ref.unreference();
+        {
+            let borrow = this.borrow();
+            borrow.loop_ref.unreference();
+            if let Some(ipc_ref) = &borrow.ipc_loop_ref {
+                ipc_ref.unreference();
+            }
+        }
         this.0
     }
 
@@ -210,26 +321,109 @@ impl<'js> ChildProcess<'js> {
         this: This<Class<'js, Self>>,
         ctx: Ctx<'js>,
         message: Value<'js>,
-        transfer: Opt<Value<'js>>,
+        rest: Rest<Value<'js>>,
     ) -> Result<bool> {
         #[cfg(unix)]
-        return ipc_channel::child_send(this, ctx, message, transfer);
+        return ipc_channel::child_send(this, ctx, message, rest);
         #[cfg(not(unix))]
         {
-            let _ = (this, ctx, message, transfer);
+            let _ = (this, ctx, message, rest);
             Ok(false)
+        }
+    }
+
+    fn disconnect(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<()> {
+        #[cfg(unix)]
+        return ipc_channel::child_disconnect(this, ctx);
+        #[cfg(not(unix))]
+        {
+            let _ = (this, ctx);
+            Ok(())
         }
     }
 }
 
+struct SpawnRuntimeConfig<'js> {
+    spawnfile: String,
+    spawnargs: Vec<String>,
+    command: String,
+    args: Option<Vec<String>>,
+    timeout_ms: Option<u64>,
+    kill_signal: i32,
+    kill_signal_val: Option<Value<'js>>,
+    serialization: SerializationMode,
+    abort_signal: Option<rquickjs::Object<'js>>,
+    stdio_specs: Vec<StdioSpec>,
+    #[cfg(unix)]
+    extra_pipes: Vec<(usize, UnixStream)>,
+    #[cfg(unix)]
+    ipc_stream: Option<UnixStream>,
+}
+
 impl<'js> ChildProcess<'js> {
-    fn new(
+    fn new_aborted(
         ctx: Ctx<'js>,
         command: String,
         args: Option<Vec<String>>,
-        child: IoResult<Child>,
+        spawnfile: String,
+        spawnargs: Vec<String>,
     ) -> Result<Class<'js, Self>> {
-        let (kill_tx, kill_rx) = broadcast_channel::<()>(1);
+        let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
+        let rt_key = lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
+        let loop_ref = EventLoopRef::new_unreferenced(rt_key);
+
+        let instance = Class::instance(
+            ctx.clone(),
+            Self {
+                emitter: EventEmitter::new(),
+                spawnfile,
+                spawnargs,
+                command,
+                args,
+                kill_tx: None,
+                pid: None,
+                killed: false,
+                exit_code: None,
+                signal_code: None,
+                connected: false,
+                serialization: SerializationMode::Advanced,
+                loop_ref,
+                ipc_loop_ref: None,
+                #[cfg(unix)]
+                ipc_outbound: None,
+            },
+        )?;
+
+        let null_val = Null.into_value(ctx.clone());
+        instance.set("stdin", null_val.clone())?;
+        instance.set("stdout", null_val.clone())?;
+        instance.set("stderr", null_val.clone())?;
+        let stdio = Array::new(ctx.clone())?;
+        stdio.set(0, null_val.clone())?;
+        stdio.set(1, null_val.clone())?;
+        stdio.set(2, null_val)?;
+        instance.set("stdio", stdio)?;
+
+        let inst2 = instance.clone();
+        let ctx2 = ctx.clone();
+        ctx.spawn_exit_simple(async move {
+            let err_val = make_abort_error(&ctx2)?;
+            if !inst2.borrow().emitter.has_listener_str("error") {
+                return Err(ctx2.throw(err_val));
+            }
+            ChildProcess::emit_str(inst2, &ctx2, "error", vec![err_val], false)?;
+            Ok(())
+        });
+
+        Ok(instance)
+    }
+
+    fn new_spawned(
+        ctx: Ctx<'js>,
+        cfg: SpawnRuntimeConfig<'js>,
+        child: std::io::Result<Child>,
+    ) -> Result<Class<'js, Self>> {
+        let (kill_tx, kill_rx) = broadcast_channel::<i32>(4);
 
         let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
         let rt_key = lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
@@ -237,44 +431,157 @@ impl<'js> ChildProcess<'js> {
 
         let instance = Self {
             emitter: EventEmitter::new(),
-            command: command.clone(),
-            args,
+            spawnfile: cfg.spawnfile,
+            spawnargs: cfg.spawnargs,
+            command: cfg.command.clone(),
+            args: cfg.args,
             pid: None,
+            killed: false,
+            exit_code: None,
+            signal_code: None,
+            connected: false,
+            serialization: cfg.serialization,
             kill_tx: Some(kill_tx),
-            loop_ref,
+            loop_ref: loop_ref.clone(),
+            ipc_loop_ref: None,
+            #[cfg(unix)]
             ipc_outbound: None,
         };
-
-        let stdout_instance = DefaultReadableStream::new(ctx.clone())?;
-        let stderr_instance = DefaultReadableStream::new(ctx.clone())?;
-        let stdin_instance = DefaultWritableStream::new(ctx.clone())?;
 
         let instance = Class::instance(ctx.clone(), instance)?;
         let instance2 = instance.clone();
         let instance3 = instance.clone();
         let instance4 = instance.clone();
 
-        instance.set("stderr", stderr_instance.clone())?;
-        instance.set("stdout", stdout_instance.clone())?;
-        instance.set("stdin", stdin_instance.clone())?;
+        let null_val = Null.into_value(ctx.clone());
+        let pipe_stdin = matches!(cfg.stdio_specs.first(), Some(StdioSpec::Pipe));
+        let pipe_stdout = matches!(cfg.stdio_specs.get(1), Some(StdioSpec::Pipe));
+        let pipe_stderr = matches!(cfg.stdio_specs.get(2), Some(StdioSpec::Pipe));
+
+        let stdin_instance = if pipe_stdin {
+            Some(DefaultWritableStream::new(ctx.clone())?)
+        } else {
+            None
+        };
+        let stdout_instance = if pipe_stdout {
+            Some(DefaultReadableStream::new(ctx.clone())?)
+        } else {
+            None
+        };
+        let stderr_instance = if pipe_stderr {
+            Some(DefaultReadableStream::new(ctx.clone())?)
+        } else {
+            None
+        };
+
+        instance.set(
+            "stdin",
+            stdin_instance
+                .as_ref()
+                .map(|s| s.clone().into_value())
+                .unwrap_or_else(|| null_val.clone()),
+        )?;
+        instance.set(
+            "stdout",
+            stdout_instance
+                .as_ref()
+                .map(|s| s.clone().into_value())
+                .unwrap_or_else(|| null_val.clone()),
+        )?;
+        instance.set(
+            "stderr",
+            stderr_instance
+                .as_ref()
+                .map(|s| s.clone().into_value())
+                .unwrap_or_else(|| null_val.clone()),
+        )?;
+
+        let stdio_arr = Array::new(ctx.clone())?;
+        for idx in 0..cfg.stdio_specs.len().max(3) {
+            let val = match idx {
+                0 => stdin_instance
+                    .as_ref()
+                    .map(|s| s.clone().into_value())
+                    .unwrap_or_else(|| null_val.clone()),
+                1 => stdout_instance
+                    .as_ref()
+                    .map(|s| s.clone().into_value())
+                    .unwrap_or_else(|| null_val.clone()),
+                2 => stderr_instance
+                    .as_ref()
+                    .map(|s| s.clone().into_value())
+                    .unwrap_or_else(|| null_val.clone()),
+                _ => null_val.clone(),
+            };
+            stdio_arr.set(idx, val)?;
+        }
 
         match child {
             Ok(mut child) => {
                 instance2.borrow_mut().pid = child.id();
 
-                if let Some(child_stdin) = child.stdin.take() {
-                    DefaultWritableStream::process(stdin_instance.clone(), &ctx, child_stdin)?;
+                if let (Some(stdin_inst), Some(child_stdin)) =
+                    (stdin_instance.as_ref(), child.stdin.take())
+                {
+                    DefaultWritableStream::process(stdin_inst.clone(), &ctx, child_stdin)?;
+                }
+
+                let stdout_join_receiver = match (stdout_instance.as_ref(), child.stdout.take()) {
+                    (Some(inst), Some(out)) => create_output(&ctx, Some(out), inst.clone())?,
+                    _ => None,
+                };
+                let stderr_join_receiver = match (stderr_instance.as_ref(), child.stderr.take()) {
+                    (Some(inst), Some(err)) => create_output(&ctx, Some(err), inst.clone())?,
+                    _ => None,
                 };
 
-                let stdout_join_receiver =
-                    create_output(&ctx, child.stdout.take(), stdout_instance.clone())?;
+                #[cfg(unix)]
+                let mut extra_pipe_handles = Vec::new();
+                #[cfg(unix)]
+                for (slot_idx, stream) in cfg.extra_pipes {
+                    let (pipe, rx) = ChildPipe::from_unix_stream(&ctx, stream)?;
+                    stdio_arr.set(slot_idx, pipe.clone())?;
+                    extra_pipe_handles.push((pipe, rx));
+                }
 
-                let stderr_join_receiver =
-                    create_output(&ctx, child.stderr.take(), stderr_instance.clone())?;
+                #[cfg(unix)]
+                if let Some(ipc_stream) = cfg.ipc_stream {
+                    let ipc_ref = EventLoopRef::new_referenced(rt_key);
+                    ipc_channel::attach_ipc_to_child(
+                        &ctx,
+                        instance2.clone(),
+                        ipc_stream,
+                        ipc_ref,
+                        cfg.serialization,
+                    )?;
+                }
+
+                instance.set("stdio", stdio_arr)?;
+
+                if let Some(ref sig_obj) = cfg.abort_signal {
+                    attach_abort_error_helper(
+                        &ctx,
+                        sig_obj,
+                        instance.clone().into_value(),
+                        cfg.kill_signal_val.clone(),
+                    )?;
+                }
+
+                let ctx_spawn = ctx.clone();
+                let inst_spawn = instance.clone();
+                ctx.spawn_exit_simple(async move {
+                    let _ = ChildProcess::emit_str(inst_spawn, &ctx_spawn, "spawn", vec![], false);
+                    Ok(())
+                });
 
                 let ctx2 = ctx.clone();
                 let ctx3 = ctx.clone();
                 let wait_loop_ref = instance2.borrow().loop_ref.clone();
+                let timeout_ms = cfg.timeout_ms;
+                let kill_signal = cfg.kill_signal;
+                let stdout_inst_clone = stdout_instance.clone();
+                let stderr_inst_clone = stderr_instance.clone();
+                let stdin_inst_clone = stdin_instance.clone();
 
                 ctx.spawn_exit(async move {
                     let spawn_proc = async move {
@@ -288,6 +595,8 @@ impl<'js> ChildProcess<'js> {
                             &mut exit_code,
                             &mut exit_signal,
                             wait_loop_ref,
+                            timeout_ms,
+                            kill_signal,
                         )
                         .await?;
 
@@ -295,22 +604,39 @@ impl<'js> ChildProcess<'js> {
                             return Ok::<_, Error>(());
                         }
 
+                        if outcome == WaitOutcome::TimedOut {
+                            instance2.borrow_mut().killed = true;
+                        }
+
                         let code = match exit_code {
-                            Some(c) => c.into_js(&ctx3)?,
-                            None => rquickjs::Null.into_value(ctx3.clone()),
+                            Some(c) => {
+                                instance2.borrow_mut().exit_code = Some(c);
+                                c.into_js(&ctx3)?
+                            },
+                            None => Null.into_value(ctx3.clone()),
                         };
                         let signal;
                         #[cfg(unix)]
                         {
                             if let Some(s) = exit_signal {
-                                signal = signal_str_from_i32(s).into_js(&ctx3)?;
+                                let sig_str = signal_str_from_i32(s)
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|| format!("SIG{s}"));
+                                instance2.borrow_mut().signal_code = Some(sig_str.clone());
+                                signal = sig_str.into_js(&ctx3)?;
                             } else {
-                                signal = rquickjs::Null.into_value(ctx3.clone());
+                                signal = Null.into_value(ctx3.clone());
                             }
                         }
                         #[cfg(not(unix))]
                         {
-                            signal = "SIGKILL".into_js(&ctx3)?;
+                            if let Some(s) = exit_signal {
+                                let _ = s;
+                                instance2.borrow_mut().signal_code = Some("SIGKILL".into());
+                                signal = "SIGKILL".into_js(&ctx3)?;
+                            } else {
+                                signal = Null.into_value(ctx3.clone());
+                            }
                         }
 
                         ChildProcess::emit_str(
@@ -322,28 +648,33 @@ impl<'js> ChildProcess<'js> {
                         )?;
 
                         if let Some(stderr_join_receiver) = stderr_join_receiver {
-                            // Ok if the sender drops. Buffered output without a
-                            // `data` listener parks in the stream loop, so bound
-                            // the wait: the child is already gone and Node emits
-                            // `close` regardless.
                             let _ = tokio::time::timeout(
-                                tokio::time::Duration::from_millis(50),
+                                Duration::from_millis(50),
                                 stderr_join_receiver,
                             )
                             .await;
                         }
                         if let Some(stdout_join_receiver) = stdout_join_receiver {
                             let _ = tokio::time::timeout(
-                                tokio::time::Duration::from_millis(50),
+                                Duration::from_millis(50),
                                 stdout_join_receiver,
                             )
                             .await;
                         }
+                        #[cfg(unix)]
+                        for (_pipe, rx) in &mut extra_pipe_handles {
+                            let _ = tokio::time::timeout(Duration::from_millis(20), rx).await;
+                        }
 
-                        WritableStream::end(This(stdin_instance));
-
-                        ReadableStream::drain(stdout_instance.clone(), &ctx3)?;
-                        ReadableStream::drain(stderr_instance.clone(), &ctx3)?;
+                        if let Some(stdin_inst) = stdin_inst_clone {
+                            WritableStream::end(This(stdin_inst));
+                        }
+                        if let Some(ref stdout_inst) = stdout_inst_clone {
+                            ReadableStream::drain(stdout_inst.clone(), &ctx3)?;
+                        }
+                        if let Some(ref stderr_inst) = stderr_inst_clone {
+                            ReadableStream::drain(stderr_inst.clone(), &ctx3)?;
+                        }
 
                         ChildProcess::emit_str(
                             instance2.clone(),
@@ -353,16 +684,21 @@ impl<'js> ChildProcess<'js> {
                             false,
                         )?;
 
-                        // The child is reaped: its stdio read loops have nothing
-                        // left to deliver. Leaving them parked keeps a spawned
-                        // task pending forever, so a natural exit can never
-                        // observe an idle loop.
-                        ReadableStream::destroy(This(stdout_instance), Opt(None));
-                        ReadableStream::destroy(This(stderr_instance), Opt(None));
+                        if let Some(stdout_inst) = stdout_inst_clone {
+                            ReadableStream::destroy(This(stdout_inst), Opt(None));
+                        }
+                        if let Some(stderr_inst) = stderr_inst_clone {
+                            ReadableStream::destroy(This(stderr_inst), Opt(None));
+                        }
+                        #[cfg(unix)]
+                        for (pipe, _rx) in extra_pipe_handles {
+                            ChildPipe::destroy(This(pipe), Opt(None));
+                        }
 
-                        // The child handle is done; Node releases it before the
-                        // loop can go idle, so stop keeping the process alive.
                         instance2.borrow().loop_ref.unreference();
+                        if let Some(ipc_ref) = &instance2.borrow().ipc_loop_ref {
+                            ipc_ref.unreference();
+                        }
 
                         Ok::<_, Error>(())
                     };
@@ -375,17 +711,26 @@ impl<'js> ChildProcess<'js> {
                 })?;
             },
             Err(err) => {
+                instance.set("stdio", stdio_arr)?;
                 let ctx3 = ctx.clone();
-
-                let err_message = format!("Child process failed to spawn \"{}\". {}", command, err);
+                let (err_code, errno) = options::io_error_to_errno(&err);
+                let cmd_name = cfg.command;
+                let err_message = format!("spawn {cmd_name} {err_code}");
 
                 ctx.spawn_exit(async move {
+                    instance3.borrow().loop_ref.unreference();
+                    let ex = options::make_errno_error(
+                        &ctx3,
+                        err_code,
+                        errno,
+                        &format!("spawn {cmd_name}"),
+                        Some(&cmd_name),
+                        &err_message,
+                    )?;
                     if !instance3.borrow().emitter.has_listener_str("error") {
-                        return Err(Exception::throw_message(&ctx3, &err_message));
+                        return Err(ctx3.throw(ex));
                     }
-
-                    let ex = Exception::from_message(ctx3.clone(), &err_message)?;
-                    ChildProcess::emit_str(instance3, &ctx3, "error", vec![ex.into()], false)?;
+                    ChildProcess::emit_str(instance3.clone(), &ctx3, "error", vec![ex], false)?;
                     Ok(())
                 })?;
             },
@@ -394,25 +739,36 @@ impl<'js> ChildProcess<'js> {
     }
 }
 
+#[derive(PartialEq, Eq)]
 enum WaitOutcome {
     Exited,
     Detached,
+    TimedOut,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn wait_for_process(
     mut child: Child,
     ctx: &Ctx<'_>,
-    mut kill_rx: Receiver<()>,
+    mut kill_rx: Receiver<i32>,
     exit_code: &mut Option<i32>,
     _exit_signal: &mut Option<i32>,
     loop_ref: Arc<EventLoopRef>,
+    timeout_ms: Option<u64>,
+    default_kill_signal: i32,
 ) -> Result<WaitOutcome> {
     #[cfg(not(unix))]
     let mut was_killed = false;
+    let mut timed_out = false;
+    let deadline = timeout_ms.map(|ms| tokio::time::Instant::now() + Duration::from_millis(ms));
+
     loop {
-        if !lexe_utils::event_loop::keeps_event_loop_alive(&loop_ref) {
-            std::mem::forget(child);
-            return Ok(WaitOutcome::Detached);
+        if !keeps_event_loop_alive(&loop_ref) {
+            tokio::task::yield_now().await;
+            if !keeps_event_loop_alive(&loop_ref) && !should_keep_process_alive(loop_ref.rt()) {
+                std::mem::forget(child);
+                return Ok(WaitOutcome::Detached);
+            }
         }
 
         tokio::select! {
@@ -423,7 +779,6 @@ async fn wait_for_process(
                 {
                     if let Some(sig) = exit_status.signal() {
                         _exit_signal.replace(sig);
-                        // code is null when terminated by signal
                     } else {
                         exit_code.replace(exit_status.code().unwrap_or_default());
                     }
@@ -432,12 +787,39 @@ async fn wait_for_process(
                 {
                     if !was_killed {
                         exit_code.replace(exit_status.code().unwrap_or_default());
+                    } else {
+                        _exit_signal.replace(1);
                     }
                 }
                 break;
             }
 
-            Ok(()) = kill_rx.recv() => {
+            _ = async {
+                if let Some(dl) = deadline {
+                    tokio::time::sleep_until(dl).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            }, if deadline.is_some() && !timed_out => {
+                timed_out = true;
+                #[cfg(unix)]
+                {
+                    if let Some(pid) = child.id() {
+                        let _ = kill_process_raw(pid, default_kill_signal);
+                    } else {
+                        let _ = child.kill().await;
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = default_kill_signal;
+                    was_killed = true;
+                    let _ = child.kill().await;
+                }
+            }
+
+            Ok(sig) = kill_rx.recv() => {
+                let _ = sig;
                 #[cfg(not(unix))]
                 {
                     was_killed = true;
@@ -446,13 +828,20 @@ async fn wait_for_process(
             }
 
             _ = lexe_utils::event_loop::wait_until_io_unref(loop_ref.clone()) => {
-                std::mem::forget(child);
-                return Ok(WaitOutcome::Detached);
+                tokio::task::yield_now().await;
+                if !keeps_event_loop_alive(&loop_ref) && !should_keep_process_alive(loop_ref.rt()) {
+                    std::mem::forget(child);
+                    return Ok(WaitOutcome::Detached);
+                }
             }
         }
     }
 
-    Ok(WaitOutcome::Exited)
+    Ok(if timed_out {
+        WaitOutcome::TimedOut
+    } else {
+        WaitOutcome::Exited
+    })
 }
 
 impl<'js> Emitter<'js> for ChildProcess<'js> {
@@ -461,190 +850,207 @@ impl<'js> Emitter<'js> for ChildProcess<'js> {
     }
 }
 
-fn spawn<'js>(
-    ctx: Ctx<'js>,
-    cmd: String,
-    args_and_opts: Rest<Value<'js>>,
-) -> Result<Class<'js, ChildProcess<'js>>> {
-    let args_0 = args_and_opts.first();
-    let args_1 = args_and_opts.get(1);
-
-    let mut opts = None;
-
-    if args_1.is_some() {
-        opts = args_1.and_then(|o| o.as_object()).map(|o| o.to_owned());
+fn spec_to_async_stdio(ctx: &Ctx<'_>, spec: &StdioSpec) -> Result<Stdio> {
+    match spec {
+        StdioSpec::Pipe => Ok(Stdio::piped()),
+        StdioSpec::Ignore => Ok(Stdio::null()),
+        StdioSpec::Inherit => Ok(Stdio::inherit()),
+        StdioSpec::Fd(fd) => dup_fd_stdio(ctx, *fd),
+        StdioSpec::Ipc => Ok(Stdio::null()),
     }
-
-    let mut command_args = if let Some(args_0) = args_0 {
-        if args_0.is_array() {
-            let args = args_0.clone().into_array().or_throw(&ctx)?;
-            let mut args_vec = Vec::with_capacity(args.len());
-            for arg in args.iter() {
-                let arg: Value = arg?;
-                let arg = arg
-                    .as_string()
-                    .or_throw_msg(&ctx, "argument is not a string")?;
-                let arg = arg.to_string()?;
-                args_vec.push(arg);
-            }
-            Some(args_vec)
-        } else if args_0.is_object() {
-            opts = args_0.as_object().map(|o| o.to_owned());
-            None
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let mut windows_verbatim_arguments = if let Some(opts) = &opts {
-        opts.get_optional::<&str, bool>("windowsVerbatimArguments")?
-            .unwrap_or_default()
-    } else {
-        false
-    };
-
-    let cmd = if let Some(opts) = &opts {
-        if opts
-            .get_optional::<&str, bool>("shell")?
-            .unwrap_or_default()
-        {
-            #[cfg(windows)]
-            let shell = "cmd.exe".to_string();
-            #[cfg(not(windows))]
-            let shell = "/bin/sh".to_string();
-            command_args = Some(prepare_shell_args(
-                &shell,
-                &mut windows_verbatim_arguments,
-                cmd,
-                command_args,
-            ));
-            shell
-        } else if let Some(shell) = opts.get_optional::<&str, String>("shell")? {
-            command_args = Some(prepare_shell_args(
-                &shell,
-                &mut windows_verbatim_arguments,
-                cmd,
-                command_args,
-            ));
-            shell
-        } else {
-            cmd
-        }
-    } else {
-        cmd
-    };
-
-    let mut command = StdCommand::new(cmd.clone());
-    if let Some(args) = &command_args {
-        #[cfg(windows)]
-        if windows_verbatim_arguments {
-            command.raw_arg(args.join(" "));
-        } else {
-            command.args(args);
-        }
-        #[cfg(not(windows))]
-        command.args(args);
-    }
-
-    let mut stdin = StdioEnum::Piped;
-    let mut stdout = StdioEnum::Piped;
-    let mut stderr = StdioEnum::Piped;
-    let mut detached = false;
-
-    if let Some(opts) = opts {
-        #[cfg(unix)]
-        {
-            if let Some(gid) = opts.get_optional("gid")? {
-                command.gid(gid);
-            }
-
-            if let Some(uid) = opts.get_optional("uid")? {
-                command.uid(uid);
-            }
-        }
-
-        detached = opts.get_optional("detached")?.unwrap_or(false);
-
-        if let Some(cwd) = opts.get_optional::<_, String>("cwd")? {
-            command.current_dir(&cwd);
-        }
-
-        if let Some(env) = opts.get_optional::<_, HashMap<String, Coerced<String>>>("env")? {
-            let env: HashMap<String, String> = env
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
-            command.env_clear();
-            command.envs(env);
-        }
-
-        if let Some(stdio) = opts.get_optional::<_, Value<'js>>("stdio")? {
-            if let Some(stdio_str) = stdio.as_string() {
-                let stdio = str_to_stdio(&ctx, &stdio_str.to_string()?)?;
-                stdin = stdio.clone();
-                stdout = stdio.clone();
-                stderr = stdio;
-            } else if let Some(stdio) = stdio.as_array() {
-                for (i, item) in stdio.iter::<Value>().enumerate() {
-                    let item = item?;
-                    let stdio = if item.is_undefined() || item.is_null() {
-                        StdioEnum::Piped
-                    } else if let Some(std_io_str) = item.as_string() {
-                        str_to_stdio(&ctx, &std_io_str.to_string()?)?
-                    } else if let Some(fd) = item.as_number() {
-                        StdioEnum::Fd(fd as i32)
-                    } else {
-                        StdioEnum::Piped
-                    };
-                    match i {
-                        0 => stdin = stdio,
-                        1 => stdout = stdio,
-                        2 => stderr = stdio,
-                        _ => {
-                            break;
-                        },
-                    }
-                }
-            }
-        }
-    }
-
-    command.stdin(stdin.to_stdio());
-    command.stdout(stdout.to_stdio());
-    command.stderr(stderr.to_stdio());
-
-    if detached {
-        #[cfg(unix)]
-        {
-            command.process_group(0);
-        }
-        #[cfg(windows)]
-        {
-            // DETACHED_PROCESS = 0x00000008
-            command.creation_flags(0x00000008);
-        }
-    }
-
-    //tokio command does not have all std command features stabilized
-    let mut command = Command::from(command);
-
-    ChildProcess::new(ctx.clone(), cmd, command_args, command.spawn())
 }
 
-fn str_to_stdio(ctx: &Ctx<'_>, input: &str) -> Result<StdioEnum> {
-    match input {
-        "pipe" => Ok(StdioEnum::Piped),
-        "ignore" => Ok(StdioEnum::Ignore),
-        "inherit" => Ok(StdioEnum::Inherit),
-        _ => Err(Exception::throw_type(
-            ctx,
-            &format!(
-                "Invalid stdio \"{}\". Expected one of: pipe, ignore, inherit",
-                input
-            ),
-        )),
+fn spawn<'js>(
+    ctx: Ctx<'js>,
+    cmd_val: Value<'js>,
+    args_and_opts: Rest<Value<'js>>,
+) -> Result<Class<'js, ChildProcess<'js>>> {
+    let args_val = args_and_opts.first().cloned();
+    let opts_val = args_and_opts.get(1).cloned();
+    let (raw_cmd, raw_args, opts) = parse_cmd_args_and_opts(
+        &ctx,
+        cmd_val,
+        args_val,
+        opts_val,
+        false,
+        vec![StdioSpec::Pipe, StdioSpec::Pipe, StdioSpec::Pipe],
+        true,
+    )?;
+
+    let (mut std_cmd, spawnfile, spawnargs) =
+        build_command(raw_cmd.clone(), raw_args.clone(), &opts);
+
+    if let Some(ref sig_obj) = opts.signal {
+        if sig_obj.get::<_, bool>("aborted").unwrap_or(false) {
+            return ChildProcess::new_aborted(ctx, raw_cmd, raw_args, spawnfile, spawnargs);
+        }
+    }
+
+    #[cfg(unix)]
+    let mut fd_maps: Vec<(i32, i32)> = Vec::new();
+    #[cfg(unix)]
+    let mut close_in_parent: Vec<i32> = Vec::new();
+    #[cfg(unix)]
+    let mut extra_pipes: Vec<(usize, UnixStream)> = Vec::new();
+    #[cfg(unix)]
+    let mut ipc_stream: Option<UnixStream> = None;
+
+    for (idx, spec) in opts.stdio.iter().enumerate() {
+        if idx <= 2 && !matches!(spec, StdioSpec::Ipc) {
+            let stdio = match spec_to_async_stdio(&ctx, spec) {
+                Ok(s) => s,
+                Err(e) => {
+                    #[cfg(unix)]
+                    close_raw_fds(&close_in_parent);
+                    return Err(e);
+                },
+            };
+            match idx {
+                0 => std_cmd.stdin(stdio),
+                1 => std_cmd.stdout(stdio),
+                _ => std_cmd.stderr(stdio),
+            };
+            continue;
+        }
+
+        #[cfg(unix)]
+        match spec {
+            StdioSpec::Pipe => {
+                let (parent_sock, child_sock) = match StdUnixStream::pair().or_throw(&ctx) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        close_raw_fds(&close_in_parent);
+                        return Err(e);
+                    },
+                };
+                if let Err(e) = parent_sock.set_nonblocking(true).or_throw(&ctx) {
+                    close_raw_fds(&close_in_parent);
+                    return Err(e);
+                }
+                let child_raw = child_sock.into_raw_fd();
+                close_in_parent.push(child_raw);
+                fd_maps.push((idx as i32, child_raw));
+                let tokio_parent = UnixStream::from_std(parent_sock).or_throw(&ctx)?;
+                extra_pipes.push((idx, tokio_parent));
+            },
+            StdioSpec::Ipc => {
+                let (parent_sock, child_sock) = match StdUnixStream::pair().or_throw(&ctx) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        close_raw_fds(&close_in_parent);
+                        return Err(e);
+                    },
+                };
+                if let Err(e) = parent_sock.set_nonblocking(true).or_throw(&ctx) {
+                    close_raw_fds(&close_in_parent);
+                    return Err(e);
+                }
+                let child_raw = child_sock.into_raw_fd();
+                close_in_parent.push(child_raw);
+                fd_maps.push((idx as i32, child_raw));
+                std_cmd.env("NODE_CHANNEL_FD", idx.to_string());
+                match opts.serialization {
+                    SerializationMode::Json => std_cmd.env("LEXE_FORK_SERIALIZATION", "json"),
+                    SerializationMode::Advanced => std_cmd.env_remove("LEXE_FORK_SERIALIZATION"),
+                };
+                let tokio_parent = UnixStream::from_std(parent_sock).or_throw(&ctx)?;
+                ipc_stream = Some(tokio_parent);
+            },
+            StdioSpec::Fd(src_fd) => {
+                let duped = unsafe { libc::dup(*src_fd) };
+                if duped < 0 {
+                    close_raw_fds(&close_in_parent);
+                    let err = std::io::Error::last_os_error();
+                    let (code, errno) = options::io_error_to_errno(&err);
+                    return Err(ctx.throw(options::make_errno_error(
+                        &ctx,
+                        code,
+                        errno,
+                        "dup",
+                        None,
+                        &format!("{code}: bad file descriptor fd={src_fd}"),
+                    )?));
+                }
+                close_in_parent.push(duped);
+                fd_maps.push((idx as i32, duped));
+            },
+            StdioSpec::Ignore | StdioSpec::Inherit => {},
+        }
+    }
+
+    #[cfg(unix)]
+    if !fd_maps.is_empty() {
+        let min_safe = fd_maps.iter().map(|(t, _)| *t).max().unwrap_or(2) + 1;
+        for entry in &mut fd_maps {
+            let (target, src) = *entry;
+            if src != target && src < min_safe {
+                let tmp = unsafe { libc::fcntl(src, libc::F_DUPFD_CLOEXEC, min_safe) };
+                if tmp < 0 {
+                    close_raw_fds(&close_in_parent);
+                    let err = std::io::Error::last_os_error();
+                    let (code, errno) = options::io_error_to_errno(&err);
+                    return Err(ctx.throw(options::make_errno_error(
+                        &ctx,
+                        code,
+                        errno,
+                        "fcntl",
+                        None,
+                        &format!("{code}: failed to duplicate fd={src}"),
+                    )?));
+                }
+                entry.1 = tmp;
+                close_in_parent.push(tmp);
+            }
+        }
+        unsafe {
+            std_cmd.pre_exec(move || {
+                for &(target, src) in &fd_maps {
+                    if src == target {
+                        let flags = libc::fcntl(target, libc::F_GETFD);
+                        if flags >= 0 {
+                            libc::fcntl(target, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                        }
+                    } else if libc::dup2(src, target) < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                Ok(())
+            });
+        }
+    }
+
+    let mut command = Command::from(std_cmd);
+    let spawned = command.spawn();
+
+    #[cfg(unix)]
+    close_raw_fds(&close_in_parent);
+
+    let cfg = SpawnRuntimeConfig {
+        spawnfile,
+        spawnargs,
+        command: raw_cmd,
+        args: raw_args,
+        timeout_ms: opts.timeout_ms,
+        kill_signal: opts.kill_signal,
+        kill_signal_val: opts.kill_signal_val,
+        serialization: opts.serialization,
+        abort_signal: opts.signal,
+        stdio_specs: opts.stdio,
+        #[cfg(unix)]
+        extra_pipes,
+        #[cfg(unix)]
+        ipc_stream,
+    };
+
+    ChildProcess::new_spawned(ctx, cfg, spawned)
+}
+
+#[cfg(unix)]
+fn close_raw_fds(fds: &[i32]) {
+    for &fd in fds {
+        unsafe {
+            libc::close(fd);
+        }
     }
 }
 
@@ -668,7 +1074,9 @@ pub struct ChildProcessModule;
 
 impl ModuleDef for ChildProcessModule {
     fn declare(declare: &Declarations) -> Result<()> {
+        declare.declare("ChildProcess")?;
         declare.declare("spawn")?;
+        declare.declare("spawnSync")?;
         declare.declare("fork")?;
         declare.declare("exec")?;
         declare.declare("execFile")?;
@@ -679,76 +1087,38 @@ impl ModuleDef for ChildProcessModule {
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
+        let ctor = Class::<ChildProcess>::create_constructor(ctx)?
+            .or_throw_msg(ctx, "Failed to create ChildProcess constructor")?;
         ChildProcess::add_event_emitter_prototype(ctx)?;
         DefaultWritableStream::add_writable_stream_prototype(ctx)?;
         DefaultWritableStream::add_event_emitter_prototype(ctx)?;
         DefaultReadableStream::add_readable_stream_prototype(ctx)?;
         DefaultReadableStream::add_event_emitter_prototype(ctx)?;
+        #[cfg(unix)]
+        {
+            ChildPipe::add_event_emitter_prototype(ctx)?;
+            ChildPipe::add_readable_stream_prototype(ctx)?;
+            ChildPipe::add_writable_stream_prototype(ctx)?;
+            if let Some(proto) = Class::<ChildPipe>::prototype(ctx)? {
+                proto.set("write", Func::from(ChildPipe::write_flushed))?;
+                proto.set("destroy", Func::from(ChildPipe::destroy))?;
+            }
+        }
 
         export_default(ctx, exports, |default| {
+            default.set("ChildProcess", ctor)?;
             default.set("spawn", Func::from(spawn))?;
+            default.set("spawnSync", Func::from(sync::spawn_sync))?;
             #[cfg(unix)]
             default.set("fork", Func::from(fork))?;
-            // Lazy JS helpers that call require("child_process").spawn after the
-            // module is fully registered (avoids mid-evaluate require cycles).
-            let exec: rquickjs::Function = ctx.eval(
-                r#"(function(){
-  return function exec(command, options, callback) {
-    const { spawn } = require("child_process");
-    if (typeof options === "function") { callback = options; options = {}; }
-    options = options || {};
-    const child = spawn(String(command), {
-      shell: options.shell !== false,
-      cwd: options.cwd,
-      env: options.env,
-      windowsHide: options.windowsHide,
-    });
-    let stdout = "", stderr = "";
-    if (child.stdout) child.stdout.on("data", (c) => { stdout += String(c); });
-    if (child.stderr) child.stderr.on("data", (c) => { stderr += String(c); });
-    child.on("error", (err) => { if (typeof callback === "function") callback(err, stdout, stderr); });
-    child.on("close", (code, signal) => {
-      if (typeof callback !== "function") return;
-      if (code === 0) callback(null, stdout, stderr);
-      else {
-        const err = new Error("Command failed: " + command + "\n" + stderr);
-        err.code = code; err.signal = signal; err.stdout = stdout; err.stderr = stderr;
-        callback(err, stdout, stderr);
-      }
-    });
-    return child;
-  };
-})()"#,
-            )?;
-            let exec_file: rquickjs::Function = ctx.eval(
-                r#"(function(){
-  return function execFile(file, args, options, callback) {
-    const { spawn } = require("child_process");
-    if (typeof args === "function") { callback = args; args = []; options = {}; }
-    else if (typeof options === "function") { callback = options; options = {}; }
-    args = args || []; options = options || {};
-    const child = spawn(file, args, { cwd: options.cwd, env: options.env, windowsHide: options.windowsHide });
-    let stdout = "", stderr = "";
-    if (child.stdout) child.stdout.on("data", (c) => { stdout += String(c); });
-    if (child.stderr) child.stderr.on("data", (c) => { stderr += String(c); });
-    child.on("error", (err) => { if (typeof callback === "function") callback(err, stdout, stderr); });
-    child.on("close", (code, signal) => {
-      if (typeof callback !== "function") return;
-      if (code === 0) callback(null, stdout, stderr);
-      else {
-        const err = new Error("Command failed: " + file);
-        err.code = code; err.signal = signal; err.stdout = stdout; err.stderr = stderr;
-        callback(err, stdout, stderr);
-      }
-    });
-    return child;
-  };
-})()"#,
-            )?;
+
+            let helpers: rquickjs::Object = ctx.eval(EXEC_HELPERS_JS)?;
+            let exec: Function = helpers.get("exec")?;
+            let exec_file: Function = helpers.get("execFile")?;
             default.set("exec", exec)?;
             default.set("execFile", exec_file)?;
-            default.set("execSync", Func::from(exec_sync))?;
-            default.set("execFileSync", Func::from(exec_file_sync))?;
+            default.set("execSync", Func::from(sync::exec_sync))?;
+            default.set("execFileSync", Func::from(sync::exec_file_sync))?;
             Ok(())
         })?;
 
@@ -756,84 +1126,106 @@ impl ModuleDef for ChildProcessModule {
     }
 }
 
-fn exec_sync<'js>(
-    ctx: Ctx<'js>,
-    command: String,
-    options: Opt<rquickjs::Object<'js>>,
-) -> Result<String> {
-    let mut shell = true;
-    let mut cwd: Option<String> = None;
-    if let Some(opts) = options.0 {
-        if let Some(s) = opts.get_optional::<_, bool>("shell")? {
-            shell = s;
-        }
-        cwd = opts.get_optional("cwd")?;
-    }
-    let mut cmd = if shell {
-        #[cfg(windows)]
-        {
-            let mut c = StdCommand::new("cmd");
-            c.arg("/C").arg(&command);
-            c
-        }
-        #[cfg(not(windows))]
-        {
-            let mut c = StdCommand::new("sh");
-            c.arg("-c").arg(&command);
-            c
-        }
-    } else {
-        StdCommand::new(&command)
+const EXEC_HELPERS_JS: &str = r#"(function(){
+  const DEFAULT_MAX_BUFFER = 1024 * 1024;
+  const runExec = (isExec, target, args, options, callback) => {
+    const { spawn } = require("child_process");
+    options = options || {};
+    const encoding = options.encoding === undefined ? "utf8" : options.encoding;
+    const maxBuffer = options.maxBuffer === undefined ? DEFAULT_MAX_BUFFER : options.maxBuffer;
+    const killSignal = options.killSignal === undefined ? "SIGTERM" : options.killSignal;
+    const spawnOpts = {
+      cwd: options.cwd,
+      env: options.env,
+      shell: isExec ? (options.shell === false ? false : (options.shell || true)) : options.shell,
+      uid: options.uid,
+      gid: options.gid,
+      argv0: options.argv0,
+      timeout: options.timeout,
+      killSignal,
+      signal: options.signal,
+      windowsHide: options.windowsHide,
+      windowsVerbatimArguments: options.windowsVerbatimArguments,
     };
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
-    }
-    let output = cmd
-        .output()
-        .map_err(|e| Exception::throw_message(&ctx, &format!("execSync failed: {e}")))?;
-    if !output.status.success() {
-        return Err(Exception::throw_message(
-            &ctx,
-            &format!(
-                "Command failed: {}\n{}",
-                command,
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
+    const child = isExec ? spawn(String(target), spawnOpts) : spawn(target, args, spawnOpts);
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutLen = 0;
+    let stderrLen = 0;
+    let exitedError = null;
+    let maxBufferErr = null;
+    let settled = false;
 
-fn exec_file_sync<'js>(
-    ctx: Ctx<'js>,
-    file: String,
-    args: Opt<Vec<String>>,
-    options: Opt<rquickjs::Object<'js>>,
-) -> Result<String> {
-    let args = args.0.unwrap_or_default();
-    let mut cmd = StdCommand::new(&file);
-    cmd.args(&args);
-    if let Some(opts) = options.0 {
-        if let Some(cwd) = opts.get_optional::<_, String>("cwd")? {
-            cmd.current_dir(cwd);
+    const formatBufs = (chunks) => {
+      const merged = Buffer.concat(chunks);
+      if (encoding === null || encoding === "buffer") return merged;
+      return merged.toString(encoding);
+    };
+
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      if (typeof callback === "function") {
+        callback(err || null, formatBufs(stdoutChunks), formatBufs(stderrChunks));
+      }
+    };
+
+    const bindPipe = (stream, chunks, isStdout) => {
+      if (!stream) return;
+      stream.on("data", (c) => {
+        const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
+        const nextLen = isStdout ? (stdoutLen += buf.length) : (stderrLen += buf.length);
+        if (nextLen > maxBuffer && !maxBufferErr) {
+          maxBufferErr = new RangeError((isStdout ? "stdout" : "stderr") + " maxBuffer length exceeded");
+          maxBufferErr.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+          child.kill(killSignal);
+          return;
         }
-    }
-    let output = cmd
-        .output()
-        .map_err(|e| Exception::throw_message(&ctx, &format!("execFileSync failed: {e}")))?;
-    if !output.status.success() {
-        return Err(Exception::throw_message(
-            &ctx,
-            &format!(
-                "Command failed: {} {}\n{}",
-                file,
-                args.join(" "),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-}
+        chunks.push(buf);
+      });
+    };
+
+    bindPipe(child.stdout, stdoutChunks, true);
+    bindPipe(child.stderr, stderrChunks, false);
+
+    child.on("error", (err) => {
+      exitedError = err;
+      finish(err);
+    });
+    child.on("close", (code, signal) => {
+      if (maxBufferErr) return finish(maxBufferErr);
+      if (exitedError) return finish(exitedError);
+      if (code === 0 && !signal) return finish(null);
+      const label = isExec ? String(target) : String(target);
+      const stderrText = isExec ? "\n" + Buffer.concat(stderrChunks).toString() : "";
+      const err = new Error("Command failed: " + label + stderrText);
+      err.code = code;
+      err.killed = child.killed;
+      err.signal = signal;
+      err.cmd = isExec ? String(target) : [target, ...args].join(" ");
+      err.stdout = formatBufs(stdoutChunks);
+      err.stderr = formatBufs(stderrChunks);
+      finish(err);
+    });
+    return child;
+  };
+
+  return {
+    exec(command, options, callback) {
+      if (typeof options === "function") { callback = options; options = {}; }
+      return runExec(true, command, [], options, callback);
+    },
+    execFile(file, args, options, callback) {
+      if (typeof args === "function") { callback = args; args = []; options = {}; }
+      else if (args && !Array.isArray(args)) {
+        if (typeof options === "function") callback = options;
+        options = args;
+        args = [];
+      } else if (typeof options === "function") { callback = options; options = {}; }
+      return runExec(false, file, args || [], options, callback);
+    },
+  };
+})()"#;
 
 impl From<ChildProcessModule> for ModuleInfo<ChildProcessModule> {
     fn from(val: ChildProcessModule) -> Self {

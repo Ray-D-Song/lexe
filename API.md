@@ -265,12 +265,17 @@ Everything else inherited from [Uint8Array](https://developer.mozilla.org/en-US/
 
 ## child_process
 
-> [!WARNING]
-> `spawn` uses native streams that is not 100% compatible with the Node.js Streams API.
+[ChildProcess](https://nodejs.org/api/child_process.html#class-childprocess)
 
-[spawn](https://nodejs.org/api/child_process.html#child_processspawncommand-args-options)
+[spawn](https://nodejs.org/api/child_process.html#child_processspawncommand-args-options) (supports `cwd`, `env`, `argv0`, `stdio` including `"pipe"`, `"ignore"`, `"inherit"`, `"overlapped"`, `"ipc"`, numeric fds, stream `.fd`, and extra Unix pipes `stdio[3+]`, `shell`, `detached`, `uid`, `gid`, `timeout`, `killSignal`, `signal` (`AbortSignal`), `serialization`, `windowsVerbatimArguments`, `windowsHide`; exposes `pid`, `spawnfile`, `spawnargs`, `killed`, `exitCode`, `signalCode`, `connected`, `stdio`, `kill()`, `send()`, `disconnect()`, `ref()`, `unref()`, `"spawn"` / `"exit"` / `"close"` / `"disconnect"` events)
 
-> `ChildProcess.ref()` / `unref()` control whether the parent waits on the child for event-loop lifetime. After `unref()`, the child keeps running but the parent may exit without receiving `exit`/`close` from the detached wait handle.
+[spawnSync](https://nodejs.org/api/child_process.html#child_processspawnsynccommand-args-options) (supports `input`, `encoding`, `timeout`, `killSignal`, `maxBuffer`, `cwd`, `env`, `argv0`, `stdio`, `shell`, `uid`, `gid`, `windowsVerbatimArguments`, `windowsHide`)
+
+[exec](https://nodejs.org/api/child_process.html#child_processexeccommand-options-callback) / [execFile](https://nodejs.org/api/child_process.html#child_processexecfilefile-args-options-callback) (support `shell`, `cwd`, `env`, `uid`, `gid`, `argv0`, `timeout`, `killSignal`, `maxBuffer`, `encoding`, `signal`, `windowsHide`)
+
+[execSync](https://nodejs.org/api/child_process.html#child_processexecsynccommand-options) / [execFileSync](https://nodejs.org/api/child_process.html#child_processexecfilesyncfile-args-options)
+
+[fork](https://nodejs.org/api/child_process.html#child_processforkmodulepath-args-options) (Unix IPC supporting `"advanced"` `clone_wire` and `"json"` serialization)
 
 ## console
 
