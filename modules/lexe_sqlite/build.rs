@@ -6,15 +6,9 @@ fn main() {
         .include("vendor")
         .define("SQLITE_DEFAULT_MEMSTATUS", "0")
         .define("SQLITE_ENABLE_COLUMN_METADATA", None)
-        .define("SQLITE_ENABLE_DBSTAT_VTAB", None)
-        .define("SQLITE_ENABLE_FTS3", None)
-        .define("SQLITE_ENABLE_FTS3_PARENTHESIS", None)
         .define("SQLITE_ENABLE_FTS5", None)
-        .define("SQLITE_ENABLE_GEOPOLY", None)
         .define("SQLITE_ENABLE_MATH_FUNCTIONS", None)
         .define("SQLITE_ENABLE_PREUPDATE_HOOK", None)
-        .define("SQLITE_ENABLE_RBU", None)
-        .define("SQLITE_ENABLE_RTREE", None)
         .define("SQLITE_ENABLE_SESSION", None)
         .define("SQLITE_THREADSAFE", "1");
 
