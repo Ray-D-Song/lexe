@@ -1,7 +1,7 @@
 [package]
 name = "lexe_child_process"
 description = "lexe Module child_process"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -12,11 +12,11 @@ path = "src/lib.rs"
 
 [dependencies]
 itoa = { version = "1", default-features = false }
-lexe_buffer = { version = "0.1.6", path = "../lexe_buffer" }
-lexe_context = { version = "0.1.6", path = "../../libs/lexe_context" }
-lexe_events = { version = "0.1.6", path = "../lexe_events" }
-lexe_stream = { version = "0.1.6", path = "../lexe_stream" }
-lexe_utils = { version = "0.1.6", path = "../../libs/lexe_utils", default-features = false }
+lexe_buffer = { version = "0.1.7", path = "../lexe_buffer" }
+lexe_context = { version = "0.1.7", path = "../../libs/lexe_context" }
+lexe_events = { version = "0.1.7", path = "../lexe_events" }
+lexe_stream = { version = "0.1.7", path = "../lexe_stream" }
+lexe_utils = { version = "0.1.7", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
 tokio = { version = "1", features = ["process", "net", "io-util", "sync"], default-features = false }
 

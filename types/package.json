@@ -1,7 +1,7 @@
 {
   "name": "lexe-types",
   "license": "Apache-2.0",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "main": "",
   "types": "index.d.ts",
   "description": "Type definitions for lexe",

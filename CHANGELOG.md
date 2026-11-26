@@ -4,6 +4,8 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-26
+
 - Reduced release binary size (~41% on stable `darwin-arm64`, ~49% with nightly `build-std`):
   - Switched `[profile.release]` to `opt-level = "z"` while keeping `rquickjs-sys` at `opt-level = 3` for QuickJS VM execution speed.
   - Trimmed unused SQLite extensions (`GEOPOLY`, `RTREE`, `RBU`, `FTS3`, `DBSTAT_VTAB`) from `lexe_sqlite`, retaining `FTS5`, `SESSION`, `PREUPDATE_HOOK`, `COLUMN_METADATA`, and `MATH_FUNCTIONS`.

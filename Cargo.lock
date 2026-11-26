@@ -1810,7 +1810,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "lexe"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bytes",
  "cc",
@@ -1845,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_abort"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_async_hooks",
  "lexe_events",
@@ -1859,7 +1859,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_assert"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -1868,7 +1868,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_async_hooks"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_hooking",
  "lexe_utils",
@@ -1878,7 +1878,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_buffer"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "itoa",
  "lexe_encoding",
@@ -1891,14 +1891,14 @@ dependencies = [
 
 [[package]]
 name = "lexe_build"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "rustc_version",
 ]
 
 [[package]]
 name = "lexe_child_process"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "itoa",
  "lexe_buffer",
@@ -1914,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_compression"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "brotli",
  "brotlic",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_console"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_logging",
  "lexe_utils",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_constants"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_fs",
  "lexe_os",
@@ -1946,7 +1946,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_context"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_build",
  "lexe_test",
@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -2000,7 +2000,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_crypto"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2045,7 +2045,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_dgram"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "itoa",
  "lexe_buffer",
@@ -2063,7 +2063,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_diagnostics_channel"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_utils",
  "rquickjs",
@@ -2071,7 +2071,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_dns"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "either",
  "lexe_context",
@@ -2086,7 +2086,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_dns_cache"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "hyper-util",
  "lexe_context",
@@ -2098,7 +2098,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_encoding"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "base64-simd",
  "hex-simd",
@@ -2109,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_events"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_utils",
  "rquickjs",
@@ -2118,7 +2118,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_exceptions"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_utils",
  "rquickjs",
@@ -2126,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_fetch"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bytes",
  "either",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_ffi"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_buffer",
  "lexe_test",
@@ -2171,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_fs"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "either",
  "junction",
@@ -2193,7 +2193,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_hooking"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_utils",
  "once_cell",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_http"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2238,7 +2238,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_http2"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bytes",
  "h2",
@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_inspector"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -2275,7 +2275,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_intl"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "itoa",
  "jiff",
@@ -2286,7 +2286,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_json"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "itoa",
@@ -2301,7 +2301,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_logging"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "itoa",
  "lexe_context",
@@ -2315,7 +2315,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_modules"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "home",
  "lexe_abort",
@@ -2377,7 +2377,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_napi"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_context",
  "lexe_test",
@@ -2394,14 +2394,14 @@ dependencies = [
 
 [[package]]
 name = "lexe_navigator"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "rquickjs",
 ]
 
 [[package]]
 name = "lexe_net"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "itoa",
  "lexe_buffer",
@@ -2419,7 +2419,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_numbers"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "itoa",
@@ -2432,7 +2432,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_os"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "home",
  "lexe_test",
@@ -2452,7 +2452,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_path"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "lexe_utils",
@@ -2464,7 +2464,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_perf_hooks"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_events",
  "lexe_test",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_process"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_events",
  "lexe_hooking",
@@ -2490,7 +2490,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_querystring"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_utils",
  "rquickjs",
@@ -2498,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_sea"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_buffer",
  "lexe_encoding",
@@ -2511,7 +2511,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_sqlite"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "cc",
  "lexe_buffer",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_stream"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_buffer",
  "lexe_context",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_stream_web"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_abort",
  "lexe_test",
@@ -2552,7 +2552,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_string_decoder"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_buffer",
  "lexe_encoding",
@@ -2564,7 +2564,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_temporal"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "jiff",
  "lexe_utils",
@@ -2573,7 +2573,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_test"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "rquickjs",
  "uuid",
@@ -2581,7 +2581,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_test_tls"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "http",
  "http-body-util",
@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_timers"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_context",
  "lexe_hooking",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_tls"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "base64 0.22.1",
  "idna",
@@ -2641,7 +2641,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_tty"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "crossterm",
  "lexe_buffer",
@@ -2657,7 +2657,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_url"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "idna",
  "lexe_test",
@@ -2669,7 +2669,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_util"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_context",
  "lexe_encoding",
@@ -2682,7 +2682,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_utils"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_build",
  "lexe_test",
@@ -2695,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_v8"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_vm"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_buffer",
  "lexe_test",
@@ -2717,7 +2717,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_webassembly"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -2731,7 +2731,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_worker_threads"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "lexe_context",
  "lexe_utils",
@@ -2742,7 +2742,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_zlib"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "crc32fast",
  "lexe_buffer",
@@ -4538,7 +4538,7 @@ dependencies = [
 
 [[package]]
 name = "v8_compat"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "cc",
  "libc",
