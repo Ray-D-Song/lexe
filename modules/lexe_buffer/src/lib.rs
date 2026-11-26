@@ -5,7 +5,6 @@ use lexe_utils::{
     primordials::{BasePrimordials, Primordial},
 };
 use rquickjs::{
-    atom::PredefinedAtom,
     function::Constructor,
     module::{Declarations, Exports, ModuleDef},
     prelude::Func,
@@ -16,6 +15,8 @@ pub use self::array_buffer_view::*;
 pub use self::blob::*;
 pub use self::buffer::*;
 pub use self::file::*;
+pub use self::file_list::*;
+pub use self::file_reader::*;
 
 mod array_buffer_view;
 mod blob;
@@ -23,6 +24,8 @@ mod buffer;
 mod codec;
 mod extras;
 mod file;
+mod file_list;
+mod file_reader;
 mod natives;
 
 const EXTRA_EXPORTS: [&str; 10] = [
@@ -123,17 +126,34 @@ pub fn init<'js>(ctx: &Ctx<'js>) -> Result<()> {
 
     BufferPrimordials::init(ctx)?;
 
+    lexe_events::init(ctx)?;
+    lexe_exceptions::init(ctx)?;
+
     // Blob
-    if let Some(constructor) = Class::<Blob>::create_constructor(ctx)? {
-        constructor.prop(
-            PredefinedAtom::SymbolHasInstance,
-            Func::from(Blob::has_instance),
-        )?;
-        globals.set(stringify!(Blob), constructor)?;
+    Class::<Blob>::define(&globals)?;
+
+    // File (inherits from Blob)
+    Class::<File>::define(&globals)?;
+    if let (Some(blob_proto), Some(blob_ctor)) = (
+        Class::<Blob>::prototype(ctx)?,
+        globals.get::<_, Option<Object>>("Blob")?,
+    ) {
+        if let Some(file_proto) = Class::<File>::prototype(ctx)? {
+            let _ = file_proto.set_prototype(Some(&blob_proto));
+        }
+        if let Some(file_ctor) = globals.get::<_, Option<Object>>("File")? {
+            let _ = file_ctor.set_prototype(Some(&blob_ctor));
+        }
     }
 
-    // File
-    Class::<File>::define(&globals)?;
+    // FileList, FileReader, FileReaderSync
+    Class::<FileList>::define(&globals)?;
+    FileList::install_prototype(ctx)?;
+
+    Class::<FileReader>::define(&globals)?;
+    FileReader::install_prototype(ctx, &globals)?;
+
+    Class::<FileReaderSync>::define(&globals)?;
 
     //init primordials
     let _ = BufferPrimordials::get(ctx)?;

@@ -12,6 +12,7 @@ use http_body::Body as _;
 use http_body_util::BodyExt;
 use hyper::{body::Incoming, header::HeaderName};
 use lexe_abort::AbortSignal;
+use lexe_buffer::File;
 use lexe_compression::streaming::StreamingDecoder;
 use lexe_context::CtxExtension;
 use lexe_json::{parse::json_parse, stringify::json_stringify};
@@ -324,13 +325,19 @@ impl<'js> Response<'js> {
                             return Some(Err(e));
                         }
                         Some(Ok(BodyVariant::Provided(Some(body))))
-                    } else if let Some(blob) = Class::<Blob>::from_object(obj) {
+                    } else if let Ok(blob) = Class::<Blob>::from_value(&body) {
                         let blob = blob.borrow();
                         if !blob.mime_type().is_empty() {
                             content_type = Some(blob.mime_type());
                         }
                         Some(Ok(BodyVariant::Provided(Some(body))))
-                    } else if let Some(fd) = Class::<FormData>::from_object(obj) {
+                    } else if let Ok(file) = Class::<File>::from_value(&body) {
+                        let file = file.borrow();
+                        if !file.mime_type().is_empty() {
+                            content_type = Some(file.mime_type());
+                        }
+                        Some(Ok(BodyVariant::Provided(Some(body))))
+                    } else if let Ok(fd) = Class::<FormData>::from_value(&body) {
                         let fd = fd.borrow();
                         let (multipart_body, boundary) = fd.to_multipart_bytes(&ctx).ok()?;
                         content_type = Some([MIME_TYPE_FORM_DATA, &boundary].concat());
@@ -1019,8 +1026,10 @@ async fn take_provided<'js>(
         return collect_readable_stream(&stream).await.map(Some);
     }
 
-    let bytes = if let Some(blob) = provided.as_object().and_then(Class::<Blob>::from_object) {
+    let bytes = if let Ok(blob) = Class::<Blob>::from_value(&provided) {
         blob.borrow().get_bytes()
+    } else if let Ok(file) = Class::<File>::from_value(&provided) {
+        file.borrow().get_blob().get_bytes()
     } else {
         let obj_bytes = ObjectBytes::from(ctx, &provided)?;
         obj_bytes.as_bytes(ctx)?.to_vec()

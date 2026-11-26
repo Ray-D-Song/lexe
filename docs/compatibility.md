@@ -69,8 +69,8 @@
 | DOM | ✔︎⚠️ | WinterTC `Event`/`EventTarget`/`AbortController`/`AbortSignal` subset only; no `ErrorEvent`, `CloseEvent`, or browser DOM ([details](#dom)) |
 | ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
 | ENCODING | ✔︎⚠️ | Supports `utf-8`, `utf-16le`, `utf-16be`, `windows-1252` (plus `hex`/`base64`) only; missing WHATWG legacy encodings ([details](#encoding)) |
-| FETCH | ✔︎⚠️ | No `blob:`/`file:` URL fetch; omits browser policy controls (`credentials`, `referrer`, `integrity`, `caches`, CORS); WPT edge cases ([details](#fetch)) |
-| FILEAPI | ✔︎⚠️ | `Blob`, `File`, and `URL.createObjectURL` only; missing `FileReader`/`FileReaderSync`/`FileList`; no `fetch("blob:...")` ([details](#fileapi)) |
+| FETCH | ✔︎⚠️ | No `file:` URL fetch; omits browser policy controls (`credentials`, `referrer`, `integrity`, `caches`, CORS); WPT edge cases ([details](#fetch)) |
+| FILEAPI | ✔︎ | — |
 | HR-TIME | ✔︎ | — |
 | HTML | ✔︎⚠️ | `navigator` only exposes `userAgent`; `structuredClone` omits `DOMException`/`Blob`/`File`/`MessagePort`/`CryptoKey`; no `BroadcastChannel` ([details](#html)) |
 | STREAMS | ✔︎ | — |
@@ -80,7 +80,7 @@
 | WASM-WEB-API-2 | ✔︎⚠️ | `compileStreaming`/`instantiateStreaming` buffer the full `Response` before compiling (no incremental streaming compilation) ([details](#wasm-web-api-2)) |
 | WEBCRYPTO | ✔︎⚠️ | Missing `X448`, `Ed448`, `Argon2`, `AES-OCB`, `ChaCha20-Poly1305` and some `deriveBits`/`deriveKey` WPT edge cases ([details](#webcrypto)) |
 | WEBIDL | ✔︎⚠️ | Provides `DOMException` and core coercions; lacks full WebIDL prototype/branding/dictionary/overload compliance ([details](#webidl)) |
-| XHR | ✔︎⚠️ | Implements `FormData` only; `XMLHttpRequest` and `ProgressEvent` are not implemented (Node.js also omits XHR) ([details](#xhr)) |
+| XHR | ✔︎⚠️ | Implements `FormData` and `ProgressEvent`; `XMLHttpRequest` is not implemented (Node.js also omits XHR) ([details](#xhr)) |
 
 | Other features | lexe | Key differences from standard / Node.js |
 | --- | --- | --- |
@@ -201,15 +201,9 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `FETCH`
 
-- `blob:` and `file:` schemes throw `TypeError("Unsupported scheme")`.
+- `file:` scheme throws `TypeError("Unsupported scheme")` (`blob:` URLs from `URL.createObjectURL()` support `GET`/`HEAD`).
 - Browser-centric options and policies (`credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, HTTP `cache` / `caches` API, CORS preflight, forbidden-header enforcement) are omitted or non-enforcing.
 - Some WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming) do not yet pass.
-
-#### `FILEAPI`
-
-- Supports `Blob`, `File`, and `URL.createObjectURL()` / `URL.revokeObjectURL()`.
-- Missing `FileReader`, `FileReaderSync`, and `FileList`.
-- `fetch("blob:...")` is unsupported, and minor WPT edge cases remain in `Blob` construction/slicing and multipart `FormData` file uploads.
 
 #### `HTML`
 
@@ -239,7 +233,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `XHR`
 
-- Implements `FormData` only; `XMLHttpRequest` and `ProgressEvent` are not implemented (Node.js also omits `XMLHttpRequest`, while WinterTC groups `FormData` under XHR).
+- Implements `FormData` and `ProgressEvent`; `XMLHttpRequest` is not implemented (Node.js also omits `XMLHttpRequest`, while WinterTC groups `FormData` under XHR).
 
 ### Other features
 

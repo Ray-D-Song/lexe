@@ -32,6 +32,9 @@ use self::{custom_event::CustomEvent, event::Event, event_target::EventTarget};
 pub mod custom_event;
 pub mod event;
 pub mod event_target;
+pub mod progress_event;
+
+pub use progress_event::ProgressEvent;
 
 #[derive(Clone, Debug)]
 pub enum EventKey<'js> {
@@ -764,8 +767,27 @@ where
         ctx: Ctx<'js>,
         event: Value<'js>,
     ) -> Result<bool> {
-        let event_type = event.get_optional("type")?.unwrap();
-        Self::do_emit(event_type, this, &ctx, Rest(vec![event]), false)
+        let Some(event_obj) = event.as_object() else {
+            return Err(Exception::throw_type(
+                &ctx,
+                "Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.",
+            ));
+        };
+        let Some(event_type) = event.get_optional::<_, Value<'js>>("type")? else {
+            return Err(Exception::throw_type(
+                &ctx,
+                "Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.",
+            ));
+        };
+        let _ = event_obj.set("target", this.0.clone());
+        let _ = event_obj.set("currentTarget", this.0.clone());
+        let res = Self::do_emit(event_type, this, &ctx, Rest(vec![event.clone()]), false);
+        let _ = event_obj.set("currentTarget", rquickjs::Null);
+        res?;
+        let default_prevented = event_obj
+            .get_optional::<_, bool>("defaultPrevented")?
+            .unwrap_or(false);
+        Ok(!default_prevented)
     }
 
     fn event_names(this: This<Object<'js>>, ctx: Ctx<'js>) -> Result<Vec<Value<'js>>> {
@@ -1591,9 +1613,34 @@ impl From<EventsModule> for ModuleInfo<EventsModule> {
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let globals = ctx.globals();
 
+    if globals.contains_key("EventTarget")? && globals.contains_key("ProgressEvent")? {
+        return Ok(());
+    }
+
     Class::<EventTarget>::define(&globals)?;
     Class::<CustomEvent>::define(&globals)?;
     Class::<Event>::define(&globals)?;
+    Class::<ProgressEvent>::define(&globals)?;
+
+    if let (Some(event_proto), Some(event_ctor)) = (
+        Class::<Event>::prototype(ctx)?,
+        globals.get::<_, Option<Object>>("Event")?,
+    ) {
+        let _ = event_proto.set("target", rquickjs::Null);
+        let _ = event_proto.set("currentTarget", rquickjs::Null);
+        if let Some(ce_proto) = Class::<CustomEvent>::prototype(ctx)? {
+            let _ = ce_proto.set_prototype(Some(&event_proto));
+        }
+        if let Some(ce_ctor) = globals.get::<_, Option<Object>>("CustomEvent")? {
+            let _ = ce_ctor.set_prototype(Some(&event_ctor));
+        }
+        if let Some(pe_proto) = Class::<ProgressEvent>::prototype(ctx)? {
+            let _ = pe_proto.set_prototype(Some(&event_proto));
+        }
+        if let Some(pe_ctor) = globals.get::<_, Option<Object>>("ProgressEvent")? {
+            let _ = pe_ctor.set_prototype(Some(&event_ctor));
+        }
+    }
 
     EventTarget::add_event_target_prototype(ctx)?;
 

@@ -1880,12 +1880,12 @@ dependencies = [
 name = "lexe_buffer"
 version = "0.1.8"
 dependencies = [
- "itoa",
  "lexe_encoding",
+ "lexe_events",
+ "lexe_exceptions",
  "lexe_test",
  "lexe_utils",
  "rquickjs",
- "ryu",
  "tokio",
 ]
 

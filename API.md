@@ -1372,6 +1372,12 @@ export function print(value: any): void;
 
 [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
 
+[FileList](https://developer.mozilla.org/en-US/docs/Web/API/FileList)
+
+[FileReader](https://developer.mozilla.org/en-US/docs/Web/API/FileReader)
+
+[FileReaderSync](https://developer.mozilla.org/en-US/docs/Web/API/FileReaderSync)
+
 ## HR-TIME
 
 [performance.now](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now)

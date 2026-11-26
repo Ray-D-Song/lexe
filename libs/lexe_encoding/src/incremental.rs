@@ -1,7 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{bytes_to_utf8_string, Encoder, Endian};
+use crate::{bytes_to_utf8_string, bytes_to_windows1252_string, Encoder, Endian};
 
 const REPLACEMENT: char = '\u{FFFD}';
 
@@ -138,9 +138,8 @@ impl IncrementalDecoder {
         };
 
         match encoder {
-            Encoder::Utf8 | Encoder::Windows1252 => {
-                decode_utf8_like(&bytes, lossy, stream, &mut self.pending)
-            },
+            Encoder::Utf8 => decode_utf8_like(&bytes, lossy, stream, &mut self.pending),
+            Encoder::Windows1252 => Ok(bytes_to_windows1252_string(&bytes)),
             Encoder::Utf16le => decode_utf16_stream(
                 &bytes,
                 Endian::Little,

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{borrow::Cow, cell::RefCell, rc::Rc, sync::RwLock};
 
-use lexe_buffer::Blob;
+use lexe_buffer::{Blob, File};
 use lexe_stream_web::{
     readable_stream_default_controller_close_stream,
     readable_stream_default_controller_enqueue_value, utils::promise::PromisePrimordials,
@@ -37,10 +37,10 @@ pub(crate) fn create_body_value_stream<'js>(
                 let array = if TypedArray::<u8>::from_value(value.clone()).is_ok() {
                     value
                 } else {
-                    let bytes = if let Some(blob) =
-                        value.as_object().and_then(Class::<Blob>::from_object)
-                    {
+                    let bytes = if let Ok(blob) = Class::<Blob>::from_value(&value) {
                         blob.borrow().get_bytes()
+                    } else if let Ok(file) = Class::<File>::from_value(&value) {
+                        file.borrow().get_blob().get_bytes()
                     } else {
                         ObjectBytes::from(&ctx, &value)?.as_bytes(&ctx)?.to_vec()
                     };

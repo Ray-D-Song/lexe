@@ -4,6 +4,12 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Completed full `FILEAPI` parity (`FILEAPI` now `✔︎` in `docs/compatibility.md`):
+  - Added `FileReader`, `FileReaderSync`, `FileList`, and `ProgressEvent` (inheriting from `EventTarget` / `Event`), with `File` prototype inheritance from `Blob`.
+  - Added `Blob.prototype.stream()` / `File.prototype.stream()` byte streams (with default and BYOB readers), fixed `Blob.prototype.slice()` bounds/defaults, `USVString` lone-surrogate replacement, UTF-8 BOM stripping in `Blob.prototype.text()`, `endings: "native"` line-ending conversion, and `File::from_bytes`.
+  - Added `fetch("blob:...")` support (`GET`/`HEAD`) and `FormData` 3rd `filename` parameter, `USVString` coercion, first-entry `get()`, binary-safe multipart serialization/parsing, and `File`/`FormData` bodies in `fetch()`.
+  - Fixed `DOMException` initialization so `lexe_exceptions::DOMException` attaches properly and `windows-1252` decoding in `lexe_encoding` maps bytes `0x80`–`0x9F` per WHATWG.
+
 ## [0.1.8] - 2026-11-26
 
 - Implemented ES2024 RegExp `/v` (`unicodeSets`) in QuickJS (`libregexp`/`libunicode`): nested `[...]` character classes, `--` subtraction, `&&` intersection, `\q{...}` string disjunctions, `/iv` case folding, and Unicode 17.0.0 properties of strings (`\p{RGI_Emoji}`, `Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_Modifier_Sequence`, `RGI_Emoji_Flag_Sequence`, `RGI_Emoji_Tag_Sequence`, `RGI_Emoji_ZWJ_Sequence`) with full backtracking and lookbehind support.

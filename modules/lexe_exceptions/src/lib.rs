@@ -333,6 +333,11 @@ const CALLSITE_POLYFILL_JS: &str = r#"(function () {
 
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let globals = ctx.globals();
+    let init_marker = rquickjs::Symbol::new_global(ctx.clone(), "lexe.exceptions.initialized")?;
+    if globals.contains_key(init_marker.clone())? {
+        return Ok(());
+    }
+    globals.prop(init_marker, Property::from(true))?;
 
     BasePrimordials::init(ctx)?;
 

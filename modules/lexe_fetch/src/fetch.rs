@@ -4,6 +4,7 @@ use bytes::Bytes;
 use http_body_util::{combinators::BoxBody, Full};
 use hyper::{header::HeaderName, Method, Request, Uri};
 use lexe_abort::AbortSignal;
+use lexe_buffer::{Blob, File};
 use lexe_context::CtxExtension;
 use lexe_encoding::bytes_from_b64;
 use lexe_http::Agent;
@@ -22,7 +23,7 @@ use rquickjs::{
     function::{Opt, This},
     prelude::{Async, Func},
     CatchResultExt, Class, Coerced, Ctx, Exception, FromJs, Function, IntoJs, Object, Result,
-    Value,
+    Symbol, Value,
 };
 use std::{
     collections::HashSet,
@@ -38,10 +39,11 @@ use std::{
 use tokio::{select, sync::Semaphore};
 
 use super::{
+    form_data::FormData,
     headers::{Headers, HeadersGuard},
     response::{FetchTiming, Response},
     security::ensure_url_access,
-    Blob,
+    MIME_TYPE_FORM_DATA,
 };
 
 // https://fetch.spec.whatwg.org/#port-blocking
@@ -118,12 +120,21 @@ pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
 
                 // https://fetch.spec.whatwg.org/#scheme-fetch
                 if let Some((scheme, fragment)) = options.url.split_once(':') {
-                    match scheme {
+                    match scheme.to_ascii_lowercase().as_str() {
                         "http" | "https" => {},
                         "data" => {
                             return parse_data_url(&ctx, fragment, &options.method, fetch_start_ms)
                         },
-                        "about" | "blob" | "file" => {
+                        "blob" => {
+                            return fetch_blob_url(
+                                &ctx,
+                                &options.url,
+                                fragment,
+                                &options.method,
+                                fetch_start_ms,
+                            )
+                        },
+                        "about" | "file" => {
                             return Err(Exception::throw_type(&ctx, "Unsupported scheme"));
                         },
                         _ => return Err(Exception::throw_type(&ctx, "Invalid scheme")),
@@ -533,6 +544,109 @@ fn parse_data_url<'js>(
     Ok(response)
 }
 
+fn fetch_blob_url<'js>(
+    ctx: &Ctx<'js>,
+    full_url: &str,
+    rest: &str,
+    method: &Method,
+    fetch_start_ms: f64,
+) -> Result<Response<'js>> {
+    if *method != Method::GET && *method != Method::HEAD {
+        return Err(Exception::throw_type(
+            ctx,
+            "Failed to fetch blob URL: only GET and HEAD methods are supported",
+        ));
+    }
+
+    let path = rest.split('#').next().unwrap_or("");
+    let Some(id) = path.strip_prefix("nodedata:") else {
+        return Err(Exception::throw_type(
+            ctx,
+            "Failed to fetch blob URL: invalid blob URL",
+        ));
+    };
+    if id.is_empty() || id.contains(':') {
+        return Err(Exception::throw_type(
+            ctx,
+            "Failed to fetch blob URL: invalid blob URL",
+        ));
+    }
+
+    let store_key = Symbol::new_global(ctx.clone(), "lexe.internal.blobURLStore")?;
+    let store_val: Value<'js> = ctx.globals().get(store_key)?;
+    let Some(store_obj) = store_val.as_object() else {
+        return Err(Exception::throw_type(
+            ctx,
+            "Failed to fetch blob URL: blob URL not found or revoked",
+        ));
+    };
+    let get_fn: Function<'js> = store_obj.get("get")?;
+    let entry: Value<'js> = get_fn.call((This(store_obj.clone()), id))?;
+
+    let (raw_bytes, mime_type) = if let Ok(blob) = Class::<Blob>::from_value(&entry) {
+        let b = blob.borrow();
+        (b.get_bytes(), b.mime_type())
+    } else if let Ok(file) = Class::<File>::from_value(&entry) {
+        let f = file.borrow();
+        (f.get_blob().get_bytes(), f.mime_type())
+    } else {
+        return Err(Exception::throw_type(
+            ctx,
+            "Failed to fetch blob URL: blob URL not found or revoked",
+        ));
+    };
+
+    let full_len = raw_bytes.len();
+    let body = if *method == Method::HEAD {
+        Vec::new()
+    } else {
+        raw_bytes
+    };
+    let body_len = body.len() as u64;
+    let body_blob = Blob::from_bytes(body, Some(mime_type.clone())).into_js(ctx)?;
+
+    let headers = Object::new(ctx.clone())?;
+    headers.set("content-length", full_len.to_string())?;
+    if !mime_type.is_empty() {
+        headers.set("content-type", mime_type)?;
+    }
+
+    let options = Object::new(ctx.clone())?;
+    options.set("url", full_url)?;
+    options.set("headers", headers)?;
+
+    let response = Response::new(ctx.clone(), Opt(Some(body_blob)), Opt(Some(options)))?;
+    let end_ms = time::monotonic_elapsed_ms();
+    perf::emit_resource_timing(
+        ctx,
+        ResourceTimingRecord {
+            name: full_url.to_string(),
+            initiator_type: "fetch".to_string(),
+            next_hop_protocol: String::new(),
+            start_time: fetch_start_ms,
+            duration: (end_ms - fetch_start_ms).max(0.0),
+            worker_start: 0.0,
+            redirect_start: 0.0,
+            redirect_end: 0.0,
+            fetch_start: fetch_start_ms,
+            domain_lookup_start: fetch_start_ms,
+            domain_lookup_end: fetch_start_ms,
+            connect_start: fetch_start_ms,
+            connect_end: fetch_start_ms,
+            secure_connection_start: fetch_start_ms,
+            request_start: fetch_start_ms,
+            response_start: end_ms,
+            response_end: end_ms,
+            transfer_size: body_len,
+            encoded_body_size: body_len,
+            decoded_body_size: body_len,
+            response_status: 200,
+            delivery_type: String::new(),
+        },
+    );
+    Ok(response)
+}
+
 fn build_request<'js>(
     ctx: &Ctx<'js>,
     method: &hyper::Method,
@@ -746,21 +860,40 @@ fn get_fetch_options<'js>(
             }?);
         }
 
+        let mut inferred_content_type: Option<String> = None;
         if let Some(body_opt) =
             get_option::<Value>("body", arg_opts.as_ref(), resource_opts.as_ref())?
         {
-            // Check if body is a ReadableStream
-            if let Ok(stream) = Class::<ReadableStream>::from_value(&body_opt) {
-                body = Some(RequestBody::Stream(stream));
-            } else {
-                let bytes = if let Ok(blob) = Class::<Blob>::from_value(&body_opt) {
-                    let blob = blob.borrow();
-                    let typed_array = bytes_to_typed_array(ctx.clone(), &blob.get_bytes())?;
-                    ObjectBytes::from(ctx, &typed_array)?
+            if !body_opt.is_undefined() && !body_opt.is_null() {
+                // Check if body is a ReadableStream
+                if let Ok(stream) = Class::<ReadableStream>::from_value(&body_opt) {
+                    body = Some(RequestBody::Stream(stream));
                 } else {
-                    ObjectBytes::from(ctx, &body_opt)?
-                };
-                body = Some(RequestBody::from_bytes(ctx.clone(), bytes)?);
+                    let bytes = if let Ok(blob) = Class::<Blob>::from_value(&body_opt) {
+                        let blob = blob.borrow();
+                        if !blob.mime_type().is_empty() {
+                            inferred_content_type = Some(blob.mime_type());
+                        }
+                        let typed_array = bytes_to_typed_array(ctx.clone(), &blob.get_bytes())?;
+                        ObjectBytes::from(ctx, &typed_array)?
+                    } else if let Ok(file) = Class::<File>::from_value(&body_opt) {
+                        let file = file.borrow();
+                        if !file.mime_type().is_empty() {
+                            inferred_content_type = Some(file.mime_type());
+                        }
+                        let typed_array =
+                            bytes_to_typed_array(ctx.clone(), &file.get_blob().get_bytes())?;
+                        ObjectBytes::from(ctx, &typed_array)?
+                    } else if let Ok(fd) = Class::<FormData>::from_value(&body_opt) {
+                        let fd = fd.borrow();
+                        let (multipart_body, boundary) = fd.to_multipart_bytes(ctx)?;
+                        inferred_content_type = Some([MIME_TYPE_FORM_DATA, &boundary].concat());
+                        ObjectBytes::Vec(multipart_body)
+                    } else {
+                        ObjectBytes::from(ctx, &body_opt)?
+                    };
+                    body = Some(RequestBody::from_bytes(ctx.clone(), bytes)?);
+                }
             }
         }
 
@@ -774,6 +907,13 @@ fn get_fetch_options<'js>(
             get_option::<Value>("headers", arg_opts.as_ref(), resource_opts.as_ref())?
         {
             headers = Some(Headers::from_value(ctx, headers_op, HeadersGuard::None)?);
+        }
+
+        if let Some(ct) = inferred_content_type {
+            let h = headers.get_or_insert_with(Headers::default);
+            if !h.has(ctx.clone(), "content-type".into())? {
+                h.set(ctx.clone(), "content-type".into(), ct.into_js(ctx)?)?;
+            }
         }
 
         if let Some(signal) =

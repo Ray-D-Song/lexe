@@ -5,19 +5,52 @@ use std::ops::RangeInclusive;
 use lexe_utils::{
     bytes::ObjectBytes,
     primordials::{BasePrimordials, Primordial},
-    result::ResultExt,
 };
 use rquickjs::{
-    atom::PredefinedAtom, class::Trace, function::Opt, Array, ArrayBuffer, Class, Coerced, Ctx,
-    Exception, FromJs, Result, Symbol, TypedArray, Value,
+    atom::PredefinedAtom, class::Trace, function::Opt, qjs, Array, ArrayBuffer, Class, Ctx,
+    Exception, Function, Result, Symbol, TypedArray, Value,
 };
 
+use super::codec::string_units;
 use super::file::File;
 
 static CONSTRUCT_ERROR: &str =
     "Failed to construct 'Blob': The provided value cannot be converted to a sequence.";
 
-enum EndingType {
+static BLOB_STREAM_FACTORY_JS: &str = r#"(function (bytes) {
+  let offset = 0;
+  return new ReadableStream({
+    type: "bytes",
+    pull(controller) {
+      if (offset >= bytes.byteLength) {
+        const req = controller.byobRequest;
+        controller.close();
+        if (req) req.respond(0);
+        return;
+      }
+      const req = controller.byobRequest;
+      if (req && req.view) {
+        const view = req.view;
+        const n = Math.min(view.byteLength, bytes.byteLength - offset);
+        const dest = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        dest.set(bytes.subarray(offset, offset + n));
+        offset += n;
+        if (offset >= bytes.byteLength) {
+          controller.close();
+        }
+        req.respond(n);
+        return;
+      }
+      const chunk = bytes.slice(offset);
+      offset = bytes.byteLength;
+      controller.enqueue(chunk);
+      controller.close();
+    }
+  });
+})"#;
+
+#[derive(Clone, Copy)]
+pub(crate) enum EndingType {
     Native,
     Transparent,
 }
@@ -35,7 +68,44 @@ pub struct Blob {
     mime_type: String,
 }
 
-fn normalize_type(mut mime_type: String) -> String {
+/// Convert any JS value to a WebIDL `USVString` (replacing lone surrogates with U+FFFD).
+pub(crate) fn usv_string_from_js<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Result<String> {
+    let raw = unsafe { qjs::JS_ToString(ctx.as_raw().as_ptr(), value.as_raw()) };
+    let js_val = unsafe { Value::from_raw(ctx.clone(), raw) };
+    if js_val.is_exception() {
+        return Err(rquickjs::Error::Exception);
+    }
+    let js_str = js_val
+        .into_string()
+        .ok_or_else(|| Exception::throw_type(ctx, "Expected string"))?;
+    let units = string_units(&js_str)?;
+    Ok(char::decode_utf16(units)
+        .map(|r| r.unwrap_or('\u{FFFD}'))
+        .collect())
+}
+
+/// Convert a JS value using WebIDL `[Clamp] long long`.
+fn js_to_clamped_i64<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Result<i64> {
+    let mut num = 0.0_f64;
+    let rc = unsafe { qjs::JS_ToFloat64(ctx.as_raw().as_ptr(), &mut num, value.as_raw()) };
+    if rc < 0 {
+        return Err(rquickjs::Error::Exception);
+    }
+    if num.is_nan() {
+        return Ok(0);
+    }
+    if num >= i64::MAX as f64 {
+        return Ok(i64::MAX);
+    }
+    if num <= i64::MIN as f64 {
+        return Ok(i64::MIN);
+    }
+    // WebIDL round-half-to-even for [Clamp] integers
+    let rounded = num.round_ties_even();
+    Ok(rounded as i64)
+}
+
+pub(crate) fn normalize_type(mut mime_type: String) -> String {
     static INVALID_RANGE: RangeInclusive<u8> = 0x0020..=0x007E;
 
     let bytes = unsafe { mime_type.as_bytes_mut() };
@@ -48,6 +118,44 @@ fn normalize_type(mut mime_type: String) -> String {
     mime_type
 }
 
+pub(crate) fn parse_blob_options<'js>(
+    ctx: &Ctx<'js>,
+    options: &Option<Value<'js>>,
+) -> Result<(EndingType, String)> {
+    let mut endings = EndingType::Transparent;
+    let mut mime_type = String::new();
+
+    if let Some(opts) = options {
+        if opts.is_undefined() || opts.is_null() {
+            return Ok((endings, mime_type));
+        }
+        let Some(v) = opts.as_object() else {
+            return Err(Exception::throw_type(
+                ctx,
+                "Failed to construct 'Blob': parameter 2 is not of type 'Object'.",
+            ));
+        };
+        let endings_val: Value<'js> = v.get("endings")?;
+        if !endings_val.is_undefined() {
+            let endings_opt = usv_string_from_js(ctx, &endings_val)?;
+            if endings_opt == "native" {
+                endings = EndingType::Native;
+            } else if endings_opt != "transparent" {
+                return Err(Exception::throw_type(
+                    ctx,
+                    r#"expected 'endings' to be either 'transparent' or 'native'"#,
+                ));
+            }
+        }
+        let type_val: Value<'js> = v.get("type")?;
+        if !type_val.is_undefined() {
+            mime_type = normalize_type(usv_string_from_js(ctx, &type_val)?);
+        }
+    }
+
+    Ok((endings, mime_type))
+}
+
 #[rquickjs::methods]
 impl Blob {
     #[qjs(constructor)]
@@ -56,33 +164,11 @@ impl Blob {
         parts: Opt<Value<'js>>,
         options: Opt<Value<'js>>,
     ) -> Result<Self> {
-        let mut endings = EndingType::Transparent;
-        let mut mime_type = String::new();
+        let (endings, mime_type) = parse_blob_options(&ctx, &options.0)?;
 
-        if let Some(opts) = options.0 {
-            if let Some(v) = opts.as_object() {
-                if let Some(x) = v.get::<_, Option<Coerced<String>>>("type")? {
-                    mime_type = normalize_type(x.to_string());
-                }
-                if let Some(Coerced(endings_opt)) =
-                    v.get::<_, Option<Coerced<String>>>("endings")?
-                {
-                    if endings_opt == "native" {
-                        endings = EndingType::Native;
-                    } else if endings_opt != "transparent" {
-                        return Err(Exception::throw_type(
-                            &ctx,
-                            r#"expected 'endings' to be either 'transparent' or 'native'"#,
-                        ));
-                    }
-                }
-            }
-        }
-
-        let data = if let Some(parts) = parts.0 {
-            bytes_from_parts(&ctx, parts, endings)?
-        } else {
-            Vec::new()
+        let data = match parts.0 {
+            Some(parts) if !parts.is_undefined() => bytes_from_parts(&ctx, parts, endings)?,
+            _ => Vec::new(),
         };
 
         Ok(Self { data, mime_type })
@@ -99,7 +185,11 @@ impl Blob {
     }
 
     pub async fn text(&self) -> String {
-        String::from_utf8_lossy(&self.data).to_string()
+        let bytes = self
+            .data
+            .strip_prefix(b"\xEF\xBB\xBF")
+            .unwrap_or(&self.data);
+        String::from_utf8_lossy(bytes).into_owned()
     }
 
     #[qjs(rename = "arrayBuffer")]
@@ -111,26 +201,49 @@ impl Blob {
         TypedArray::new(ctx, self.data.to_vec()).map(|m| m.into_value())
     }
 
-    pub fn slice(&self, start: Opt<isize>, end: Opt<isize>, content_type: Opt<String>) -> Blob {
-        let start = start.0.unwrap_or_default();
-        let start = if start < 0 {
-            (self.data.len() as isize + start).max(0) as usize
-        } else {
-            self.data.len().min(start as usize)
-        };
-        let end = end.0.unwrap_or_default();
-        let end = if end < 0 {
-            (self.data.len() as isize + end).max(0) as usize
-        } else {
-            self.data.len().min(end as usize)
-        };
-        let data = &self.data[start..end];
-        let mime_type = content_type.0.map(normalize_type).unwrap_or_default();
+    pub fn stream<'js>(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        let bytes = TypedArray::new(ctx.clone(), self.data.clone())?.into_value();
+        let factory: Function<'js> = ctx.eval(BLOB_STREAM_FACTORY_JS)?;
+        factory.call((bytes,))
+    }
 
-        Blob {
-            mime_type,
-            data: data.to_vec(),
-        }
+    pub fn slice<'js>(
+        &self,
+        ctx: Ctx<'js>,
+        start: Opt<Value<'js>>,
+        end: Opt<Value<'js>>,
+        content_type: Opt<Value<'js>>,
+    ) -> Result<Blob> {
+        let len = self.data.len() as i64;
+        let start = match start.0 {
+            Some(v) if !v.is_undefined() => js_to_clamped_i64(&ctx, &v)?,
+            _ => 0,
+        };
+        let end = match end.0 {
+            Some(v) if !v.is_undefined() => js_to_clamped_i64(&ctx, &v)?,
+            _ => len,
+        };
+
+        let relative_start = if start < 0 {
+            (len as i128 + start as i128).max(0) as usize
+        } else {
+            len.min(start) as usize
+        };
+        let relative_end = if end < 0 {
+            (len as i128 + end as i128).max(0) as usize
+        } else {
+            len.min(end) as usize
+        };
+
+        let span = relative_end.saturating_sub(relative_start);
+        let data = self.data[relative_start..relative_start + span].to_vec();
+
+        let mime_type = match content_type.0 {
+            Some(v) if !v.is_undefined() => normalize_type(usv_string_from_js(&ctx, &v)?),
+            _ => String::new(),
+        };
+
+        Ok(Blob { mime_type, data })
     }
 
     #[qjs(get, rename = PredefinedAtom::SymbolToStringTag)]
@@ -149,6 +262,10 @@ impl Blob {
         self.data.clone()
     }
 
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.data
+    }
+
     //FIXME: cant use procedural macro for Symbol rename + static, see https://github.com/DelSkayn/rquickjs/issues/315
     pub fn has_instance(value: Value<'_>) -> bool {
         if let Some(obj) = value.as_object() {
@@ -158,21 +275,50 @@ impl Blob {
     }
 }
 
+fn convert_line_endings_native(input: &str, out: &mut Vec<u8>) {
+    let bytes = input.as_bytes();
+    out.reserve(bytes.len());
+    let mut i = 0;
+    let mut start = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\r' => {
+                out.extend_from_slice(&bytes[start..i]);
+                out.extend_from_slice(LINE_ENDING);
+                if i + 1 < bytes.len() && bytes[i + 1] == b'\n' {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                start = i;
+            },
+            b'\n' => {
+                out.extend_from_slice(&bytes[start..i]);
+                out.extend_from_slice(LINE_ENDING);
+                i += 1;
+                start = i;
+            },
+            _ => i += 1,
+        }
+    }
+    if start < bytes.len() {
+        out.extend_from_slice(&bytes[start..]);
+    }
+}
+
 fn bytes_from_parts<'js>(
     ctx: &Ctx<'js>,
     parts: Value<'js>,
     endings: EndingType,
 ) -> Result<Vec<u8>> {
-    let array = if let Some(obj) = parts.as_object() {
-        if obj.contains_key(Symbol::iterator(ctx.clone()))? {
-            BasePrimordials::get(ctx)?
-                .function_array_from
-                .call((parts.clone(),))?
-        } else {
-            parts
-                .into_array()
-                .ok_or_else(|| Exception::throw_type(ctx, CONSTRUCT_ERROR))?
+    let array: Array<'js> = if let Some(obj) = parts.as_object() {
+        let iter_val: Value<'js> = obj.get(Symbol::iterator(ctx.clone()))?;
+        if iter_val.is_undefined() || iter_val.is_null() || !iter_val.is_function() {
+            return Err(Exception::throw_type(ctx, CONSTRUCT_ERROR));
         }
+        BasePrimordials::get(ctx)?
+            .function_array_from
+            .call((parts.clone(),))?
     } else {
         return Err(Exception::throw_type(ctx, CONSTRUCT_ERROR));
     };
@@ -180,99 +326,35 @@ fn bytes_from_parts<'js>(
     let mut data = Vec::new();
     for elem in array.iter::<Value>() {
         let elem = elem?;
-        if let Some(arr) = elem.as_array() {
-            let string = array_to_string(arr)?;
-            data.extend_from_slice(string.as_bytes());
+        if let Ok(blob) = Class::<Blob>::from_value(&elem) {
+            data.extend_from_slice(&blob.borrow().data);
+            continue;
+        }
+        if let Ok(file) = Class::<File>::from_value(&elem) {
+            data.extend_from_slice(&file.borrow().get_blob().data);
             continue;
         }
         if let Some(object) = elem.as_object() {
-            if let Some(x) = Class::<Blob>::from_object(object) {
-                data.extend_from_slice(&x.borrow().data);
-                continue;
-            }
-            if let Some(x) = Class::<File>::from_object(object) {
-                let file = x.borrow();
-                let end = Some(file.size().try_into().or_throw(ctx)?);
-                let mime_type = Some(file.mime_type());
-                data.extend_from_slice(&file.slice(Opt(Some(0)), Opt(end), Opt(mime_type)).data);
-                continue;
-            }
-            if let Ok(x) = ObjectBytes::from(ctx, object) {
-                data.extend_from_slice(x.as_bytes(ctx).map_err(|_| {
+            if let Some(view) = ObjectBytes::from_array_buffer(object)? {
+                let bytes = view.as_bytes(ctx).map_err(|_| {
                     Exception::throw_type(ctx, "Cannot create a blob with detached buffer")
-                })?);
+                })?;
+                data.extend_from_slice(bytes);
                 continue;
             }
-            if let Some(x) = ArrayBuffer::from_object(object.clone()) {
-                data.extend_from_slice(x.as_bytes().ok_or_else(|| {
+            if let Some(ab) = ArrayBuffer::from_object(object.clone()) {
+                data.extend_from_slice(ab.as_bytes().ok_or_else(|| {
                     Exception::throw_type(ctx, "Cannot create a blob with detached buffer")
                 })?);
                 continue;
             }
         }
 
-        let string = Coerced::<String>::from_js(ctx, elem)?.0;
-        if let EndingType::Transparent = endings {
-            data.extend_from_slice(string.as_bytes());
-        } else {
-            let len = string.len();
-            data.reserve(len);
-
-            let bytes = string.as_bytes();
-            let mut iter = bytes.iter();
-
-            let mut start = 0usize;
-            let mut i = 0usize;
-            let line_ending_is_n = LINE_ENDING[0] == b'\n';
-
-            while let Some(byte) = iter.next() {
-                if byte == &b'\r' {
-                    if let Some(next_byte) = iter.next() {
-                        data.extend(&bytes[start..i]);
-                        i += 1;
-                        start = i + 1;
-                        if next_byte != &b'\n' {
-                            data.extend([b'\r', *next_byte]);
-                        } else {
-                            data.extend(LINE_ENDING);
-                        }
-                    }
-                } else if byte == &b'\n' && !line_ending_is_n {
-                    data.extend(&bytes[start..i]);
-                    data.extend(LINE_ENDING);
-                    start = i + 1;
-                };
-                i += 1;
-            }
-
-            if start < len {
-                data.extend(&bytes[start..len]);
-            }
+        let string = usv_string_from_js(ctx, &elem)?;
+        match endings {
+            EndingType::Transparent => data.extend_from_slice(string.as_bytes()),
+            EndingType::Native => convert_line_endings_native(&string, &mut data),
         }
     }
     Ok(data)
-}
-
-fn array_to_string(array: &Array) -> Result<String> {
-    let mut itoa_buffer = itoa::Buffer::new();
-    let mut ryu_buffer = ryu::Buffer::new();
-
-    let parts = array
-        .clone()
-        .into_iter()
-        .map(|value| {
-            let value = value?;
-            if let Some(string) = value.as_string() {
-                Ok(string.to_string()?)
-            } else if let Some(number) = value.as_int() {
-                Ok(itoa_buffer.format(number).to_string())
-            } else if let Some(number) = value.as_float() {
-                Ok(ryu_buffer.format(number).to_string())
-            } else {
-                Ok(String::new())
-            }
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(parts.join(","))
 }

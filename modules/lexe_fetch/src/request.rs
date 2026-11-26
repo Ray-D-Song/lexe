@@ -7,6 +7,7 @@ use super::{
 };
 use crate::body_helpers::strip_bom;
 use lexe_abort::AbortSignal;
+use lexe_buffer::File;
 use lexe_http::Agent;
 use lexe_json::parse::json_parse;
 use lexe_stream_web::ReadableStream;
@@ -393,8 +394,10 @@ impl<'js> Request<'js> {
                     return collect_readable_stream(ctx, &stream).await.map(Some);
                 }
 
-                if let Some(blob) = provided.as_object().and_then(Class::<Blob>::from_object) {
+                if let Ok(blob) = Class::<Blob>::from_value(&provided) {
                     blob.borrow().get_bytes()
+                } else if let Ok(file) = Class::<File>::from_value(&provided) {
+                    file.borrow().get_blob().get_bytes()
                 } else {
                     let bytes = ObjectBytes::from(ctx, &provided)?;
                     bytes.as_bytes(ctx)?.to_vec()
@@ -489,13 +492,19 @@ fn assign_request<'js>(request: &mut Request<'js>, ctx: Ctx<'js>, obj: &Object<'
                         "construct Request",
                     )?;
                     BodyVariant::Provided(Some(body))
-                } else if let Some(blob) = Class::<Blob>::from_object(body_obj) {
+                } else if let Ok(blob) = Class::<Blob>::from_value(&body) {
                     let blob = blob.borrow();
                     if !blob.mime_type().is_empty() {
                         content_type = Some(blob.mime_type());
                     }
                     BodyVariant::Provided(Some(body))
-                } else if let Some(fd) = Class::<FormData>::from_object(body_obj) {
+                } else if let Ok(file) = Class::<File>::from_value(&body) {
+                    let file = file.borrow();
+                    if !file.mime_type().is_empty() {
+                        content_type = Some(file.mime_type());
+                    }
+                    BodyVariant::Provided(Some(body))
+                } else if let Ok(fd) = Class::<FormData>::from_value(&body) {
                     let fd = fd.borrow();
                     let (multipart_body, boundary) = fd.to_multipart_bytes(&ctx)?;
                     content_type = Some([MIME_TYPE_FORM_DATA, &boundary].concat());

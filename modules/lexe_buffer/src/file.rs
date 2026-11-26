@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 use lexe_utils::time;
 use rquickjs::{
-    atom::PredefinedAtom, class::Trace, function::Opt, ArrayBuffer, Coerced, Ctx, Exception,
-    IntoJs, Object, Result, Value,
+    atom::PredefinedAtom, class::Trace, function::Opt, qjs, ArrayBuffer, Ctx, Exception, Result,
+    Value,
 };
 
-use super::blob::Blob;
+use super::blob::{usv_string_from_js, Blob};
 
 #[rquickjs::class]
 #[derive(Trace, Clone, rquickjs::JsLifetime)]
@@ -17,25 +17,70 @@ pub struct File {
     last_modified: i64,
 }
 
+/// Convert a JS value using WebIDL `long long` (ToNumber, non-finite -> 0, mod 2^64).
+fn js_to_long_long<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Result<i64> {
+    let mut num = 0.0_f64;
+    let rc = unsafe { qjs::JS_ToFloat64(ctx.as_raw().as_ptr(), &mut num, value.as_raw()) };
+    if rc < 0 {
+        return Err(rquickjs::Error::Exception);
+    }
+    if !num.is_finite() || num == 0.0 {
+        return Ok(0);
+    }
+    let int = num.trunc();
+    // Modulo 2^64 into signed i64 (ECMAScript ToInt64 / WebIDL long long)
+    let two_pow_64 = 18_446_744_073_709_551_616.0_f64;
+    let rem = int.rem_euclid(two_pow_64);
+    if rem >= 9_223_372_036_854_775_808.0_f64 {
+        Ok((rem - two_pow_64) as i64)
+    } else {
+        Ok(rem as i64)
+    }
+}
+
 #[rquickjs::methods]
 impl File {
     #[qjs(constructor)]
     fn new<'js>(
         ctx: Ctx<'js>,
-        data: Value<'js>,
-        filename: Coerced<String>,
+        data: Opt<Value<'js>>,
+        filename: Opt<Value<'js>>,
         options: Opt<Value<'js>>,
     ) -> Result<Self> {
+        let Some(data) = data.0 else {
+            return Err(Exception::throw_type(
+                &ctx,
+                "Failed to construct 'File': 2 arguments required, but only 0 present.",
+            ));
+        };
+        let Some(filename_val) = filename.0 else {
+            return Err(Exception::throw_type(
+                &ctx,
+                "Failed to construct 'File': 2 arguments required, but only 1 present.",
+            ));
+        };
+        if data.is_undefined() {
+            return Err(Exception::throw_type(
+                &ctx,
+                "Failed to construct 'File': The provided value cannot be converted to a sequence.",
+            ));
+        }
+
+        let filename = usv_string_from_js(&ctx, &filename_val)?;
+
         let mut last_modified = time::now_millis();
 
         if let Some(ref opts) = options.0 {
-            if opts.is_bool() || opts.is_float() || opts.is_int() || opts.is_string() {
-                return Err(Exception::throw_type(&ctx, "Invalid options"));
-            }
-
-            if let Some(v) = opts.as_object() {
-                if let Some(x) = v.get::<_, Option<Coerced<i64>>>("lastModified")? {
-                    last_modified = x.0;
+            if !opts.is_undefined() && !opts.is_null() {
+                let Some(v) = opts.as_object() else {
+                    return Err(Exception::throw_type(
+                        &ctx,
+                        "Failed to construct 'File': parameter 3 is not of type 'Object'.",
+                    ));
+                };
+                let lm_val: Value<'js> = v.get("lastModified")?;
+                if !lm_val.is_undefined() {
+                    last_modified = js_to_long_long(&ctx, &lm_val)?;
                 }
             }
         }
@@ -44,7 +89,7 @@ impl File {
 
         Ok(Self {
             blob,
-            filename: filename.0,
+            filename,
             last_modified,
         })
     }
@@ -69,11 +114,21 @@ impl File {
         self.last_modified
     }
 
-    pub fn slice(&self, start: Opt<isize>, end: Opt<isize>, content_type: Opt<String>) -> Blob {
-        self.blob.slice(start, end, content_type)
+    pub fn slice<'js>(
+        &self,
+        ctx: Ctx<'js>,
+        start: Opt<Value<'js>>,
+        end: Opt<Value<'js>>,
+        content_type: Opt<Value<'js>>,
+    ) -> Result<Blob> {
+        self.blob.slice(ctx, start, end, content_type)
     }
 
-    pub async fn text(&mut self) -> String {
+    pub fn stream<'js>(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        self.blob.stream(ctx)
+    }
+
+    pub async fn text(&self) -> String {
         self.blob.text().await
     }
 
@@ -91,31 +146,32 @@ impl File {
         stringify!(File)
     }
 }
+
 impl File {
     pub fn from_bytes<'js>(
-        ctx: &Ctx<'js>,
+        _ctx: &Ctx<'js>,
         data: Vec<u8>,
         filename: String,
         mime_type: Option<String>,
     ) -> Result<Self> {
-        let options = Opt(Some({
-            let obj = Object::new(ctx.clone())?;
-            obj.set(
-                "type",
-                mime_type
-                    .clone()
-                    .unwrap_or("application/octet-stream".into())
-                    .into_js(ctx)?,
-            )?;
-            obj.into_js(ctx)?
-        }));
-        let blob = Blob::new(ctx.clone(), Opt(Some(data.into_js(ctx)?)), options)?;
+        let blob = Blob::from_bytes(
+            data,
+            Some(mime_type.unwrap_or_else(|| "application/octet-stream".into())),
+        );
 
         Ok(Self {
             blob,
             filename,
             last_modified: time::now_millis(),
         })
+    }
+
+    pub fn from_blob(blob: Blob, filename: String) -> Self {
+        Self {
+            blob,
+            filename,
+            last_modified: time::now_millis(),
+        }
     }
 
     pub fn get_blob(&self) -> Blob {

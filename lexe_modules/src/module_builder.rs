@@ -112,6 +112,16 @@ impl ModuleBuilder {
                 .with_global(crate::modules::async_hooks::init)
                 .with_module(crate::modules::async_hooks::AsyncHooksModule);
         }
+        #[cfg(feature = "events")]
+        {
+            builder = builder
+                .with_global(crate::modules::events::init)
+                .with_module(crate::modules::events::EventsModule);
+        }
+        #[cfg(feature = "exceptions")]
+        {
+            builder = builder.with_global(crate::modules::exceptions::init);
+        }
         #[cfg(feature = "buffer")]
         {
             builder = builder
@@ -147,16 +157,6 @@ impl ModuleBuilder {
             builder = builder
                 .with_module(crate::modules::dns::DnsPromisesModule)
                 .with_module(crate::modules::dns::DnsModule);
-        }
-        #[cfg(feature = "events")]
-        {
-            builder = builder
-                .with_global(crate::modules::events::init)
-                .with_module(crate::modules::events::EventsModule);
-        }
-        #[cfg(feature = "exceptions")]
-        {
-            builder = builder.with_global(crate::modules::exceptions::init);
         }
         #[cfg(feature = "http")]
         {

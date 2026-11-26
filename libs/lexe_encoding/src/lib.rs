@@ -80,7 +80,8 @@ impl Encoder {
         match self {
             Self::Hex => Ok(bytes_to_hex_string(bytes)),
             Self::Base64 => Ok(bytes_to_b64_string(bytes)),
-            Self::Utf8 | Self::Windows1252 => bytes_to_utf8_string(bytes, lossy),
+            Self::Utf8 => bytes_to_utf8_string(bytes, lossy),
+            Self::Windows1252 => Ok(bytes_to_windows1252_string(bytes)),
             Self::Utf16le => bytes_to_utf16_string(bytes, Endian::Little, lossy),
             Self::Utf16be => bytes_to_utf16_string(bytes, Endian::Big, lossy),
         }
@@ -183,6 +184,25 @@ pub fn bytes_to_b64(bytes: &[u8]) -> Vec<u8> {
 
 pub fn bytes_to_hex_string(bytes: &[u8]) -> String {
     hex_simd::encode_to_string(bytes, AsciiCase::Lower)
+}
+
+const WINDOWS_1252_80_9F: [char; 32] = [
+    '\u{20AC}', '\u{0081}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}', '\u{2021}',
+    '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{008D}', '\u{017D}', '\u{008F}',
+    '\u{0090}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}', '\u{2014}',
+    '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}', '\u{0153}', '\u{009D}', '\u{017E}', '\u{0178}',
+];
+
+pub fn bytes_to_windows1252_string(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    for &b in bytes {
+        match b {
+            0x00..=0x7F => out.push(b as char),
+            0x80..=0x9F => out.push(WINDOWS_1252_80_9F[(b - 0x80) as usize]),
+            0xA0..=0xFF => out.push(char::from(b)),
+        }
+    }
+    out
 }
 
 pub fn bytes_to_utf8_string(bytes: &[u8], lossy: bool) -> Result<String, String> {
