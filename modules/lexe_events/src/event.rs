@@ -1,6 +1,6 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-use rquickjs::{prelude::Opt, Result, Value};
+use rquickjs::{atom::PredefinedAtom, prelude::Opt, Coerced, Result, Value};
 
 use lexe_utils::object::ObjectExt;
 
@@ -16,7 +16,7 @@ pub struct Event {
 #[rquickjs::methods]
 impl Event {
     #[qjs(constructor)]
-    pub fn new(event_type: String, options: Opt<Value<'_>>) -> Result<Self> {
+    pub fn new(event_type: Coerced<String>, options: Opt<Value<'_>>) -> Result<Self> {
         let mut bubbles = false;
         let mut cancelable = false;
         let mut composed = false;
@@ -32,7 +32,7 @@ impl Event {
             }
         }
         Ok(Self {
-            event_type,
+            event_type: event_type.0,
             bubbles,
             cancelable,
             composed,
@@ -57,5 +57,10 @@ impl Event {
     #[qjs(get, rename = "type")]
     pub fn event_type(&self) -> String {
         self.event_type.clone()
+    }
+
+    #[qjs(get, rename = PredefinedAtom::SymbolToStringTag)]
+    pub fn to_string_tag(&self) -> &'static str {
+        stringify!(Event)
     }
 }

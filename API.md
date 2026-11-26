@@ -1325,7 +1325,11 @@ export function print(value: any): void;
 
 [AbortSignal](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal)
 
+[CloseEvent](https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent)
+
 [CustomEvent](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent)
+
+[ErrorEvent](https://developer.mozilla.org/en-US/docs/Web/API/ErrorEvent)
 
 [Event](https://developer.mozilla.org/en-US/docs/Web/API/Event)
 

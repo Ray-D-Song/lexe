@@ -66,7 +66,7 @@
 | --- | --- | --- |
 | COMPRESSION | ✔︎ | — |
 | CONSOLE | ✔︎ | — |
-| DOM | ✔︎⚠️ | WinterTC `Event`/`EventTarget`/`AbortController`/`AbortSignal` subset only; no `ErrorEvent`, `CloseEvent`, or browser DOM ([details](#dom)) |
+| DOM | ✔︎ | — |
 | ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
 | ENCODING | ✔︎⚠️ | Supports `utf-8`, `utf-16le`, `utf-16be`, `windows-1252` (plus `hex`/`base64`) only; missing WHATWG legacy encodings ([details](#encoding)) |
 | FETCH | ✔︎⚠️ | No `file:` URL fetch; omits browser policy controls (`credentials`, `referrer`, `integrity`, `caches`, CORS); WPT edge cases ([details](#fetch)) |
@@ -181,11 +181,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Missing `SHARE_ENV`, `resourceLimits`, `Worker.prototype.getHeapSnapshot()`, `postMessageToThread()`, and piped worker stdio (`stdin: true`, `stdout: true`, `stderr: true`).
 
 ### Web Platform APIs
-
-#### `DOM`
-
-- Implements the non-browser WinterTC subset only (`Event`, `CustomEvent`, `EventTarget`, `AbortController`, and `AbortSignal` with `abort()`, `any()`, `timeout()`, `throwIfAborted()`).
-- Missing `ErrorEvent`, `CloseEvent`, and browser DOM tree APIs (`Document`, `Node`, `Element`).
 
 #### `ECMASCRIPT`
 

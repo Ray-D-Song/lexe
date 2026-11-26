@@ -3,6 +3,7 @@
 use std::sync::{Arc, RwLock};
 
 use rquickjs::{
+    atom::PredefinedAtom,
     class::{Trace, Tracer},
     JsLifetime,
 };
@@ -39,5 +40,10 @@ impl<'js> EventTarget<'js> {
             #[allow(clippy::arc_with_non_send_sync)]
             events: Arc::new(RwLock::new(Vec::new())),
         }
+    }
+
+    #[qjs(get, rename = PredefinedAtom::SymbolToStringTag)]
+    pub fn to_string_tag(&self) -> &'static str {
+        stringify!(EventTarget)
     }
 }

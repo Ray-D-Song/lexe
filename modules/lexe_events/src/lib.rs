@@ -10,8 +10,9 @@ use std::{
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc, OnceLock, RwLock,
     },
+    time::Instant,
 };
 
 use lexe_utils::{
@@ -29,14 +30,28 @@ use tracing::trace;
 
 use self::{custom_event::CustomEvent, event::Event, event_target::EventTarget};
 
+pub mod close_event;
 pub mod custom_event;
+pub mod error_event;
 pub mod event;
 pub mod event_target;
 pub mod message_event;
 pub mod progress_event;
 
+pub use close_event::CloseEvent;
+pub use error_event::ErrorEvent;
 pub use message_event::MessageEvent;
 pub use progress_event::ProgressEvent;
+
+static EVENT_TIME_ORIGIN: OnceLock<Instant> = OnceLock::new();
+
+fn event_now_ms() -> f64 {
+    EVENT_TIME_ORIGIN
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0
+}
 
 #[derive(Clone, Debug)]
 pub enum EventKey<'js> {
@@ -628,9 +643,21 @@ where
         args: Rest<Value<'js>>,
         defer: bool,
     ) -> Result<bool> {
+        Self::do_emit_inner(event, this, ctx, args, defer, false)
+    }
+
+    fn do_emit_inner(
+        event: Value<'js>,
+        this: This<Object<'js>>,
+        ctx: &Ctx<'js>,
+        args: Rest<Value<'js>>,
+        defer: bool,
+        dom_dispatch: bool,
+    ) -> Result<bool> {
         let events = Self::resolve_events_from(ctx, &this)?;
         let key = EventKey::from_value(ctx, event.clone())?;
-        let is_error_event = matches!(&key, EventKey::String(s) if s.as_ref() == "error");
+        let is_error_event =
+            !dom_dispatch && matches!(&key, EventKey::String(s) if s.as_ref() == "error");
 
         // Node invokes `errorMonitor` listeners before handling/throwing an `"error"` event.
         if is_error_event {
@@ -670,7 +697,15 @@ where
                     callback.defer((this_val, Rest(call_args)))?;
                 } else {
                     let ret: Value<'js> = callback.call((this_val, Rest(call_args)))?;
-                    attach_capture_rejection(ctx, &this.0, ret, &event, &args.0)?;
+                    if !dom_dispatch {
+                        attach_capture_rejection(ctx, &this.0, ret, &event, &args.0)?;
+                    } else if let Some(ev_obj) = args.0.first().and_then(|v| v.as_object()) {
+                        let stop_imm_sym =
+                            Symbol::new_global(ctx.clone(), "lexe.event.stopImmediate")?;
+                        if ev_obj.get::<_, Option<bool>>(stop_imm_sym)? == Some(true) {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -708,7 +743,15 @@ where
                     callback.defer((this_val, Rest(call_args)))?;
                 } else {
                     let ret: Value<'js> = callback.call((this_val, Rest(call_args)))?;
-                    attach_capture_rejection(ctx, &this.0, ret, &event, &args.0)?;
+                    if !dom_dispatch {
+                        attach_capture_rejection(ctx, &this.0, ret, &event, &args.0)?;
+                    } else if let Some(ev_obj) = args.0.first().and_then(|v| v.as_object()) {
+                        let stop_imm_sym =
+                            Symbol::new_global(ctx.clone(), "lexe.event.stopImmediate")?;
+                        if ev_obj.get::<_, Option<bool>>(stop_imm_sym)? == Some(true) {
+                            break;
+                        }
+                    }
                 }
             }
             Ok(true)
@@ -781,13 +824,49 @@ where
                 "Failed to execute 'dispatchEvent' on 'EventTarget': parameter 1 is not of type 'Event'.",
             ));
         };
-        let _ = event_obj.set("target", this.0.clone());
-        let _ = event_obj.set("currentTarget", this.0.clone());
-        let res = Self::do_emit(event_type, this, &ctx, Rest(vec![event.clone()]), false);
-        let _ = event_obj.set("currentTarget", rquickjs::Null);
+        let target_sym = Symbol::new_global(ctx.clone(), "lexe.event.target")?;
+        let current_target_sym = Symbol::new_global(ctx.clone(), "lexe.event.currentTarget")?;
+        let phase_sym = Symbol::new_global(ctx.clone(), "lexe.event.eventPhase")?;
+        let stop_imm_sym = Symbol::new_global(ctx.clone(), "lexe.event.stopImmediate")?;
+        let stopped_sym = Symbol::new_global(ctx.clone(), "lexe.event.stopped")?;
+        let default_prevented_sym = Symbol::new_global(ctx.clone(), "lexe.event.defaultPrevented")?;
+
+        let _ = event_obj.set(target_sym, this.0.clone());
+        let _ = event_obj.set(current_target_sym.clone(), this.0.clone());
+        let _ = event_obj.set(phase_sym.clone(), 2i32);
+        let _ = event_obj.set(stop_imm_sym.clone(), false);
+        let _ = event_obj.set(stopped_sym, false);
+        // Preserve plain non-Event mock object support in tests.
+        let is_native_event = probe_class::<Event>(&ctx, event_obj).is_some()
+            || probe_class::<CustomEvent>(&ctx, event_obj).is_some()
+            || probe_class::<ErrorEvent>(&ctx, event_obj).is_some()
+            || probe_class::<CloseEvent>(&ctx, event_obj).is_some()
+            || probe_class::<MessageEvent>(&ctx, event_obj).is_some()
+            || probe_class::<ProgressEvent>(&ctx, event_obj).is_some();
+        if !is_native_event {
+            let _ = event_obj.set("target", this.0.clone());
+            let _ = event_obj.set("currentTarget", this.0.clone());
+        }
+
+        let res = Self::do_emit_inner(
+            event_type,
+            this,
+            &ctx,
+            Rest(vec![event.clone()]),
+            false,
+            true,
+        );
+
+        let _ = event_obj.set(current_target_sym, rquickjs::Null);
+        let _ = event_obj.set(phase_sym, 0i32);
+        let _ = event_obj.set(stop_imm_sym, false);
+        if !is_native_event {
+            let _ = event_obj.set("currentTarget", rquickjs::Null);
+        }
         res?;
         let default_prevented = event_obj
-            .get_optional::<_, bool>("defaultPrevented")?
+            .get_optional::<_, bool>(default_prevented_sym)?
+            .or(event_obj.get_optional::<_, bool>("defaultPrevented")?)
             .unwrap_or(false);
         Ok(!default_prevented)
     }
@@ -1618,6 +1697,8 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     if globals.contains_key("EventTarget")?
         && globals.contains_key("ProgressEvent")?
         && globals.contains_key("MessageEvent")?
+        && globals.contains_key("ErrorEvent")?
+        && globals.contains_key("CloseEvent")?
     {
         return Ok(());
     }
@@ -1627,13 +1708,15 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     Class::<Event>::define(&globals)?;
     Class::<ProgressEvent>::define(&globals)?;
     Class::<MessageEvent>::define(&globals)?;
+    Class::<ErrorEvent>::define(&globals)?;
+    Class::<CloseEvent>::define(&globals)?;
+
+    globals.set("__lexeEventNowMs", Func::from(event_now_ms))?;
 
     if let (Some(event_proto), Some(event_ctor)) = (
         Class::<Event>::prototype(ctx)?,
         globals.get::<_, Option<Object>>("Event")?,
     ) {
-        let _ = event_proto.set("target", rquickjs::Null);
-        let _ = event_proto.set("currentTarget", rquickjs::Null);
         if let Some(ce_proto) = Class::<CustomEvent>::prototype(ctx)? {
             let _ = ce_proto.set_prototype(Some(&event_proto));
         }
@@ -1652,9 +1735,126 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         if let Some(me_ctor) = globals.get::<_, Option<Object>>("MessageEvent")? {
             let _ = me_ctor.set_prototype(Some(&event_ctor));
         }
+        if let Some(ee_proto) = Class::<ErrorEvent>::prototype(ctx)? {
+            let _ = ee_proto.set_prototype(Some(&event_proto));
+        }
+        if let Some(ee_ctor) = globals.get::<_, Option<Object>>("ErrorEvent")? {
+            let _ = ee_ctor.set_prototype(Some(&event_ctor));
+        }
+        if let Some(cle_proto) = Class::<CloseEvent>::prototype(ctx)? {
+            let _ = cle_proto.set_prototype(Some(&event_proto));
+        }
+        if let Some(cle_ctor) = globals.get::<_, Option<Object>>("CloseEvent")? {
+            let _ = cle_ctor.set_prototype(Some(&event_ctor));
+        }
     }
+
+    ctx.eval::<(), _>(EVENT_POLYFILL_JS)?;
 
     EventTarget::add_event_target_prototype(ctx)?;
 
     Ok(())
 }
+
+const EVENT_POLYFILL_JS: &str = r#"(function() {
+  const EventCtor = globalThis.Event;
+  if (!EventCtor) return;
+  const proto = EventCtor.prototype;
+  const targetSym = Symbol.for("lexe.event.target");
+  const currentTargetSym = Symbol.for("lexe.event.currentTarget");
+  const phaseSym = Symbol.for("lexe.event.eventPhase");
+  const defaultPreventedSym = Symbol.for("lexe.event.defaultPrevented");
+  const stoppedSym = Symbol.for("lexe.event.stopped");
+  const stopImmSym = Symbol.for("lexe.event.stopImmediate");
+  const trustedSym = Symbol.for("lexe.event.isTrusted");
+  const tsSym = Symbol.for("lexe.event.timeStamp");
+
+  const phases = { NONE: 0, CAPTURING_PHASE: 1, AT_TARGET: 2, BUBBLING_PHASE: 3 };
+  for (const [k, v] of Object.entries(phases)) {
+    Object.defineProperty(EventCtor, k, { value: v, enumerable: true, configurable: false, writable: false });
+    Object.defineProperty(proto, k, { value: v, enumerable: true, configurable: false, writable: false });
+  }
+
+  Object.defineProperties(proto, {
+    target: {
+      configurable: true,
+      enumerable: true,
+      get() { return targetSym in this ? this[targetSym] : null; },
+    },
+    srcElement: {
+      configurable: true,
+      enumerable: true,
+      get() { return this.target; },
+    },
+    currentTarget: {
+      configurable: true,
+      enumerable: true,
+      get() { return currentTargetSym in this ? this[currentTargetSym] : null; },
+    },
+    eventPhase: {
+      configurable: true,
+      enumerable: true,
+      get() { return phaseSym in this ? this[phaseSym] : 0; },
+    },
+    defaultPrevented: {
+      configurable: true,
+      enumerable: true,
+      get() { return Boolean(this[defaultPreventedSym]); },
+    },
+    returnValue: {
+      configurable: true,
+      enumerable: true,
+      get() { return !this.defaultPrevented; },
+      set(val) { if (!val) this.preventDefault(); },
+    },
+    cancelBubble: {
+      configurable: true,
+      enumerable: true,
+      get() { return Boolean(this[stoppedSym]); },
+      set(val) { if (val) this[stoppedSym] = true; },
+    },
+    isTrusted: {
+      configurable: true,
+      enumerable: true,
+      get() { return Boolean(this[trustedSym]); },
+    },
+    timeStamp: {
+      configurable: true,
+      enumerable: true,
+      get() {
+        if (!(tsSym in this)) {
+          Object.defineProperty(this, tsSym, {
+            value: globalThis.__lexeEventNowMs(),
+            configurable: true,
+            enumerable: false,
+            writable: true,
+          });
+        }
+        return this[tsSym];
+      },
+    },
+  });
+
+  if (typeof proto.preventDefault !== "function") {
+    proto.preventDefault = function preventDefault() {
+      if (this.cancelable) this[defaultPreventedSym] = true;
+    };
+  }
+  if (typeof proto.stopPropagation !== "function") {
+    proto.stopPropagation = function stopPropagation() {
+      this[stoppedSym] = true;
+    };
+  }
+  if (typeof proto.stopImmediatePropagation !== "function") {
+    proto.stopImmediatePropagation = function stopImmediatePropagation() {
+      this[stoppedSym] = true;
+      this[stopImmSym] = true;
+    };
+  }
+  if (typeof proto.composedPath !== "function") {
+    proto.composedPath = function composedPath() {
+      const ct = currentTargetSym in this ? this[currentTargetSym] : null;
+      return ct ? [ct] : [];
+    };
+  }
+})();"#;

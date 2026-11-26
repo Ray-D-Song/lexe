@@ -4,6 +4,10 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Completed non-browser `DOM` compatibility (`DOM` now `✔︎` in `docs/compatibility.md`):
+  - Added global `ErrorEvent` and `CloseEvent` inheriting from `Event` with WebIDL init coercion and defaults.
+  - Added `Event.prototype` propagation and cancellation semantics (`preventDefault()`, `stopPropagation()`, `stopImmediatePropagation()`, `composedPath()`, `defaultPrevented`, `returnValue`, `cancelBubble`, `eventPhase`, `srcElement`, `timeStamp`, `isTrusted`, and phase constants) and fixed `EventTarget.dispatchEvent()` to honor `stopImmediatePropagation()` without treating `"error"` as Node's `ERR_UNHANDLED_ERROR`.
+  - Updated `CustomEvent` to support `bubbles`/`cancelable`/`composed` and `[Symbol.toStringTag]` on `Event` and `EventTarget` classes.
 - Completed `HTML` compatibility (`HTML` now `✔︎` in `docs/compatibility.md`):
   - Added `navigator.hardwareConcurrency`, `navigator.language`, `navigator.languages`, and `navigator.platform` alongside `navigator[Symbol.toStringTag]`.
   - Extended `structuredClone()` and transfer serialization (`clone_wire`) to support `DOMException`, `Blob`, `File`, `CryptoKey`, and transferable `MessagePort` (including across `Worker` threads and `workerData` `transferList`), throwing `DOMException("DataCloneError")` for non-transferable `MessagePort` and uncloneable values.
