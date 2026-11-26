@@ -6,7 +6,7 @@ All notable changes to Lexe are documented in this file.
 
 - Implemented ES2024 RegExp `/v` (`unicodeSets`) in QuickJS (`libregexp`/`libunicode`): nested `[...]` character classes, `--` subtraction, `&&` intersection, `\q{...}` string disjunctions, `/iv` case folding, and Unicode 17.0.0 properties of strings (`\p{RGI_Emoji}`, `Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_Modifier_Sequence`, `RGI_Emoji_Flag_Sequence`, `RGI_Emoji_Tag_Sequence`, `RGI_Emoji_ZWJ_Sequence`) with full backtracking and lookbehind support.
 - Supported structured cloning (`structuredClone()`, `workerData`, `postMessage`) of `WebAssembly.Module` instances via native clone codecs (`Arc`-shared `wasmi::Module`) and ES module `data:` URL `Worker` scripts in `node:worker_threads`.
-- Implemented ES2021 `WeakRef` `KeepDuringJob` clearing at microtask checkpoint boundaries, native `node:http2` streaming `ClientHttp2Session` (`h2::client`) with TLS/TCP `createConnection` handoff (compatible with `undici`), `TLSSocket` EOF-on-FIN / `resetAndDestroy` / `pauseReading` parity, `net` deferred `close` / string port parsing, unref'd `AbortSignal.timeout()`, and `node:tty` `ReadStream.setEncoding()` / `WriteStream.prototype.hasColors()`.
+- Implemented ES2021 `WeakRef` `KeepDuringJob` clearing at microtask checkpoint boundaries, native `node:http2` streaming `ClientHttp2Session` (`h2::client`) with TLS/TCP `createConnection` handoff (compatible with `undici`), `TLSSocket` EOF-on-FIN / `resetAndDestroy` / `pauseReading` parity, `net` deferred `close` / string port parsing, `node:fs` integer fd support in `writeFile*`/`appendFile*`/`readFile*`, unref'd `AbortSignal.timeout()`, and `node:tty` `ReadStream.setEncoding()` / `WriteStream.prototype.hasColors()`.
 
 ## [0.1.7] - 2026-11-26
 

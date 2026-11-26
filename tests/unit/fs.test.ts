@@ -1822,5 +1822,34 @@ describe("fd sync family", () => {
     }
     cleanup();
   });
+
+  it("supports integer file descriptors in writeFileSync, readFileSync, and promises.writeFile", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lexe-fs-fd-"));
+    const p = join(dir, "session.jsonl");
+    const fd = openSync(p, "wx");
+    try {
+      (defaultImport as any).writeFileSync(fd, '{"a":1}\n');
+      (defaultImport as any).writeFileSync(fd, '{"b":2}\n');
+    } finally {
+      closeSync(fd);
+    }
+
+    const rfd = openSync(p, "r");
+    try {
+      const content = (defaultImport as any).readFileSync(rfd, "utf8");
+      expect(content).toBe('{"a":1}\n{"b":2}\n');
+    } finally {
+      closeSync(rfd);
+    }
+
+    const handle: any = await (defaultImport as any).promises.open(p, "a");
+    try {
+      await (defaultImport as any).promises.writeFile(handle.fd, '{"c":3}\n');
+    } finally {
+      await handle.close();
+    }
+    expect((defaultImport as any).readFileSync(p, "utf8")).toBe('{"a":1}\n{"b":2}\n{"c":3}\n');
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 

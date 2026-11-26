@@ -1,7 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::io::Write;
+
 use crate::errors::throw_fs_error;
+use crate::fd_sync;
+use crate::read_file::{parse_file_target, FileTarget};
 use lexe_utils::{bytes::ObjectBytes, object::ObjectExt};
 use rquickjs::{function::Opt, Ctx, Error, Exception, FromJs, Result, Value};
 use tokio::io::AsyncWriteExt;
@@ -303,7 +307,7 @@ fn hex_decode(input: &str) -> Vec<u8> {
 
 pub async fn write_file<'js>(
     ctx: Ctx<'js>,
-    path: String,
+    path: Value<'js>,
     data: Value<'js>,
     options: Opt<Value<'js>>,
 ) -> Result<()> {
@@ -312,14 +316,25 @@ pub async fn write_file<'js>(
 
 async fn write_file_flagged<'js>(
     ctx: Ctx<'js>,
-    path: String,
+    path: Value<'js>,
     data: Value<'js>,
     options: Opt<Value<'js>>,
     default_flag: &str,
 ) -> Result<()> {
-    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
     let (encoding, mode, flag) = resolve_options(&ctx, options, default_flag)?;
     let bytes = data_bytes(&ctx, &data, encoding.as_deref())?;
+
+    let path = match parse_file_target(&ctx, path)? {
+        FileTarget::Fd(fd) => {
+            return fd_sync::with_fd(&ctx, fd, "write", |entry| {
+                entry.file.write_all(&bytes)?;
+                entry.file.flush()
+            });
+        },
+        FileTarget::Path(path) => path,
+    };
+
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
 
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut options = open_options(&flag).ok_or_else(|| invalid_flag(&ctx, &flag))?;
@@ -346,7 +361,7 @@ async fn write_file_flagged<'js>(
 
 pub fn write_file_sync<'js>(
     ctx: Ctx<'js>,
-    path: String,
+    path: Value<'js>,
     data: Value<'js>,
     options: Opt<Value<'js>>,
 ) -> Result<()> {
@@ -355,14 +370,25 @@ pub fn write_file_sync<'js>(
 
 fn write_file_sync_flagged<'js>(
     ctx: Ctx<'js>,
-    path: String,
+    path: Value<'js>,
     data: Value<'js>,
     options: Opt<Value<'js>>,
     default_flag: &str,
 ) -> Result<()> {
-    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
     let (encoding, mode, flag) = resolve_options(&ctx, options, default_flag)?;
     let bytes = data_bytes(&ctx, &data, encoding.as_deref())?;
+
+    let path = match parse_file_target(&ctx, path)? {
+        FileTarget::Fd(fd) => {
+            return fd_sync::with_fd(&ctx, fd, "write", |entry| {
+                entry.file.write_all(&bytes)?;
+                entry.file.flush()
+            });
+        },
+        FileTarget::Path(path) => path,
+    };
+
+    lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
 
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut options = sync_open_options(&flag).ok_or_else(|| invalid_flag(&ctx, &flag))?;
@@ -377,7 +403,6 @@ fn write_file_sync_flagged<'js>(
         let _ = mode;
     }
 
-    use std::io::Write;
     let mut file = options
         .open(&path)
         .map_err(|err| throw_fs_error(&ctx, err, "open", &path))?;
@@ -393,7 +418,7 @@ fn write_file_sync_flagged<'js>(
 /// way mirrors Node, where `appendFile` is a thin wrapper over `writeFile`.
 pub async fn append_file<'js>(
     ctx: Ctx<'js>,
-    path: String,
+    path: Value<'js>,
     data: Value<'js>,
     options: Opt<Value<'js>>,
 ) -> Result<()> {
@@ -402,7 +427,7 @@ pub async fn append_file<'js>(
 
 pub fn append_file_sync<'js>(
     ctx: Ctx<'js>,
-    path: String,
+    path: Value<'js>,
     data: Value<'js>,
     options: Opt<Value<'js>>,
 ) -> Result<()> {
