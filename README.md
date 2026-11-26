@@ -2,6 +2,8 @@
 
 Lexe is a lightweight JavaScript runtime built on QuickJS.
 
+It started a year ago as a fork of [LLRT](https://github.com/awslabs/llrt), and was later spun out into an independent project to advance Node.js API compatibility.
+
 It takes Node.js compatibility as its primary goal, aiming to become a lightweight direct drop-in replacement for Node.js. Its compatibility matrix includes Wasm, N-API, V8-API, and standalone single-executable compilation.
 
 Lexe is designed for low-latency, low-footprint backend services and Agent Harnesses.
