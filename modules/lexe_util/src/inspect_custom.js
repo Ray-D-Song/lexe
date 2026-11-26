@@ -108,7 +108,12 @@
   // Returns the installer so the host can hand it a real `inspect`.
   return function installAll(inspectFn) {
     inspect = inspectFn;
-    install(Buffer.prototype, bufferToInspect);
+    install(
+      Buffer.prototype,
+      typeof Buffer.prototype.inspect === "function"
+        ? Buffer.prototype.inspect
+        : bufferToInspect
+    );
     install(URL.prototype, urlToInspect);
     install(URLSearchParams.prototype, urlSearchParamsToInspect);
     install(TextDecoder.prototype, textDecoderToInspect);

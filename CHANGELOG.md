@@ -4,6 +4,10 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Improved `node:buffer` compatibility (`docs/compatibility.md`):
+  - Implemented `Buffer` slab pooling (`Buffer.poolSize`, default `64 * 1024`) for `Buffer.allocUnsafe()` and `Buffer.from()` with 8-byte alignment, while keeping `Buffer.allocUnsafeSlow()` and unseeded `Buffer.alloc()` unpooled.
+  - Added `Buffer.prototype.inspect()` (aliased to `Buffer.prototype[util.inspect.custom]`) and dynamic `buffer.INSPECT_MAX_BYTES` truncation in both `Buffer.prototype.inspect()` and `util.inspect()`.
+  - Enabled native 64-bit unsigned integer read/write support (`NumberKind::BigUInt`) in `lexe_buffer` via `JS_ToBigUint64` and `BigInt::from_u64`.
 - Completed non-browser `DOM` compatibility (`DOM` now `✔︎` in `docs/compatibility.md`):
   - Added global `ErrorEvent` and `CloseEvent` inheriting from `Event` with WebIDL init coercion and defaults.
   - Added `Event.prototype` propagation and cancellation semantics (`preventDefault()`, `stopPropagation()`, `stopImmediatePropagation()`, `composedPath()`, `defaultPrevented`, `returnValue`, `cancelBubble`, `eventPhase`, `srcElement`, `timeStamp`, `isTrusted`, and phase constants) and fixed `EventTarget.dispatchEvent()` to honor `stopImmediatePropagation()` without treating `"error"` as Node's `ERR_UNHANDLED_ERROR`.

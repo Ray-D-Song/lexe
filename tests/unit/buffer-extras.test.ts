@@ -561,3 +561,54 @@ describe("URL.createObjectURL / buffer.resolveObjectURL", () => {
     }
   });
 });
+
+describe("slab pooling, inspect, and BigUInt64", () => {
+  it("slab-pools Buffer.allocUnsafe and Buffer.from with 8-byte alignment while allocUnsafeSlow is unpooled", () => {
+    const a = Buffer.allocUnsafe(5);
+    const b = Buffer.allocUnsafe(5);
+    expect(a.buffer).toBe(b.buffer);
+    expect(a.parent).toBe(a.buffer);
+    expect(b.byteOffset - a.byteOffset).toBe(8);
+    expect(a.buffer.byteLength).toBe(Buffer.poolSize);
+
+    const c = Buffer.from("hello");
+    expect(c.buffer).toBe(a.buffer);
+    expect(c.byteOffset).toBe(b.byteOffset + 8);
+
+    const slow = Buffer.allocUnsafeSlow(16);
+    expect(slow.buffer).not.toBe(a.buffer);
+    expect(slow.byteOffset).toBe(0);
+    expect(slow.buffer.byteLength).toBe(16);
+
+    const large = Buffer.allocUnsafe(Buffer.poolSize >>> 1);
+    expect(large.byteOffset).toBe(0);
+    expect(large.buffer.byteLength).toBe(Buffer.poolSize >>> 1);
+  });
+
+  it("supports Buffer.prototype.inspect and INSPECT_MAX_BYTES truncation in util.inspect", async () => {
+    const util = await import("node:util");
+    const buf = Buffer.from([1, 2, 3, 4, 5, 6]);
+    expect((buf as any).inspect()).toBe("<Buffer 01 02 03 04 05 06>");
+    expect((Buffer.prototype as any)[util.inspect.custom]).toBe((Buffer.prototype as any).inspect);
+
+    try {
+      buffer.INSPECT_MAX_BYTES = 3;
+      expect((buf as any).inspect()).toBe("<Buffer 01 02 03 ... 3 more bytes>");
+      expect(util.inspect(buf)).toBe("<Buffer 01 02 03 ... 3 more bytes>");
+      buffer.INSPECT_MAX_BYTES = 5;
+      expect(util.inspect(buf)).toBe("<Buffer 01 02 03 04 05 ... 1 more byte>");
+    } finally {
+      buffer.INSPECT_MAX_BYTES = 50;
+    }
+  });
+
+  it("reads and writes full 64-bit unsigned BigInts up to 2^64 - 1", () => {
+    const b = Buffer.alloc(16);
+    const max = 0xffffffffffffffffn;
+    const val = 0x0102030405060708n;
+    expect(b.writeBigUInt64LE(max, 0)).toBe(8);
+    expect(b.writeBigUInt64BE(val, 8)).toBe(16);
+    expect(b.readBigUInt64LE(0)).toBe(max);
+    expect(b.readBigUint64BE(8)).toBe(val);
+  });
+});

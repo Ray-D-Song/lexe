@@ -7,7 +7,7 @@
 | --- | --- | --- | --- |
 | node:assert | ✔︎ | ✔︎ | — |
 | node:async_hooks | ✔︎ | ✔︎⚠️ | Public `createHook()` disabled by default (`LEXE_ASYNC_HOOKS=1`); missing `executionAsyncResource`, `asyncWrapProviders`, and `AsyncLocalStorage` Node 24 options ([details](#nodeasync_hooks)) |
-| node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`); no slab pooling; no `Buffer.prototype.inspect` or `INSPECT_MAX_BYTES` truncation; no `Uint64` paths ([details](#nodebuffer)) |
+| node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`) due to QuickJS-ng `ArrayBuffer` limit ([details](#nodebuffer)) |
 | node:child_process | ✔︎ | — |
 | node:cluster | ✔︎ | ✘ | Not implemented |
 | node:console | ✔︎ | ✔︎ | — |
@@ -119,9 +119,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 #### `node:buffer`
 
 - `constants.MAX_LENGTH` / `kMaxLength` is capped at `2147483647` (QuickJS 31-bit `ArrayBuffer` limit) rather than Node's platform limit.
-- `Buffer.poolSize` is exposed as a numeric property only; Lexe does not use slab-pooled backing allocations.
-- `Buffer.prototype.inspect` is not implemented, and `INSPECT_MAX_BYTES` does not limit `util.inspect()` output.
-- `Uint64` typed-array conversion paths throw `"Uint64 is not supported"`.
 
 #### `node:crypto`
 

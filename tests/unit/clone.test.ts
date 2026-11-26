@@ -60,7 +60,8 @@ describe("structuredClone", () => {
   });
 
   it("Clones a Buffer", () => {
-    const buffer = Buffer.from("hello world");
+    const buffer = Buffer.alloc(11);
+    buffer.write("hello world");
     const clonedBuffer = structuredClone(buffer);
     expect(clonedBuffer.buffer).toEqual(buffer.buffer);
     buffer.set([1, 2, 3, 4, 5, 6, 7, 8]);

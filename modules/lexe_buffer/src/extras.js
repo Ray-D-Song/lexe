@@ -201,6 +201,12 @@
   }
 
   let inspectMaxBytes = 50;
+  Object.defineProperty(globalThis, "__lexeInspectMaxBytes", {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: inspectMaxBytes,
+  });
 
   target.SlowBuffer = SlowBuffer;
   target.transcode = transcode;
@@ -220,6 +226,7 @@
     set(value) {
       validateNumber(value, "INSPECT_MAX_BYTES", 0);
       inspectMaxBytes = value;
+      globalThis.__lexeInspectMaxBytes = value;
     },
   });
 })

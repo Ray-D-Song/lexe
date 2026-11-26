@@ -1680,4 +1680,24 @@
     Object.defineProperty(fn, "length", { value: 1 });
     Object.defineProperty(fn, "name", { value: "" });
   }
+
+  function inspectBuffer(recurseTimes, ctx) {
+    void recurseTimes;
+    void ctx;
+    let max = globalThis.__lexeInspectMaxBytes;
+    if (typeof max !== "number" || Number.isNaN(max)) max = 50;
+    else if (!Number.isFinite(max)) max = this.length;
+    else max = Math.max(0, Math.floor(max));
+    const shown = Math.min(max, this.length);
+    let str = shown > 0 ? this.toString("hex", 0, shown).replace(/(.{2})/g, "$1 ").trim() : "";
+    const remaining = this.length - max;
+    if (remaining > 0) {
+      str += ` ... ${remaining} more byte${remaining > 1 ? "s" : ""}`;
+    }
+    const tag = this && this.constructor && this.constructor.name ? this.constructor.name : "Buffer";
+    return `<${tag} ${str}>`;
+  }
+  Object.defineProperty(inspectBuffer, "name", { value: "inspect" });
+  proto.inspect = inspectBuffer;
+  proto[Symbol.for("nodejs.util.inspect.custom")] = inspectBuffer;
 });

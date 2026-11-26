@@ -55,14 +55,29 @@ fn bytes_of_buffer(obj: &Object<'_>) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+fn inspect_max_bytes(ctx: &Ctx<'_>) -> usize {
+    ctx.globals()
+        .get::<_, Option<f64>>("__lexeInspectMaxBytes")
+        .ok()
+        .flatten()
+        .map(|n| {
+            if n.is_infinite() {
+                usize::MAX
+            } else {
+                n.max(0.0).floor() as usize
+            }
+        })
+        .unwrap_or(BUFFER_INSPECT_MAX_BYTES)
+}
+
 /// Node's Buffer inspect form: `<Buffer 00 01 ff>`, or `<Buffer >` when empty
 /// (note the trailing space — Node emits it, and it must not be "tidied" away).
 ///
-/// Beyond 50 bytes the tail is replaced with `... N more byte(s)`, singular for
-/// exactly one remaining byte.
-fn format_buffer_inspect(bytes: &[u8]) -> String {
+/// Beyond `INSPECT_MAX_BYTES` (default 50) the tail is replaced with
+/// `... N more byte(s)`, singular for exactly one remaining byte.
+fn format_buffer_inspect(bytes: &[u8], max_bytes: usize) -> String {
     let mut out = String::from("<Buffer ");
-    let shown = bytes.len().min(BUFFER_INSPECT_MAX_BYTES);
+    let shown = bytes.len().min(max_bytes);
     for (index, byte) in bytes[..shown].iter().enumerate() {
         if index > 0 {
             out.push(SPACING);
@@ -726,7 +741,7 @@ fn format_raw_inner<'js>(
             if let Some(class_name) = class_name.as_deref() {
                 if class_name == "Buffer" {
                     let bytes = bytes_of_buffer(obj)?;
-                    result.push_str(&format_buffer_inspect(&bytes));
+                    result.push_str(&format_buffer_inspect(&bytes, inspect_max_bytes(obj.ctx())));
                     return Ok(());
                 }
             }

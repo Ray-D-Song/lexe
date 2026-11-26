@@ -20,8 +20,8 @@ use rquickjs::{
     convert::Coerced,
     function::{Constructor, Opt},
     prelude::{Func, Rest, This},
-    Array, ArrayBuffer, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Result, TypedArray,
-    Value,
+    qjs, Array, ArrayBuffer, BigInt, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Result,
+    Symbol, TypedArray, Value,
 };
 
 #[derive(JsLifetime)]
@@ -84,6 +84,9 @@ impl<'js> Buffer {
     }
 
     fn from_encoding(ctx: &Ctx<'js>, bytes: Vec<u8>) -> Result<Value<'js>> {
+        if let Some(pooled) = alloc_pooled(ctx, bytes.len(), Some(&bytes))? {
+            return Ok(pooled);
+        }
         Buffer(bytes).into_js(ctx)
     }
 
@@ -94,8 +97,70 @@ impl<'js> Buffer {
             },
             _ => NodeEncoding::Utf8,
         };
-        Buffer(node.encode_units(units)).into_js(ctx)
+        Self::from_encoding(ctx, node.encode_units(units))
     }
+}
+
+fn alloc_pooled<'js>(
+    ctx: &Ctx<'js>,
+    size: usize,
+    fill: Option<&[u8]>,
+) -> Result<Option<Value<'js>>> {
+    if size == 0 {
+        return Ok(None);
+    }
+    let ctor = BufferPrimordials::get(ctx)?.constructor.clone();
+    let pool_size_f = ctor.get::<_, f64>("poolSize").unwrap_or(0.0);
+    if !pool_size_f.is_finite() || pool_size_f <= 1.0 {
+        return Ok(None);
+    }
+    let pool_size = pool_size_f.floor() as usize;
+    let threshold = pool_size >> 1;
+    if size >= threshold {
+        return Ok(None);
+    }
+
+    let pool_sym = Symbol::new_global(ctx.clone(), "lexe.buffer.slabPool")?;
+    let pool_obj = match ctor.get::<_, Option<Object<'js>>>(pool_sym.clone())? {
+        Some(obj) => obj,
+        None => {
+            let obj = Object::new(ctx.clone())?;
+            ctor.set(pool_sym, obj.clone())?;
+            obj
+        },
+    };
+
+    let current_ab: Option<ArrayBuffer<'js>> = pool_obj.get("ab").unwrap_or(None);
+    let current_offset: usize = pool_obj.get("offset").unwrap_or(0);
+
+    let (ab, start_offset) = match current_ab {
+        Some(existing) if current_offset.saturating_add(size) <= existing.len() => {
+            (existing, current_offset)
+        },
+        _ => {
+            let fresh = ArrayBuffer::new(ctx.clone(), vec![0u8; pool_size])?;
+            pool_obj.set("ab", fresh.clone())?;
+            pool_obj.set("offset", 0usize)?;
+            (fresh, 0usize)
+        },
+    };
+
+    if let Some(data) = fill {
+        let raw = ab
+            .as_raw()
+            .ok_or(ERROR_MSG_ARRAY_BUFFER_DETACHED)
+            .or_throw(ctx)?;
+        // SAFETY: `start_offset + size <= existing.len()` is checked above and `data.len() == size`.
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), raw.ptr.as_ptr().add(start_offset), size);
+        }
+    }
+
+    let next_offset = (start_offset + size + 7) & !7;
+    pool_obj.set("offset", next_offset)?;
+
+    let view = Buffer::from_array_buffer_offset_length(ctx, ab, start_offset, size)?;
+    Ok(Some(view))
 }
 
 // Static Methods
@@ -158,6 +223,9 @@ fn alloc_byte_ref<'js>(ctx: &Ctx<'js>, byte_ref: &[u8], length: usize) -> Result
 }
 
 fn alloc_unsafe(ctx: Ctx<'_>, size: usize) -> Result<Value<'_>> {
+    if let Some(pooled) = alloc_pooled(&ctx, size, None)? {
+        return Ok(pooled);
+    }
     let mut bytes: Vec<MaybeUninit<u8>> = Vec::with_capacity(size);
     unsafe {
         bytes.set_len(size);
@@ -863,7 +931,16 @@ fn write_buf<'js>(
             (byte_count, endian_bytes(val, endian))
         },
         NumberKind::BigUInt => {
-            return Err(Exception::throw_type(ctx, "Uint64 is not supported"));
+            let Some(bigint) = value.as_big_int() else {
+                return Err(Exception::throw_type(ctx, "Expected BigInt"));
+            };
+            let mut val = 0u64;
+            let rc =
+                unsafe { qjs::JS_ToBigUint64(ctx.as_raw().as_ptr(), &mut val, bigint.as_raw()) };
+            if rc < 0 {
+                return Err(rquickjs::Error::Exception);
+            }
+            (8, endian_bytes(val, endian))
         },
         NumberKind::Float32 => {
             // Accept both int-tagged and float-tagged JS Numbers (e.g. 7 and 7.5).
@@ -1010,7 +1087,11 @@ fn read_buf<'js>(
             Value::new_big_int(ctx.clone(), value)?
         },
         NumberKind::BigUInt => {
-            return Err(Exception::throw_type(ctx, "Uint64 is not supported"));
+            let value = match endian {
+                Endian::Big => u64::from_be_bytes(bytes.try_into().unwrap()),
+                Endian::Little => u64::from_le_bytes(bytes.try_into().unwrap()),
+            };
+            BigInt::from_u64(ctx.clone(), value)?.into_value()
         },
         NumberKind::Float32 => {
             let value = match endian {
