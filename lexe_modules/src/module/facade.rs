@@ -383,7 +383,9 @@ fn install_create_require_factory(ctx: &Ctx<'_>) -> Result<()> {
 
 fn normalize_create_require_filename(filename: String) -> Result<String> {
     let filename = if filename.starts_with("file://") {
-        filename.trim_start_matches("file://").to_string()
+        super::resolver::file_url_to_path_and_query(&filename)
+            .map(|(p, _)| p)
+            .unwrap_or_else(|| filename.trim_start_matches("file://").to_string())
     } else {
         filename
     };
@@ -569,6 +571,24 @@ pub fn init_module_facade<'js>(
     Ok(module_ctor)
 }
 
+pub fn attach_process_get_builtin_module(ctx: &Ctx<'_>) -> Result<()> {
+    if let Ok(process) = ctx.globals().get::<_, Object>("process") {
+        process.set("getBuiltinModule", Func::from(get_builtin_module_impl))?;
+    }
+    Ok(())
+}
+
+fn get_builtin_module_impl<'js>(ctx: Ctx<'js>, id: Value<'js>) -> Result<Value<'js>> {
+    let Some(name_str) = id.as_string() else {
+        return Ok(Value::new_undefined(ctx));
+    };
+    let name = name_str.to_string()?;
+    if !is_builtin_request(&ctx, &name) {
+        return Ok(Value::new_undefined(ctx));
+    }
+    global_require_impl(ctx, name)
+}
+
 pub fn init_global_require(ctx: &Ctx<'_>) -> Result<()> {
     let facade = ctx.userdata::<RefCell<ModuleFacadeState>>().or_throw(ctx)?;
     let cache = facade.borrow().cache.clone();
@@ -586,6 +606,7 @@ pub fn init_global_require(ctx: &Ctx<'_>) -> Result<()> {
     module_require.prop("extensions", extensions)?;
 
     ctx.globals().set("require", require_fn)?;
+    attach_process_get_builtin_module(ctx)?;
     Ok(())
 }
 

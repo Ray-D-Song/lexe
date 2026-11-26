@@ -12,7 +12,7 @@ use crate::realpath::path_from_value;
 pub async fn read_file<'js>(
     ctx: Ctx<'js>,
     path: Value<'js>,
-    options: Opt<Either<String, ReadFileOptions>>,
+    options: Opt<Option<Either<String, ReadFileOptions>>>,
 ) -> Result<Value<'js>> {
     let path = path_from_value(&ctx, path)?;
     lexe_utils::permissions::ensure_fs_read(&ctx, &path)?;
@@ -26,7 +26,7 @@ pub async fn read_file<'js>(
 pub fn read_file_sync<'js>(
     ctx: Ctx<'js>,
     path: Value<'js>,
-    options: Opt<Either<String, ReadFileOptions>>,
+    options: Opt<Option<Either<String, ReadFileOptions>>>,
 ) -> Result<Value<'js>> {
     let path = path_from_value(&ctx, path)?;
     lexe_utils::permissions::ensure_fs_read(&ctx, &path)?;
@@ -37,12 +37,12 @@ pub fn read_file_sync<'js>(
 
 pub(crate) fn handle_read_file_bytes<'a>(
     ctx: &Ctx<'a>,
-    options: Opt<Either<String, ReadFileOptions>>,
+    options: Opt<Option<Either<String, ReadFileOptions>>>,
     bytes: Vec<u8>,
 ) -> Result<Value<'a>> {
     let buffer = Buffer(bytes);
 
-    if let Some(options) = options.0 {
+    if let Some(options) = options.0.flatten() {
         let encoding = match options {
             Either::Left(encoding) => Some(encoding),
             Either::Right(options) => options.encoding,

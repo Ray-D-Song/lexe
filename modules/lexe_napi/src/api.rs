@@ -3,7 +3,7 @@
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_void};
+use std::os::raw::{c_char, c_int, c_void};
 use std::ptr;
 use std::ptr::NonNull;
 
@@ -15,7 +15,7 @@ use crate::env::Env;
 use crate::external::{create_external_object, get_external_pointer, is_external_object};
 use crate::js_helpers::{
     napi_to_js_typedarray_type, new_float64, new_int32, new_int64, new_uint32, to_uint32,
-    try_buffer_from,
+    wrap_arraybuffer_as_buffer,
 };
 use crate::types::*;
 use crate::value::{
@@ -582,6 +582,66 @@ pub unsafe extern "C" fn napi_fatal_error(
     std::process::abort();
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn napi_fatal_exception(env: napi_env, err: napi_value) -> napi_status {
+    if env.is_null() || err.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let err_val = match crate::value::napi_to_value_dup(e, err) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        let ctx = e.ctx_ptr();
+        let global = unsafe { qjs::JS_GetGlobalObject(ctx) };
+        if !unsafe { qjs::JS_IsException(global) } {
+            let process = unsafe { qjs::JS_GetPropertyStr(ctx, global, c"process".as_ptr()) };
+            unsafe { qjs::JS_FreeValue(ctx, global) };
+            if unsafe { qjs::JS_IsObject(process) } {
+                let emit = unsafe { qjs::JS_GetPropertyStr(ctx, process, c"emit".as_ptr()) };
+                if unsafe { qjs::JS_IsFunction(ctx, emit) } {
+                    let event_name = "uncaughtException";
+                    let event = unsafe {
+                        qjs::JS_NewStringLen(
+                            ctx,
+                            event_name.as_ptr().cast(),
+                            event_name.len() as qjs::size_t,
+                        )
+                    };
+                    let mut argv = [event, err_val];
+                    let res = unsafe { qjs::JS_Call(ctx, emit, process, 2, argv.as_mut_ptr()) };
+                    unsafe {
+                        qjs::JS_FreeValue(ctx, event);
+                        qjs::JS_FreeValue(ctx, emit);
+                        qjs::JS_FreeValue(ctx, process);
+                    }
+                    if unsafe { qjs::JS_IsException(res) } {
+                        let exc = unsafe { qjs::JS_GetException(ctx) };
+                        unsafe { qjs::JS_FreeValue(ctx, err_val) };
+                        e.set_pending_exception(exc);
+                        return napi_status::napi_ok;
+                    }
+                    let handled = unsafe { qjs::JS_ToBool(ctx, res) } > 0;
+                    unsafe { qjs::JS_FreeValue(ctx, res) };
+                    if handled {
+                        unsafe { qjs::JS_FreeValue(ctx, err_val) };
+                        return napi_status::napi_ok;
+                    }
+                    e.set_pending_exception(err_val);
+                    return napi_status::napi_ok;
+                }
+                unsafe { qjs::JS_FreeValue(ctx, emit) };
+            } else if unsafe { qjs::JS_IsException(process) } {
+                let exc = unsafe { qjs::JS_GetException(ctx) };
+                unsafe { qjs::JS_FreeValue(ctx, exc) };
+            }
+            unsafe { qjs::JS_FreeValue(ctx, process) };
+        }
+        e.set_pending_exception(err_val);
+        napi_status::napi_ok
+    })
+}
+
 // --- Primitives ---
 
 #[no_mangle]
@@ -1030,6 +1090,58 @@ pub unsafe extern "C" fn napi_get_value_string_latin1(
     })
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_string_utf16(
+    env: napi_env,
+    value: napi_value,
+    buf: *mut u16,
+    bufsize: usize,
+    result: *mut usize,
+) -> napi_status {
+    if env.is_null() || value.is_null() || (buf.is_null() && result.is_null()) {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let val = match crate::value::napi_to_value(e, value) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        let ctx = e.ctx_ptr();
+        if !unsafe { qjs::JS_IsString(val) } {
+            return napi_status::napi_string_expected;
+        }
+        let mut len: qjs::size_t = 0;
+        let ptr = unsafe { qjs::JS_ToCStringLenUTF16(ctx, &mut len, val) };
+        if ptr.is_null() {
+            return e.status_from_throw();
+        }
+        let total_units = len as usize;
+        let written = if buf.is_null() {
+            total_units
+        } else if bufsize > 0 {
+            let copy_n = total_units.min(bufsize - 1);
+            unsafe {
+                if copy_n > 0 {
+                    ptr::copy_nonoverlapping(ptr, buf, copy_n);
+                }
+                *buf.add(copy_n) = 0;
+            }
+            copy_n
+        } else {
+            0
+        };
+        if !result.is_null() {
+            unsafe {
+                *result = written;
+            }
+        }
+        unsafe {
+            qjs::JS_FreeCStringUTF16(ctx, ptr);
+        }
+        napi_status::napi_ok
+    })
+}
+
 // --- typeof ---
 
 #[no_mangle]
@@ -1079,6 +1191,119 @@ pub unsafe extern "C" fn napi_typeof(
     })
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn napi_is_array(
+    env: napi_env,
+    value: napi_value,
+    result: *mut bool,
+) -> napi_status {
+    if env.is_null() || value.is_null() || result.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let val = match crate::value::napi_to_value(e, value) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        unsafe {
+            *result = qjs::JS_IsArray(val);
+        }
+        napi_status::napi_ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_is_buffer(
+    env: napi_env,
+    value: napi_value,
+    result: *mut bool,
+) -> napi_status {
+    if env.is_null() || value.is_null() || result.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let val = match crate::value::napi_to_value(e, value) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        let ctx = e.ctx_ptr();
+        let global = unsafe { qjs::JS_GetGlobalObject(ctx) };
+        if unsafe { qjs::JS_IsException(global) } {
+            return e.status_from_throw();
+        }
+        let buf_ctor = unsafe { qjs::JS_GetPropertyStr(ctx, global, c"Buffer".as_ptr()) };
+        unsafe { qjs::JS_FreeValue(ctx, global) };
+        let is_buf = if unsafe { qjs::JS_IsFunction(ctx, buf_ctor) || qjs::JS_IsObject(buf_ctor) } {
+            let rc = unsafe { qjs::JS_IsInstanceOf(ctx, val, buf_ctor) };
+            if rc < 0 {
+                let exc = unsafe { qjs::JS_GetException(ctx) };
+                unsafe { qjs::JS_FreeValue(ctx, exc) };
+                false
+            } else {
+                rc > 0
+            }
+        } else {
+            if unsafe { qjs::JS_IsException(buf_ctor) } {
+                let exc = unsafe { qjs::JS_GetException(ctx) };
+                unsafe { qjs::JS_FreeValue(ctx, exc) };
+            }
+            false
+        };
+        unsafe {
+            qjs::JS_FreeValue(ctx, buf_ctor);
+            *result = is_buf;
+        }
+        napi_status::napi_ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_is_error(
+    env: napi_env,
+    value: napi_value,
+    result: *mut bool,
+) -> napi_status {
+    if env.is_null() || value.is_null() || result.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let val = match crate::value::napi_to_value(e, value) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        unsafe {
+            *result = qjs::JS_IsError(val);
+        }
+        napi_status::napi_ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_strict_equals(
+    env: napi_env,
+    lhs: napi_value,
+    rhs: napi_value,
+    result: *mut bool,
+) -> napi_status {
+    if env.is_null() || lhs.is_null() || rhs.is_null() || result.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let lhs_val = match crate::value::napi_to_value(e, lhs) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        let rhs_val = match crate::value::napi_to_value(e, rhs) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        unsafe {
+            *result = qjs::JS_IsStrictEqual(e.ctx_ptr(), lhs_val, rhs_val);
+        }
+        napi_status::napi_ok
+    })
+}
+
 // --- Objects / arrays ---
 
 #[no_mangle]
@@ -1109,6 +1334,37 @@ pub unsafe extern "C" fn napi_create_array(env: napi_env, result: *mut napi_valu
         }
     });
     napi_status::napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_array_with_length(
+    env: napi_env,
+    length: usize,
+    result: *mut napi_value,
+) -> napi_status {
+    if env.is_null() || result.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let ctx = e.ctx_ptr();
+        let arr = unsafe { qjs::JS_NewArray(ctx) };
+        if unsafe { qjs::JS_IsException(arr) } {
+            return e.status_from_throw();
+        }
+        let len_val = if length <= (1 << 30) {
+            new_int32(length as i32)
+        } else {
+            new_float64(length as f64)
+        };
+        if unsafe { qjs::JS_SetPropertyStr(ctx, arr, c"length".as_ptr(), len_val) } < 0 {
+            unsafe { qjs::JS_FreeValue(ctx, arr) };
+            return e.status_from_throw();
+        }
+        unsafe {
+            *result = value_to_napi_owned(e, arr);
+        }
+        napi_status::napi_ok
+    })
 }
 
 #[no_mangle]
@@ -2230,23 +2486,188 @@ pub unsafe extern "C" fn napi_get_arraybuffer_info(
     })
 }
 
+fn create_owned_buffer(
+    e: &mut Env,
+    length: usize,
+    copy_from: Option<*const c_void>,
+    out_data: *mut *mut c_void,
+    result: *mut napi_value,
+) -> napi_status {
+    let ctx = e.ctx_ptr();
+    let layout = match std::alloc::Layout::from_size_align(length.max(1), 1) {
+        Ok(l) => l,
+        Err(_) => return napi_status::napi_invalid_arg,
+    };
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+    if ptr.is_null() {
+        return napi_status::napi_generic_failure;
+    }
+    if let Some(src) = copy_from {
+        if length > 0 {
+            unsafe {
+                ptr::copy_nonoverlapping(src as *const u8, ptr, length);
+            }
+        }
+    }
+    let ab = unsafe {
+        qjs::JS_NewArrayBuffer(
+            ctx,
+            ptr,
+            length as qjs::size_t,
+            Some(arraybuffer_free),
+            layout.size() as *mut c_void,
+            false,
+        )
+    };
+    if unsafe { qjs::JS_IsException(ab) } {
+        unsafe {
+            arraybuffer_free(
+                ptr::null_mut(),
+                layout.size() as *mut c_void,
+                ptr as *mut c_void,
+            );
+        }
+        return e.status_from_throw();
+    }
+    let buf = unsafe { wrap_arraybuffer_as_buffer(ctx, ab) };
+    if unsafe { qjs::JS_IsException(buf) } {
+        return e.status_from_throw();
+    }
+    if !out_data.is_null() {
+        unsafe {
+            *out_data = ptr as *mut c_void;
+        }
+    }
+    unsafe {
+        *result = value_to_napi_owned(e, buf);
+    }
+    napi_status::napi_ok
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_buffer(
+    env: napi_env,
+    length: usize,
+    data: *mut *mut c_void,
+    result: *mut napi_value,
+) -> napi_status {
+    if env.is_null() || result.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| create_owned_buffer(e, length, None, data, result))
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn napi_create_buffer_copy(
     env: napi_env,
     length: usize,
     data: *const c_void,
+    result_data: *mut *mut c_void,
     result: *mut napi_value,
 ) -> napi_status {
-    if env.is_null() || data.is_null() || result.is_null() {
+    if env.is_null() || result.is_null() || (length > 0 && data.is_null()) {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        create_owned_buffer(e, length, Some(data), result_data, result)
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_create_external_buffer(
+    env: napi_env,
+    length: usize,
+    data: *mut c_void,
+    finalize_cb: napi_finalize,
+    finalize_hint: *mut c_void,
+    result: *mut napi_value,
+) -> napi_status {
+    if env.is_null() || result.is_null() || (length > 0 && data.is_null()) {
         return napi_status::napi_invalid_arg;
     }
     with_env(env, |e| {
         let ctx = e.ctx_ptr();
-        let slice = unsafe { std::slice::from_raw_parts(data as *const u8, length) };
-        let u8arr = unsafe { qjs::JS_NewUint8ArrayCopy(ctx, slice.as_ptr(), length as u64) };
-        let buf = unsafe { try_buffer_from(ctx, u8arr) };
+        let ab = unsafe {
+            qjs::JS_NewArrayBuffer(
+                ctx,
+                data as *mut u8,
+                length as qjs::size_t,
+                None,
+                ptr::null_mut(),
+                false,
+            )
+        };
+        if unsafe { qjs::JS_IsException(ab) } {
+            return e.status_from_throw();
+        }
+        if finalize_cb.is_some()
+            && !e
+                .finalizers
+                .add(ctx, ab, data, finalize_cb, finalize_hint, e.as_napi_env())
+        {
+            unsafe { qjs::JS_FreeValue(ctx, ab) };
+            return napi_status::napi_generic_failure;
+        }
+        let buf = unsafe { wrap_arraybuffer_as_buffer(ctx, ab) };
+        if unsafe { qjs::JS_IsException(buf) } {
+            return e.status_from_throw();
+        }
         unsafe {
             *result = value_to_napi_owned(e, buf);
+        }
+        napi_status::napi_ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_buffer_info(
+    env: napi_env,
+    value: napi_value,
+    data: *mut *mut c_void,
+    length: *mut usize,
+) -> napi_status {
+    if env.is_null() || value.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let val = match crate::value::napi_to_value(e, value) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        let ctx = e.ctx_ptr();
+        let mut byte_offset: qjs::size_t = 0;
+        let mut byte_length: qjs::size_t = 0;
+        let mut bytes_per_element: qjs::size_t = 0;
+        let ab = unsafe {
+            qjs::JS_GetTypedArrayBuffer(
+                ctx,
+                val,
+                &mut byte_offset,
+                &mut byte_length,
+                &mut bytes_per_element,
+            )
+        };
+        if unsafe { qjs::JS_IsException(ab) } {
+            let exc = unsafe { qjs::JS_GetException(ctx) };
+            unsafe { qjs::JS_FreeValue(ctx, exc) };
+            return napi_status::napi_invalid_arg;
+        }
+        let mut ab_len: qjs::size_t = 0;
+        let base = unsafe { qjs::JS_GetArrayBuffer(ctx, &mut ab_len, ab) };
+        unsafe { qjs::JS_FreeValue(ctx, ab) };
+        if base.is_null() {
+            return napi_status::napi_invalid_arg;
+        }
+        let ptr = unsafe { base.add(byte_offset as usize) };
+        if !data.is_null() {
+            unsafe {
+                *data = ptr as *mut c_void;
+            }
+        }
+        if !length.is_null() {
+            unsafe {
+                *length = byte_length as usize;
+            }
         }
         napi_status::napi_ok
     })
@@ -2372,6 +2793,86 @@ pub unsafe extern "C" fn napi_get_value_bigint_int64(
             if !lossless.is_null() {
                 *lossless = true;
             }
+        }
+        napi_status::napi_ok
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn napi_get_value_bigint_words(
+    env: napi_env,
+    value: napi_value,
+    sign_bit: *mut c_int,
+    word_count: *mut usize,
+    words: *mut u64,
+) -> napi_status {
+    if env.is_null() || value.is_null() || word_count.is_null() {
+        return napi_status::napi_invalid_arg;
+    }
+    with_env(env, |e| {
+        let val = match crate::value::napi_to_value(e, value) {
+            Some(v) => v,
+            None => return napi_status::napi_invalid_arg,
+        };
+        let ctx = e.ctx_ptr();
+        if !unsafe { qjs::JS_IsBigInt(val) } {
+            return napi_status::napi_bigint_expected;
+        }
+        let atom = unsafe { qjs::JS_NewAtom(ctx, c"toString".as_ptr()) };
+        let radix = new_int32(16);
+        let mut args = [radix];
+        let str_val = unsafe { qjs::JS_Invoke(ctx, val, atom, 1, args.as_mut_ptr()) };
+        unsafe { qjs::JS_FreeAtom(ctx, atom) };
+        if unsafe { qjs::JS_IsException(str_val) } {
+            return e.status_from_throw();
+        }
+        let mut hex_len: qjs::size_t = 0;
+        let hex_ptr = unsafe { qjs::JS_ToCStringLen2(ctx, &mut hex_len, str_val, false) };
+        if hex_ptr.is_null() {
+            unsafe { qjs::JS_FreeValue(ctx, str_val) };
+            return e.status_from_throw();
+        }
+        let hex_str = unsafe {
+            std::str::from_utf8(std::slice::from_raw_parts(
+                hex_ptr as *const u8,
+                hex_len as usize,
+            ))
+        }
+        .unwrap_or("0");
+        let (sign, digits) = if let Some(rest) = hex_str.strip_prefix('-') {
+            (1 as c_int, rest)
+        } else {
+            (0 as c_int, hex_str)
+        };
+        let mut parsed_words = Vec::new();
+        if digits != "0" && !digits.is_empty() {
+            for chunk in digits.as_bytes().rchunks(16) {
+                let chunk_str = std::str::from_utf8(chunk).unwrap_or("0");
+                let word = u64::from_str_radix(chunk_str, 16).unwrap_or(0);
+                parsed_words.push(word);
+            }
+        }
+        unsafe {
+            qjs::JS_FreeCString(ctx, hex_ptr);
+            qjs::JS_FreeValue(ctx, str_val);
+        }
+        if !sign_bit.is_null() {
+            unsafe {
+                *sign_bit = sign;
+            }
+        }
+        let total_words = parsed_words.len();
+        if !words.is_null() {
+            let cap = unsafe { *word_count };
+            let copy_n = cap.min(total_words);
+            if copy_n > 0 {
+                unsafe {
+                    ptr::copy_nonoverlapping(parsed_words.as_ptr(), words, copy_n);
+                }
+            }
+        }
+        unsafe {
+            *word_count = total_words;
         }
         napi_status::napi_ok
     })

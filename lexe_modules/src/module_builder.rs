@@ -88,6 +88,7 @@ impl ModuleBuilder {
         }
     }
 
+    #[cfg_attr(not(feature = "sqlite"), allow(unused_variables))]
     pub fn with_config(config: ModuleBuilderConfig) -> Self {
         let mut builder = Self::new();
 
@@ -201,7 +202,10 @@ impl ModuleBuilder {
         }
         #[cfg(feature = "path")]
         {
-            builder = builder.with_module(crate::modules::path::PathModule);
+            builder = builder
+                .with_module(crate::modules::path::PathModule)
+                .with_module(crate::modules::path::PathPosixModule)
+                .with_module(crate::modules::path::PathWin32Module);
         }
         #[cfg(feature = "perf-hooks")]
         {
@@ -213,6 +217,7 @@ impl ModuleBuilder {
         {
             builder = builder
                 .with_global(crate::modules::process::init)
+                .with_global(crate::module::attach_process_get_builtin_module)
                 .with_module(crate::modules::process::ProcessModule);
         }
         #[cfg(feature = "stream-web")]
@@ -294,6 +299,14 @@ impl ModuleBuilder {
             builder = builder.with_node_only_module(crate::modules::sqlite::SqliteModule);
         } else {
             builder = builder.with_disabled_node_only_name("sqlite");
+        }
+        #[cfg(feature = "sea")]
+        {
+            builder = builder.with_node_only_module(crate::modules::sea::SeaModule);
+        }
+        #[cfg(feature = "ffi")]
+        {
+            builder = builder.with_node_only_module(crate::modules::ffi::FfiModule);
         }
 
         builder

@@ -39,11 +39,12 @@ pub async fn symlink<'js>(
     ctx: Ctx<'js>,
     target: String,
     path: String,
-    type_value: Opt<String>,
+    type_value: Opt<Option<String>>,
 ) -> Result<()> {
     let path_clone = path.clone();
+    let type_value = type_value.0.flatten();
 
-    tokio::task::spawn_blocking(move || symlink_blocking(&target, &path_clone, type_value.0))
+    tokio::task::spawn_blocking(move || symlink_blocking(&target, &path_clone, type_value))
         .await
         .map_err(io::Error::other)?
         .or_throw_msg(&ctx, &["Can't create symlink \"", &path, "\""].concat())
@@ -53,8 +54,8 @@ pub fn symlink_sync<'js>(
     ctx: Ctx<'js>,
     target: String,
     path: String,
-    type_value: Opt<String>,
+    type_value: Opt<Option<String>>,
 ) -> Result<()> {
-    symlink_blocking(&target, &path, type_value.0)
+    symlink_blocking(&target, &path, type_value.0.flatten())
         .or_throw_msg(&ctx, &["Can't create symlink \"", &path, "\""].concat())
 }

@@ -151,4 +151,17 @@ describe("TextEncoder", () => {
     );
     expect(new TextDecoder().decode(u8Array40)).toEqual(hono);
   });
+
+  it("handles undefined label/options like WHATWG default utf-8 and coerces null to 'null'", () => {
+    const bytes = new TextEncoder().encode("hello-utf8");
+    const dec1 = new TextDecoder(undefined);
+    expect(dec1.encoding).toBe("utf-8");
+    expect(dec1.decode(bytes)).toBe("hello-utf8");
+
+    const dec2 = new TextDecoder(undefined, undefined);
+    expect(dec2.encoding).toBe("utf-8");
+    expect(dec2.decode(bytes)).toBe("hello-utf8");
+
+    expect(() => new TextDecoder(null as any)).toThrow(RangeError);
+  });
 });

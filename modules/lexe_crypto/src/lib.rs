@@ -20,10 +20,18 @@ compile_error!("Features `crypto-openssl` and `crypto-graviola` are mutually exc
 #[cfg(all(feature = "crypto-ring", feature = "crypto-graviola"))]
 compile_error!("Features `crypto-ring` and `crypto-graviola` are mutually exclusive");
 
+#[cfg(feature = "_rustcrypto")]
+mod cipher;
+#[cfg(feature = "_rustcrypto")]
+mod classic;
 mod crc32;
 mod hash;
+#[cfg(feature = "_rustcrypto")]
+mod key_object;
 mod rsa;
 mod subtle;
+#[cfg(feature = "_rustcrypto")]
+mod x509;
 
 mod provider;
 
@@ -47,7 +55,7 @@ use rquickjs::{
     function::{Constructor, Opt},
     module::{Declarations, Exports, ModuleDef},
     prelude::{Func, Rest},
-    Class, Ctx, Error, Exception, Function, IntoJs, Null, Object, Result, Value,
+    Array, Class, Ctx, Error, Exception, Function, IntoJs, Null, Object, Result, Value,
 };
 use subtle::{
     subtle_decrypt, subtle_derive_bits, subtle_derive_key, subtle_digest, subtle_encrypt,
@@ -55,6 +63,15 @@ use subtle::{
     subtle_verify, subtle_wrap_key, CryptoKey, SubtleCrypto,
 };
 
+#[cfg(feature = "_rustcrypto")]
+use self::{
+    cipher::{create_cipheriv, create_decipheriv, Cipheriv, Decipheriv},
+    classic::{
+        create_ecdh, diffie_hellman, hkdf, hkdf_sync, sign, timing_safe_equal, verify, ECDH,
+    },
+    key_object::{create_private_key, create_public_key, create_secret_key, KeyObject},
+    x509::X509Certificate,
+};
 use self::{
     crc32::{Crc32, Crc32c},
     hash::{Hash, HashAlgorithm, Hmac},
@@ -283,6 +300,44 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
+fn str_list_to_array<'js>(ctx: Ctx<'js>, items: &[&str]) -> Result<Array<'js>> {
+    let arr = Array::new(ctx)?;
+    for (idx, &item) in items.iter().enumerate() {
+        arr.set(idx, item)?;
+    }
+    Ok(arr)
+}
+
+fn get_hashes<'js>(ctx: Ctx<'js>) -> Result<Array<'js>> {
+    str_list_to_array(ctx, &["md5", "sha1", "sha256", "sha384", "sha512"])
+}
+
+fn get_ciphers<'js>(ctx: Ctx<'js>) -> Result<Array<'js>> {
+    #[cfg(feature = "_rustcrypto")]
+    const CIPHERS: &[&str] = &[
+        "aes-128-cbc",
+        "aes-192-cbc",
+        "aes-256-cbc",
+        "aes-128-ctr",
+        "aes-192-ctr",
+        "aes-256-ctr",
+        "aes-128-gcm",
+        "aes-192-gcm",
+        "aes-256-gcm",
+    ];
+    #[cfg(not(feature = "_rustcrypto"))]
+    const CIPHERS: &[&str] = &[];
+    str_list_to_array(ctx, CIPHERS)
+}
+
+fn get_curves<'js>(ctx: Ctx<'js>) -> Result<Array<'js>> {
+    #[cfg(feature = "_rustcrypto")]
+    const CURVES: &[&str] = &["prime256v1", "secp384r1", "secp521r1"];
+    #[cfg(not(feature = "_rustcrypto"))]
+    const CURVES: &[&str] = &[];
+    str_list_to_array(ctx, CURVES)
+}
+
 pub struct CryptoModule;
 
 impl ModuleDef for CryptoModule {
@@ -298,8 +353,32 @@ impl ModuleDef for CryptoModule {
         declare.declare("randomFill")?;
         declare.declare("getRandomValues")?;
         declare.declare("publicEncrypt")?;
+        declare.declare("getHashes")?;
+        declare.declare("getCiphers")?;
+        declare.declare("getCurves")?;
         declare.declare("constants")?;
         declare.declare("subtle")?;
+
+        #[cfg(feature = "_rustcrypto")]
+        {
+            declare.declare("timingSafeEqual")?;
+            declare.declare("hkdf")?;
+            declare.declare("hkdfSync")?;
+            declare.declare("KeyObject")?;
+            declare.declare("createSecretKey")?;
+            declare.declare("createPrivateKey")?;
+            declare.declare("createPublicKey")?;
+            declare.declare("Cipheriv")?;
+            declare.declare("Decipheriv")?;
+            declare.declare("createCipheriv")?;
+            declare.declare("createDecipheriv")?;
+            declare.declare("ECDH")?;
+            declare.declare("createECDH")?;
+            declare.declare("diffieHellman")?;
+            declare.declare("sign")?;
+            declare.declare("verify")?;
+            declare.declare("X509Certificate")?;
+        }
 
         for algorithm in HashAlgorithm::iter() {
             declare.declare(algorithm.class_name())?;
@@ -345,7 +424,32 @@ impl ModuleDef for CryptoModule {
             default.set("randomFill", Func::from(random_fill))?;
             default.set("getRandomValues", Func::from(get_random_values))?;
             default.set("publicEncrypt", Func::from(rsa::public_encrypt))?;
+            default.set("getHashes", Func::from(get_hashes))?;
+            default.set("getCiphers", Func::from(get_ciphers))?;
+            default.set("getCurves", Func::from(get_curves))?;
             default.set("constants", constants)?;
+
+            #[cfg(feature = "_rustcrypto")]
+            {
+                Class::<KeyObject>::define(default)?;
+                Class::<Cipheriv>::define(default)?;
+                Class::<Decipheriv>::define(default)?;
+                Class::<ECDH>::define(default)?;
+                Class::<X509Certificate>::define(default)?;
+
+                default.set("timingSafeEqual", Func::from(timing_safe_equal))?;
+                default.set("hkdf", Func::from(hkdf))?;
+                default.set("hkdfSync", Func::from(hkdf_sync))?;
+                default.set("createSecretKey", Func::from(create_secret_key))?;
+                default.set("createPrivateKey", Func::from(create_private_key))?;
+                default.set("createPublicKey", Func::from(create_public_key))?;
+                default.set("createCipheriv", Func::from(create_cipheriv))?;
+                default.set("createDecipheriv", Func::from(create_decipheriv))?;
+                default.set("createECDH", Func::from(create_ecdh))?;
+                default.set("diffieHellman", Func::from(diffie_hellman))?;
+                default.set("sign", Func::from(sign))?;
+                default.set("verify", Func::from(verify))?;
+            }
             // Node exposes top-level `subtle` as an alias of `webcrypto.subtle`.
             default.set("subtle", subtle)?;
             default.set("crypto", crypto.clone())?;

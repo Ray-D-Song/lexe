@@ -13,9 +13,15 @@ it("url() returns undefined and named/default share the same function", () => {
   expect(defaultImport.default?.url ?? defaultImport.url).toBe(defaultImport.url);
 });
 
-it("does not expose Session or open/close protocol APIs", () => {
-  expect("Session" in defaultImport).toBe(false);
-  expect(defaultImport.Session).toBeUndefined();
+it("exposes a Session shim that reports the unavailable Inspector protocol", async () => {
+  expect(typeof defaultImport.Session).toBe("function");
+  const session = new defaultImport.Session();
+  session.connect();
+  const error = await new Promise<any>((resolve) => session.post("Runtime.enable", resolve));
+  expect(error.code).toBe("ERR_INSPECTOR_NOT_AVAILABLE");
+  await expect(session.post("Runtime.enable")).rejects.toThrow("not available");
+  session.disconnect();
+  await expect(session.post("Runtime.enable")).rejects.toThrow("not connected");
   expect(defaultImport.open).toBeUndefined();
   expect(defaultImport.close).toBeUndefined();
   expect(defaultImport.waitForDebugger).toBeUndefined();

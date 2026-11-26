@@ -116,9 +116,13 @@ impl<'js> IntoJs<'js> for ReadDir {
     }
 }
 
-pub async fn read_dir(ctx: Ctx<'_>, mut path: String, options: Opt<Object<'_>>) -> Result<ReadDir> {
+pub async fn read_dir(
+    ctx: Ctx<'_>,
+    mut path: String,
+    options: Opt<Option<Object<'_>>>,
+) -> Result<ReadDir> {
     let (with_file_types, skip_root_pos, mut directory_walker) =
-        process_options_and_create_directory_walker(&mut path, options);
+        process_options_and_create_directory_walker(&mut path, Opt(options.0.flatten()));
 
     let mut items = Vec::with_capacity(64);
 
@@ -229,9 +233,13 @@ pub fn readdir_callback<'js>(ctx: Ctx<'js>, path: String, args: Rest<Value<'js>>
     Ok(())
 }
 
-pub fn read_dir_sync(ctx: Ctx<'_>, mut path: String, options: Opt<Object<'_>>) -> Result<ReadDir> {
+pub fn read_dir_sync(
+    ctx: Ctx<'_>,
+    mut path: String,
+    options: Opt<Option<Object<'_>>>,
+) -> Result<ReadDir> {
     let (with_file_types, skip_root_pos, mut directory_walker) =
-        process_options_and_create_directory_walker(&mut path, options);
+        process_options_and_create_directory_walker(&mut path, Opt(options.0.flatten()));
 
     let mut items = Vec::with_capacity(64);
     loop {

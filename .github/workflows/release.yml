@@ -133,6 +133,9 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/download-artifact@v4
         with:
           path: release
@@ -143,12 +146,20 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
+          awk -v version="${RELEASE_TAG#v}" '
+            index($0, "## [" version "]") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > release/RELEASE_NOTES.md
+          test -s release/RELEASE_NOTES.md
           cd release
           sha256sum lexe-* > SHA256SUMS
           prerelease=()
           [[ "$RELEASE_TAG" == *-* ]] && prerelease+=(--prerelease)
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --generate-notes "${prerelease[@]}"
+            gh release create "$RELEASE_TAG" --verify-tag --notes-file RELEASE_NOTES.md "${prerelease[@]}"
+          else
+            gh release edit "$RELEASE_TAG" --notes-file RELEASE_NOTES.md
           fi
           gh release upload "$RELEASE_TAG" lexe-* SHA256SUMS --clobber
 

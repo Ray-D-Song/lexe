@@ -4,6 +4,19 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-26
+
+- Added Single Executable Application assets and the `node:sea` API (`isSea`, `getAssetKeys`, `getAsset`, `getRawAsset`, and `getAssetAsBlob`). `lexe compile --executable` now accepts `--sea-config`, `--asset`, and `--assets-dir`, embeds compressed assets, and preserves application arguments and entrypoint metadata.
+- Added `node:ffi`, backed by libffi, with dynamic library loading, typed native calls, JavaScript callbacks, pointer access, and copied or shared ArrayBuffer views. Native FFI support is enabled in default builds.
+- Expanded native addon compatibility with N-API thread-safe functions, async cleanup hooks, callback and finalizer handling, dynamic symbol lookup, and OpenTUI native-library support.
+- Added classic Crypto APIs, including streaming AES ciphers, HKDF, KeyObject import/export, signatures, ECDH key generation and shared secrets, timing-safe comparison, and X.509 certificate parsing and verification.
+- Added `Intl.Collator`, `Intl.NumberFormat`, `Intl.ListFormat`, and `Intl.Segmenter`, including UTF-16 segment indices, and improved date/time formatting.
+- Improved ESM/CommonJS loading, synchronous module hooks, file URLs, package resolution, and `import.meta` in source and compiled applications.
+- Added an Inspector `Session` compatibility shim that reports unavailable protocol operations, and `util.isDeepStrictEqual` for structured values.
+- Fixed filesystem numeric open flags, mode parsing, descriptor handling, and Node-style errors; added stream consumers and improved readable/writable lifecycle, encoding, backpressure, and callbacks.
+- Fixed HTTP response header handling and retained keep-alive socket shutdown, worker evaluation and termination promises, child-process events, TTY output/raw mode, TextDecoder input handling, and zlib compatibility. Increased the QuickJS BigInt limit to 16 Mi-bits.
+- Validated a macOS arm64 Release build of OpenCode using embedded native assets, including cold-start model listing and interactive PTY TUI rendering and clean shutdown. This validation does not cover Web UI pages or model inference.
+
 ## [0.1.3] - 2026-11-25
 
 - Completed full WHATWG Streams and Compression Streams parity (`node:stream/web`, `STREAMS`, `COMPRESSION` now `✔︎` in `docs/compatibility.md`, reducing `⚠️` items from 27 to 24):

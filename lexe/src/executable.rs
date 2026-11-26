@@ -107,6 +107,10 @@ pub struct CompileArgs {
     pub platforms: Vec<Platform>,
     pub create_executable: bool,
     pub runtime_dir: Option<PathBuf>,
+    pub sea_config: Option<PathBuf>,
+    pub assets: Vec<(String, PathBuf)>,
+    pub assets_dir: Option<PathBuf>,
+    pub sea_mode: bool,
 }
 
 fn take_flag_value(
@@ -135,12 +139,21 @@ pub fn parse_compile_args(args: &[String]) -> Result<CompileArgs, String> {
     let mut platforms: Vec<Platform> = Vec::new();
     let mut create_executable = false;
     let mut runtime_dir: Option<PathBuf> = None;
+    let mut sea_config: Option<PathBuf> = None;
+    let mut assets: Vec<(String, PathBuf)> = Vec::new();
+    let mut assets_dir: Option<PathBuf> = None;
+    let mut sea_mode = false;
 
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
         if arg == "--executable" {
             create_executable = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--sea" {
+            sea_mode = true;
             i += 1;
             continue;
         }
@@ -178,6 +191,29 @@ pub fn parse_compile_args(args: &[String]) -> Result<CompileArgs, String> {
                     let val = take_flag_value(args, &mut i, flag, inline)?;
                     runtime_dir = Some(PathBuf::from(val));
                 },
+                "--sea-config" => {
+                    let val = take_flag_value(args, &mut i, flag, inline)?;
+                    sea_config = Some(PathBuf::from(val));
+                    sea_mode = true;
+                },
+                "--asset" => {
+                    let val = take_flag_value(args, &mut i, flag, inline)?;
+                    let Some((key, file_path)) = val.split_once('=') else {
+                        return Err(format!(
+                            "--asset must be formatted as <key>=<path>, got '{val}'"
+                        ));
+                    };
+                    if key.is_empty() || file_path.is_empty() {
+                        return Err(format!("--asset requires non-empty key and path: '{val}'"));
+                    }
+                    assets.push((key.to_string(), PathBuf::from(file_path)));
+                    sea_mode = true;
+                },
+                "--assets-dir" => {
+                    let val = take_flag_value(args, &mut i, flag, inline)?;
+                    assets_dir = Some(PathBuf::from(val));
+                    sea_mode = true;
+                },
                 other => {
                     return Err(format!("Unknown compile option: {other}"));
                 },
@@ -200,11 +236,25 @@ pub fn parse_compile_args(args: &[String]) -> Result<CompileArgs, String> {
         i += 1;
     }
 
-    let input = input.ok_or_else(|| "compile: input filename is required.".to_string())?;
-
-    if !create_executable && (!platforms.is_empty() || runtime_dir.is_some()) {
-        return Err("compile: --platform and --runtime-dir require --executable".to_string());
+    if !create_executable
+        && (!platforms.is_empty() || runtime_dir.is_some() || sea_mode || sea_config.is_some())
+    {
+        return Err(
+            "compile: --platform, --runtime-dir, --sea, --sea-config, --asset, and --assets-dir require --executable".to_string(),
+        );
     }
+
+    if let Some(ref cfg_path) = sea_config {
+        let cfg = load_sea_config(cfg_path)?;
+        if input.is_none() {
+            input = cfg.main;
+        }
+        if output.is_none() {
+            output = cfg.output;
+        }
+    }
+
+    let input = input.ok_or_else(|| "compile: input filename is required.".to_string())?;
 
     Ok(CompileArgs {
         input,
@@ -213,7 +263,165 @@ pub fn parse_compile_args(args: &[String]) -> Result<CompileArgs, String> {
         platforms,
         create_executable,
         runtime_dir,
+        sea_config,
+        assets,
+        assets_dir,
+        sea_mode,
     })
+}
+
+struct ParsedSeaConfig {
+    main: Option<PathBuf>,
+    output: Option<String>,
+    assets: Vec<(String, PathBuf)>,
+}
+
+fn resolve_sea_existing_path(cfg_dir: &Path, raw: &str) -> PathBuf {
+    let p = PathBuf::from(raw);
+    if p.is_absolute() || p.exists() {
+        return p;
+    }
+    let rel = cfg_dir.join(&p);
+    if rel.exists() {
+        return rel;
+    }
+    p
+}
+
+fn load_sea_config(path: &Path) -> Result<ParsedSeaConfig, String> {
+    use simd_json::prelude::{ValueAsObject, ValueAsScalar, ValueTryIntoObject};
+
+    let mut raw = fs::read(path)
+        .map_err(|e| format!("Failed to read SEA config '{}': {e}", path.display()))?;
+    let val = simd_json::to_owned_value(&mut raw)
+        .map_err(|e| format!("Invalid JSON in SEA config '{}': {e}", path.display()))?;
+    let obj = val
+        .try_into_object()
+        .map_err(|_| format!("SEA config '{}' must be a JSON object", path.display()))?;
+
+    let cfg_dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let main_raw = obj.get("main").and_then(|v| v.as_str().map(str::to_string));
+    let main_rel_to_cfg = main_raw
+        .as_deref()
+        .map(|m| !Path::new(m).is_absolute() && !Path::new(m).exists() && cfg_dir.join(m).exists())
+        .unwrap_or(false);
+
+    let main = main_raw
+        .as_deref()
+        .map(|m| resolve_sea_existing_path(cfg_dir, m));
+
+    let output = obj.get("output").and_then(|v| v.as_str()).map(|s| {
+        let p = Path::new(s);
+        if cfg_paths_should_join(p, main_rel_to_cfg) {
+            cfg_dir.join(p).to_string_lossy().into_owned()
+        } else {
+            s.to_string()
+        }
+    });
+
+    let mut assets = Vec::new();
+    if let Some(assets_val) = obj.get("assets") {
+        let assets_obj = assets_val.as_object().ok_or_else(|| {
+            format!(
+                "SEA config '{}' \"assets\" must be a JSON object",
+                path.display()
+            )
+        })?;
+        for (key, path_val) in assets_obj {
+            let Some(asset_path_raw) = path_val.as_str() else {
+                return Err(format!(
+                    "SEA config '{}' asset '{key}' path must be a string",
+                    path.display()
+                ));
+            };
+            assets.push((
+                key.clone(),
+                resolve_sea_existing_path(cfg_dir, asset_path_raw),
+            ));
+        }
+    }
+    assets.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Ok(ParsedSeaConfig {
+        main,
+        output,
+        assets,
+    })
+}
+
+fn cfg_paths_should_join(p: &Path, main_rel_to_cfg: bool) -> bool {
+    !p.is_absolute() && main_rel_to_cfg
+}
+
+fn collect_dir_assets_recursive(
+    base: &Path,
+    cur: &Path,
+    out: &mut Vec<(String, PathBuf)>,
+) -> Result<(), String> {
+    let entries = fs::read_dir(cur)
+        .map_err(|e| format!("Failed to read assets directory '{}': {e}", cur.display()))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|e| format!("Failed to read entry in '{}': {e}", cur.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_dir_assets_recursive(base, &path, out)?;
+        } else if path.is_file() {
+            let rel = path
+                .strip_prefix(base)
+                .map_err(|e| format!("Asset path error: {e}"))?;
+            let key = rel
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            out.push((key, path));
+        }
+    }
+    Ok(())
+}
+
+fn collect_sea_asset_bytes(args: &CompileArgs) -> Result<Vec<(String, Vec<u8>)>, ExecError> {
+    let mut entries: Vec<(String, PathBuf)> = Vec::new();
+    let mut upsert = |key: String, path: PathBuf| {
+        if let Some(existing) = entries.iter_mut().find(|(k, _)| *k == key) {
+            existing.1 = path;
+        } else {
+            entries.push((key, path));
+        }
+    };
+
+    if let Some(ref cfg_path) = args.sea_config {
+        let cfg = load_sea_config(cfg_path)?;
+        for (k, p) in cfg.assets {
+            upsert(k, p);
+        }
+    }
+
+    if let Some(ref dir) = args.assets_dir {
+        let mut dir_entries = Vec::new();
+        collect_dir_assets_recursive(dir, dir, &mut dir_entries)?;
+        dir_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (k, p) in dir_entries {
+            upsert(k, p);
+        }
+    }
+
+    for (k, p) in &args.assets {
+        upsert(k.clone(), p.clone());
+    }
+
+    let mut out = Vec::with_capacity(entries.len());
+    for (k, p) in entries {
+        let bytes = fs::read(&p)
+            .map_err(|e| format!("Failed to read SEA asset '{k}' from '{}': {e}", p.display()))?;
+        out.push((k, bytes));
+    }
+    Ok(out)
 }
 
 fn split_flag(arg: &str) -> Option<(&str, Option<&str>)> {
@@ -785,6 +993,12 @@ async fn resolve_runtime_binary(
 
 pub async fn run_compile_executable(args: &CompileArgs) -> Result<(), ExecError> {
     let compiled = compile_file_to_bytes(&args.input).await?;
+    let payload = if args.sea_mode {
+        let assets = collect_sea_asset_bytes(args)?;
+        lexe_sea::container::encode_sea_payload(&compiled, &assets, true)?
+    } else {
+        compiled
+    };
     let targets = resolve_executable_targets(args);
     let mut sha256sums_cache: Option<String> = None;
 
@@ -793,7 +1007,7 @@ pub async fn run_compile_executable(args: &CompileArgs) -> Result<(), ExecError>
             resolve_runtime_binary(platform, args.runtime_dir.as_deref(), &mut sha256sums_cache)
                 .await?;
 
-        inject_bytecode(platform, &runtime_binary, &compiled, &output_path)?;
+        inject_bytecode(platform, &runtime_binary, &payload, &output_path)?;
         println!(
             "Created executable ({}) -> {}",
             platform.as_str(),
@@ -911,7 +1125,55 @@ mod tests {
 
         assert!(parse_compile_args(&[]).is_err());
         assert!(parse_compile_args(&["app.js".into(), "-p".into(), "linux-x64".into()]).is_err());
+        assert!(parse_compile_args(&["app.js".into(), "--sea".into()]).is_err());
         assert!(parse_compile_args(&["app.js".into(), "--unknown".into()]).is_err());
+    }
+
+    #[test]
+    fn test_parse_sea_compile_args_and_config() {
+        let _guard = env_lock().blocking_lock();
+        let root = temp_test_dir("lexe-sea-cfg-parse");
+        let cfg_path = root.join("sea.json");
+        let entry_path = root.join("main.mjs");
+        let asset_path = root.join("hello.txt");
+        fs::write(&entry_path, b"console.log('hi');").unwrap();
+        fs::write(&asset_path, b"hello asset").unwrap();
+        fs::write(
+            &cfg_path,
+            r#"{
+              "main": "main.mjs",
+              "mainFormat": "module",
+              "output": "out/my-sea",
+              "disableExperimentalSEAWarning": true,
+              "assets": { "greeting.txt": "hello.txt" }
+            }"#,
+        )
+        .unwrap();
+
+        let parsed = parse_compile_args(&[
+            "--executable".into(),
+            "--sea-config".into(),
+            cfg_path.to_string_lossy().into_owned(),
+            "--asset".into(),
+            format!("extra={}", asset_path.display()),
+        ])
+        .unwrap();
+        assert!(parsed.sea_mode);
+        assert_eq!(parsed.input, entry_path);
+        assert_eq!(
+            parsed.output.as_deref(),
+            Some(root.join("out/my-sea").to_string_lossy().as_ref())
+        );
+
+        let collected = collect_sea_asset_bytes(&parsed).unwrap();
+        assert_eq!(
+            collected,
+            vec![
+                ("greeting.txt".to_string(), b"hello asset".to_vec()),
+                ("extra".to_string(), b"hello asset".to_vec()),
+            ]
+        );
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

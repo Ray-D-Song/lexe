@@ -12,7 +12,7 @@
 | node:cluster | ✔︎ | ✘ | Not implemented |
 | node:console | ✔︎ | ✔︎ | — |
 | node:constants | ✔︎ | ✔︎ | — |
-| node:crypto | ✔︎ | ✔︎⚠️ | Missing classic Cipher/Decipher, top-level Sign/Verify, `KeyObject`, X509, DH/ECDH, and KDF sync/async exports; depends on WebCrypto `subtle` ([details](#nodecrypto)) |
+| node:crypto | ✔︎ | ✔︎⚠️ | WebCrypto and partial classic ciphers, signatures, keys, X.509, ECDH, and HKDF; algorithm/backend limitations remain ([details](#nodecrypto)) |
 | node:dgram | ✔︎ | ✔︎ | — |
 | node:diagnostics_channel | ✔︎ | ✔︎ | — |
 | node:dns | ✔︎ | ✔︎ | — |
@@ -23,7 +23,7 @@
 | node:http | ✔︎ | ✔︎ | — |
 | node:http2 | ✔︎ | ✔︎ | Native HTTP/2 ([notes](#nodehttp2)) |
 | node:https | ✔︎ | ✔︎⚠️ | Inherits `node:tls` limitations; requires TLS feature build ([details](#nodehttps)) |
-| node:inspector | ✔︎ | ✔︎⚠️ | Stub exporting `url()` (`undefined`) only; no Inspector protocol or `Session` ([details](#nodeinspector)) |
+| node:inspector | ✔︎ | ✔︎⚠️ | `url()` returns `undefined`; `Session` shim reports unavailable protocol operations ([details](#nodeinspector)) |
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
 | node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
 | node:net | ✔︎ | ✔︎ | — |
@@ -35,7 +35,7 @@
 | node:readline | ✔︎ | ✔︎ | — |
 | node:readline/promises | ✔︎ | ✔︎ | — |
 | node:repl | ✔︎ | ✘ | Not implemented |
-| node:sea | ✔︎ | ✘ | Not implemented (`isSea`, `getAsset`, `getRawAsset`, `getAssetAsBlob`) |
+| node:sea | ✔︎ | ✔︎⚠️ | Asset APIs supported; Lexe uses its own compiled SEA container format |
 | node:sqlite | ✔︎ | ✔︎ | — |
 | node:stream | ✔︎ | ✔︎\* | JS polyfill (not native) |
 | node:stream/promises | ✔︎ | ✔︎\* | JS polyfill (not native) |
@@ -48,7 +48,7 @@
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎ | — |
 | node:util | ✔︎ | ✔︎⚠️ | Missing `parseArgs` and `transferableAbort*`; limited `TextDecoder` encodings ([details](#nodeutil-and-nodeutiltypes)) |
-| node:util/types | ✔︎ | ✔︎⚠️ | Missing `isWebAssemblyCompiledModule`; `isExternal`, `isKeyObject`, and `isCryptoKey` always return `false` ([details](#nodeutil-and-nodeutiltypes)) |
+| node:util/types | ✔︎ | ✔︎⚠️ | Missing `isWebAssemblyCompiledModule`; native object checks depend on the corresponding subsystem ([details](#nodeutil-and-nodeutiltypes)) |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✘ | Not implemented |
@@ -87,7 +87,7 @@
 | async/await | ✔︎ | — |
 | esm | ✔︎ | — |
 | cjs | ✔︎ | — |
-| Intl | ✔︎⚠️ | Minimal `Intl.DateTimeFormat`, `Intl.supportedValuesOf`, and `Date.prototype.toLocaleString` only; missing other `Intl.*` constructors and full ICU ([details](#intl)) |
+| Intl | ✔︎⚠️ | Partial date/time, number, collation, list, and segmentation support; missing other constructors and full ICU ([details](#intl)) |
 | Temporal | ✔︎⚠️ | Missing `PlainYearMonth`, `PlainMonthDay`, non-ISO calendar systems, and full `Intl`-backed `toLocaleString()` ([details](#temporal)) |
 
 ### Database driver compatibility
@@ -125,7 +125,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `node:crypto`
 
-- Missing classic Node.js crypto APIs: `createCipheriv`/`createDecipheriv`, `createSign`/`createVerify`, top-level `sign`/`verify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `hkdf`/`hkdfSync`, `timingSafeEqual`, `KeyObject`, `createPrivateKey`/`createPublicKey`/`createSecretKey`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `X509Certificate`, `DiffieHellman`/`createDiffieHellman`, `ECDH`/`createECDH`, `getCiphers`, `getHashes`, and `crypto.hash()`. (Symmetric/asymmetric cipher, signature, and KDF operations are primarily provided through WebCrypto `subtle`.)
+- The RustCrypto build supports streaming AES ciphers, HKDF, timing-safe comparison, KeyObject import/export, top-level signatures, ECDH, and X.509 certificates. Missing classic APIs include `createSign`/`createVerify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `DiffieHellman`/`createDiffieHellman`, and `crypto.hash()`.
 - `publicEncrypt` / RSA-OAEP rejects `MD5`, and algorithm availability depends on the compiled TLS/crypto backend (for example, `graviola` lacks most operations).
 
 #### `node:https`
@@ -135,8 +135,8 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `node:inspector`
 
-- Stub module exporting only `url()`, which always returns `undefined` (to satisfy startup probes).
-- No Inspector debugging protocol; `Session`, `open()`, `close()`, `waitForDebugger()`, and `console` are not implemented.
+- `url()` always returns `undefined`. A `Session` shim supports startup probes but reports `ERR_INSPECTOR_NOT_AVAILABLE` for protocol requests.
+- No Inspector debugging protocol; `open()`, `close()`, `waitForDebugger()`, and `console` are not implemented.
 
 #### `node:module`
 
@@ -167,7 +167,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `util.inspect()` and `util.formatWithOptions()` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, and `customInspect` (while `showProxy`, `getters`, `numericSeparator`, and line-wrapping `breakLength` are not implemented).
 - `util.styleText()` does not support hex/RGB truecolor formats.
 - `util.TextDecoder` supports only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus `hex`/`base64`), lacking full WHATWG legacy encodings.
-- `node:util/types` omits `isWebAssemblyCompiledModule()`, and `isExternal()`, `isKeyObject()`, and `isCryptoKey()` always return `false` (even for WebCrypto `CryptoKey` objects) because their host hooks are not registered.
+- `node:util/types` omits `isWebAssemblyCompiledModule()`. `isExternal()`, `isKeyObject()`, and `isCryptoKey()` use native host hooks when the corresponding subsystem is available.
 
 #### `node:v8`
 
@@ -245,8 +245,8 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `Intl`
 
-- Implements only minimal `Intl.DateTimeFormat` (`format`, `formatToParts`, `resolvedOptions`), `Intl.supportedValuesOf()`, and `Date.prototype.toLocaleString` with `timeZone`.
-- Missing `Intl.Collator`, `Intl.NumberFormat`, `Intl.PluralRules`, `Intl.RelativeTimeFormat`, `Intl.ListFormat`, `Intl.DisplayNames`, `Intl.Segmenter`, `Intl.Locale`, `Intl.DurationFormat`, and full ICU locale/calendar/numbering-system support.
+- Implements partial `Intl.DateTimeFormat`, `Intl.Collator`, `Intl.NumberFormat`, `Intl.ListFormat`, and `Intl.Segmenter`, plus `Intl.supportedValuesOf()` and `Date.prototype.toLocaleString` with `timeZone`.
+- Missing `Intl.PluralRules`, `Intl.RelativeTimeFormat`, `Intl.DisplayNames`, `Intl.Locale`, `Intl.DurationFormat`, and full ICU locale/calendar/numbering-system support.
 
 #### `Temporal`
 

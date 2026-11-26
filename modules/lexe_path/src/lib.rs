@@ -864,41 +864,134 @@ fn is_absolute_win32(path: String) -> bool {
         && (bytes.get(2) == Some(&b'\\') || bytes.get(2) == Some(&b'/') || bytes.len() == 2)
 }
 
+fn declare_path_exports(declare: &Declarations) -> Result<()> {
+    declare.declare("basename")?;
+    declare.declare("dirname")?;
+    declare.declare("extname")?;
+    declare.declare("format")?;
+    declare.declare("parse")?;
+    declare.declare("join")?;
+    declare.declare("resolve")?;
+    declare.declare("relative")?;
+    declare.declare("normalize")?;
+    declare.declare("isAbsolute")?;
+    declare.declare("toNamespacedPath")?;
+    declare.declare("_makeLong")?;
+    declare.declare("matchesGlob")?;
+    declare.declare("delimiter")?;
+    declare.declare("sep")?;
+    declare.declare("posix")?;
+    declare.declare("win32")?;
+    declare.declare("default")?;
+    Ok(())
+}
+
+fn build_posix_and_win32<'js>(ctx: &Ctx<'js>) -> Result<(Object<'js>, Object<'js>)> {
+    let ns_posix = Func::from(to_namespaced_path_posix).into_js(ctx)?;
+    let ns_win32 = Func::from(to_namespaced_path_win32).into_js(ctx)?;
+    let glob_posix = Func::from(matches_glob_posix).into_js(ctx)?;
+    let glob_win32 = Func::from(matches_glob_win32).into_js(ctx)?;
+
+    let posix = Object::new(ctx.clone())?;
+    posix.set("dirname", Func::from(dirname::<String>))?;
+    posix.set("basename", Func::from(basename))?;
+    posix.set("extname", Func::from(extname))?;
+    posix.set("format", Func::from(format))?;
+    posix.set("parse", Func::from(parse))?;
+    posix.set("join", Func::from(join_posix))?;
+    posix.set("relative", Func::from(relative::<String, String>))?;
+    posix.set("resolve", Func::from(resolve_posix))?;
+    posix.set("normalize", Func::from(normalize_posix))?;
+    posix.set("isAbsolute", Func::from(is_absolute_posix))?;
+    posix.set("toNamespacedPath", ns_posix.clone())?;
+    posix.set("_makeLong", ns_posix)?;
+    posix.set("matchesGlob", glob_posix)?;
+    posix.prop("delimiter", ":")?;
+    posix.prop("sep", "/")?;
+
+    let win32 = Object::new(ctx.clone())?;
+    win32.set("dirname", Func::from(dirname::<String>))?;
+    win32.set("basename", Func::from(basename))?;
+    win32.set("extname", Func::from(extname))?;
+    win32.set("format", Func::from(format))?;
+    win32.set("parse", Func::from(parse))?;
+    win32.set("join", Func::from(join_win32))?;
+    win32.set("relative", Func::from(relative::<String, String>))?;
+    win32.set("resolve", Func::from(resolve_win32))?;
+    win32.set(
+        "normalize",
+        Func::from(|path: String| {
+            #[cfg(windows)]
+            {
+                normalize::<String>(path)
+            }
+            #[cfg(not(windows))]
+            {
+                normalize_posix(path).replace('/', "\\")
+            }
+        }),
+    )?;
+    win32.set("isAbsolute", Func::from(is_absolute_win32))?;
+    win32.set("toNamespacedPath", ns_win32.clone())?;
+    win32.set("_makeLong", ns_win32)?;
+    win32.set("matchesGlob", glob_win32)?;
+    win32.prop("delimiter", ";")?;
+    win32.prop("sep", "\\")?;
+
+    // Cross-link like Node: path.posix.win32 === path.win32, etc.
+    posix.set("posix", posix.clone())?;
+    posix.set("win32", win32.clone())?;
+    win32.set("posix", posix.clone())?;
+    win32.set("win32", win32.clone())?;
+
+    Ok((posix, win32))
+}
+
+fn export_path_object<'js>(exports: &Exports<'js>, obj: Object<'js>) -> Result<()> {
+    for key in [
+        "basename",
+        "dirname",
+        "extname",
+        "format",
+        "parse",
+        "join",
+        "resolve",
+        "relative",
+        "normalize",
+        "isAbsolute",
+        "toNamespacedPath",
+        "_makeLong",
+        "matchesGlob",
+        "delimiter",
+        "sep",
+        "posix",
+        "win32",
+    ] {
+        let val: Value = obj.get(key)?;
+        exports.export(key, val)?;
+    }
+    exports.export("default", obj)?;
+    Ok(())
+}
+
 impl ModuleDef for PathModule {
     fn declare(declare: &Declarations) -> Result<()> {
-        declare.declare("basename")?;
-        declare.declare("dirname")?;
-        declare.declare("extname")?;
-        declare.declare("format")?;
-        declare.declare("parse")?;
-        declare.declare("join")?;
-        declare.declare("resolve")?;
-        declare.declare("relative")?;
-        declare.declare("normalize")?;
-        declare.declare("isAbsolute")?;
-        declare.declare("toNamespacedPath")?;
-        declare.declare("_makeLong")?;
-        declare.declare("matchesGlob")?;
-        declare.declare("delimiter")?;
-        declare.declare("sep")?;
-        declare.declare("posix")?;
-        declare.declare("win32")?;
-
-        declare.declare("default")?;
-        Ok(())
+        declare_path_exports(declare)
     }
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
+        let (posix, win32) = build_posix_and_win32(ctx)?;
         export_default(ctx, exports, |default| {
-            let ns_posix = Func::from(to_namespaced_path_posix).into_js(ctx)?;
-            let ns_win32 = Func::from(to_namespaced_path_win32).into_js(ctx)?;
-            let glob_posix = Func::from(matches_glob_posix).into_js(ctx)?;
-            let glob_win32 = Func::from(matches_glob_win32).into_js(ctx)?;
-
             #[cfg(windows)]
-            let (default_ns, default_glob) = (ns_win32.clone(), glob_win32.clone());
+            let (default_ns, default_glob) = (
+                Func::from(to_namespaced_path_win32).into_js(ctx)?,
+                Func::from(matches_glob_win32).into_js(ctx)?,
+            );
             #[cfg(not(windows))]
-            let (default_ns, default_glob) = (ns_posix.clone(), glob_posix.clone());
+            let (default_ns, default_glob) = (
+                Func::from(to_namespaced_path_posix).into_js(ctx)?,
+                Func::from(matches_glob_posix).into_js(ctx)?,
+            );
 
             default.set("dirname", Func::from(dirname::<String>))?;
             default.set("basename", Func::from(basename))?;
@@ -915,64 +1008,54 @@ impl ModuleDef for PathModule {
             default.set("matchesGlob", default_glob)?;
             default.prop("delimiter", DELIMITER.to_string())?;
             default.prop("sep", MAIN_SEPARATOR.to_string())?;
-
-            // Node exposes path.posix / path.win32 as path-API objects.
-            let posix = Object::new(ctx.clone())?;
-            posix.set("dirname", Func::from(dirname::<String>))?;
-            posix.set("basename", Func::from(basename))?;
-            posix.set("extname", Func::from(extname))?;
-            posix.set("format", Func::from(format))?;
-            posix.set("parse", Func::from(parse))?;
-            posix.set("join", Func::from(join_posix))?;
-            posix.set("relative", Func::from(relative::<String, String>))?;
-            posix.set("resolve", Func::from(resolve_posix))?;
-            posix.set("normalize", Func::from(normalize_posix))?;
-            posix.set("isAbsolute", Func::from(is_absolute_posix))?;
-            posix.set("toNamespacedPath", ns_posix.clone())?;
-            posix.set("_makeLong", ns_posix)?;
-            posix.set("matchesGlob", glob_posix)?;
-            posix.prop("delimiter", ":")?;
-            posix.prop("sep", "/")?;
-
-            let win32 = Object::new(ctx.clone())?;
-            win32.set("dirname", Func::from(dirname::<String>))?;
-            win32.set("basename", Func::from(basename))?;
-            win32.set("extname", Func::from(extname))?;
-            win32.set("format", Func::from(format))?;
-            win32.set("parse", Func::from(parse))?;
-            win32.set("join", Func::from(join_win32))?;
-            win32.set("relative", Func::from(relative::<String, String>))?;
-            win32.set("resolve", Func::from(resolve_win32))?;
-            win32.set(
-                "normalize",
-                Func::from(|path: String| {
-                    #[cfg(windows)]
-                    {
-                        normalize::<String>(path)
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        normalize_posix(path).replace('/', "\\")
-                    }
-                }),
-            )?;
-            win32.set("isAbsolute", Func::from(is_absolute_win32))?;
-            win32.set("toNamespacedPath", ns_win32.clone())?;
-            win32.set("_makeLong", ns_win32)?;
-            win32.set("matchesGlob", glob_win32)?;
-            win32.prop("delimiter", ";")?;
-            win32.prop("sep", "\\")?;
-
-            // Cross-link like Node: path.posix.win32 === path.win32, etc.
-            posix.set("posix", posix.clone())?;
-            posix.set("win32", win32.clone())?;
-            win32.set("posix", posix.clone())?;
-            win32.set("win32", win32.clone())?;
-
             default.set("posix", posix)?;
             default.set("win32", win32)?;
             Ok(())
         })
+    }
+}
+
+pub struct PathPosixModule;
+
+impl ModuleDef for PathPosixModule {
+    fn declare(declare: &Declarations) -> Result<()> {
+        declare_path_exports(declare)
+    }
+
+    fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
+        let (posix, _) = build_posix_and_win32(ctx)?;
+        export_path_object(exports, posix)
+    }
+}
+
+impl From<PathPosixModule> for ModuleInfo<PathPosixModule> {
+    fn from(val: PathPosixModule) -> Self {
+        ModuleInfo {
+            name: "path/posix",
+            module: val,
+        }
+    }
+}
+
+pub struct PathWin32Module;
+
+impl ModuleDef for PathWin32Module {
+    fn declare(declare: &Declarations) -> Result<()> {
+        declare_path_exports(declare)
+    }
+
+    fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
+        let (_, win32) = build_posix_and_win32(ctx)?;
+        export_path_object(exports, win32)
+    }
+}
+
+impl From<PathWin32Module> for ModuleInfo<PathWin32Module> {
+    fn from(val: PathWin32Module) -> Self {
+        ModuleInfo {
+            name: "path/win32",
+            module: val,
+        }
     }
 }
 

@@ -61,23 +61,36 @@ pub unsafe fn get_property(ctx: *mut JSContext, obj: JSValue, key: JSValue) -> J
     val
 }
 
-pub unsafe fn try_buffer_from(ctx: *mut JSContext, uint8array: JSValue) -> JSValue {
+pub unsafe fn wrap_arraybuffer_as_buffer(ctx: *mut JSContext, array_buffer: JSValue) -> JSValue {
+    if qjs::JS_IsException(array_buffer) {
+        return array_buffer;
+    }
     let global = qjs::JS_GetGlobalObject(ctx);
     let buffer_ctor = qjs::JS_GetPropertyStr(ctx, global, c"Buffer".as_ptr());
     qjs::JS_FreeValue(ctx, global);
-    if !qjs::JS_IsFunction(ctx, buffer_ctor) {
+
+    let mut argv = [array_buffer];
+    if qjs::JS_IsConstructor(ctx, buffer_ctor) {
+        let result = qjs::JS_CallConstructor(ctx, buffer_ctor, 1, argv.as_mut_ptr());
         qjs::JS_FreeValue(ctx, buffer_ctor);
-        return uint8array;
+        if !qjs::JS_IsException(result) {
+            qjs::JS_FreeValue(ctx, array_buffer);
+            return result;
+        }
+        let exc = qjs::JS_GetException(ctx);
+        qjs::JS_FreeValue(ctx, exc);
+    } else {
+        qjs::JS_FreeValue(ctx, buffer_ctor);
     }
-    let mut argv = [uint8array];
-    let result = qjs::JS_Call(ctx, buffer_ctor, qjs::JS_UNDEFINED, 1, argv.as_mut_ptr());
-    qjs::JS_FreeValue(ctx, buffer_ctor);
-    if qjs::JS_IsException(result) {
-        qjs::JS_FreeValue(ctx, result);
-        return uint8array;
-    }
-    qjs::JS_FreeValue(ctx, uint8array);
-    result
+
+    let u8arr = qjs::JS_NewTypedArray(
+        ctx,
+        1,
+        argv.as_mut_ptr(),
+        qjs::JSTypedArrayEnum_JS_TYPED_ARRAY_UINT8,
+    );
+    qjs::JS_FreeValue(ctx, array_buffer);
+    u8arr
 }
 
 /// Hidden id property that can be deleted on `napi_remove_wrap` (still non-enumerable).

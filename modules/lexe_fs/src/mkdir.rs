@@ -9,8 +9,12 @@ use rand::RngExt;
 use rquickjs::{function::Opt, Ctx, Object, Result};
 use tokio::fs;
 
-pub async fn mkdir<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<String> {
-    let (recursive, mode, path) = get_params(&path, options)?;
+pub async fn mkdir<'js>(
+    ctx: Ctx<'js>,
+    path: String,
+    options: Opt<Option<Object<'js>>>,
+) -> Result<String> {
+    let (recursive, mode, path) = get_params(&path, Opt(options.0.flatten()))?;
     lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
 
     if recursive {
@@ -25,8 +29,12 @@ pub async fn mkdir<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) 
     Ok(path)
 }
 
-pub fn mkdir_sync<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<String> {
-    let (recursive, mode, path) = get_params(&path, options)?;
+pub fn mkdir_sync<'js>(
+    ctx: Ctx<'js>,
+    path: String,
+    options: Opt<Option<Object<'js>>>,
+) -> Result<String> {
+    let (recursive, mode, path) = get_params(&path, Opt(options.0.flatten()))?;
     lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
 
     if recursive {

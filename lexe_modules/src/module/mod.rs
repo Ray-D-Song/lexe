@@ -25,6 +25,7 @@ pub mod resolver;
 
 use crate::CJS_IMPORT_PREFIX;
 
+pub use facade::attach_process_get_builtin_module;
 use facade::init_global_require;
 use facade::init_module_facade;
 
@@ -149,6 +150,8 @@ struct Hook<'js> {
 
 #[derive(JsLifetime)]
 pub struct ModuleHookState<'js> {
+    next_id: u64,
+    hook_ids: Vec<u64>,
     hooks: Vec<Hook<'js>>,
 }
 
@@ -160,7 +163,11 @@ impl Default for ModuleHookState<'_> {
 
 impl ModuleHookState<'_> {
     fn new() -> Self {
-        Self { hooks: Vec::new() }
+        Self {
+            next_id: 1,
+            hook_ids: Vec::new(),
+            hooks: Vec::new(),
+        }
     }
 }
 
@@ -183,17 +190,67 @@ fn is_builtin(ctx: Ctx<'_>, name: String) -> Result<bool> {
     Ok(module_names.is_builtin(name.trim_end_matches('/')))
 }
 
-pub fn register_hooks<'js>(ctx: Ctx<'js>, hooks_obj: Object<'js>) -> Result<()> {
-    let resolve = hooks_obj.get::<_, Function>("resolve").ok();
-    let load = hooks_obj.get::<_, Function>("load").ok();
+pub fn register_hooks<'js>(ctx: Ctx<'js>, hooks_obj: Value<'js>) -> Result<Object<'js>> {
+    let hooks_obj = hooks_obj
+        .as_object()
+        .ok_or_else(|| Exception::throw_type(&ctx, "The \"hooks\" argument must be an object"))?;
 
-    let hook = Hook { resolve, load };
+    let resolve_val: Value<'js> = hooks_obj.get("resolve")?;
+    let resolve = if resolve_val.is_undefined() {
+        None
+    } else {
+        Some(
+            resolve_val
+                .into_function()
+                .ok_or_else(|| Exception::throw_type(&ctx, "hooks.resolve must be a function"))?,
+        )
+    };
 
-    let binding = ctx.userdata::<RefCell<ModuleHookState>>().or_throw(&ctx)?;
-    let mut state = binding.borrow_mut();
-    state.hooks.push(hook);
+    let load_val: Value<'js> = hooks_obj.get("load")?;
+    let load = if load_val.is_undefined() {
+        None
+    } else {
+        Some(
+            load_val
+                .into_function()
+                .ok_or_else(|| Exception::throw_type(&ctx, "hooks.load must be a function"))?,
+        )
+    };
 
-    Ok(())
+    let id = {
+        let binding = ctx.userdata::<RefCell<ModuleHookState>>().or_throw(&ctx)?;
+        let mut state = binding.borrow_mut();
+        let id = state.next_id;
+        state.next_id = state.next_id.saturating_add(1);
+        // Keep `hooks` and `hook_ids` aligned when registered via `registerHooks`.
+        let hooks_len = state.hooks.len();
+        if state.hook_ids.len() != hooks_len {
+            state.hook_ids.resize(hooks_len, 0);
+        }
+        // Node executes registerHooks in LIFO order: most recently registered runs first.
+        state.hook_ids.insert(0, id);
+        state.hooks.insert(0, Hook { resolve, load });
+        id
+    };
+
+    let handle = Object::new(ctx.clone())?;
+    handle.set(
+        "deregister",
+        Func::from(move |ctx: Ctx<'_>| -> Result<()> {
+            if let Some(binding) = ctx.userdata::<RefCell<ModuleHookState>>() {
+                let mut state = binding.borrow_mut();
+                if let Some(pos) = state.hook_ids.iter().position(|&x| x == id) {
+                    state.hook_ids.remove(pos);
+                    if pos < state.hooks.len() {
+                        state.hooks.remove(pos);
+                    }
+                }
+            }
+            Ok(())
+        }),
+    )?;
+
+    Ok(handle)
 }
 
 impl ModuleDef for ModuleModule {
@@ -352,7 +409,9 @@ pub fn shutdown_context_state<'js>(ctx: &Ctx<'js>) -> Result<()> {
     }
 
     if let Some(binding) = ctx.userdata::<RefCell<ModuleHookState>>() {
-        binding.borrow_mut().hooks.clear();
+        let mut state = binding.borrow_mut();
+        state.hook_ids.clear();
+        state.hooks.clear();
     }
 
     unsafe {

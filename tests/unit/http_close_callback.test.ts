@@ -28,6 +28,15 @@ const runFixture = (
   });
 
 describe("server.close()", () => {
+  it("closes expired keep-alive sockets even when a response is retained", async () => {
+    const { code, stdout } = await runFixture(
+      "http_keepalive_retained.fixture.mjs"
+    );
+    expect(stdout).toContain("keepalive-retained=false:closed");
+    expect(stdout).toContain("keepalive-retained=true:closed");
+    expect(code).toBe(0);
+  }, TIMEOUT);
+
   it("returns the server, flips listening synchronously and nulls address()", async () => {
     const { code, stdout } = await runFixture(
       "http_close_semantics.fixture.mjs"

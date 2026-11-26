@@ -200,4 +200,34 @@ describe("destroy() without an argument", () => {
     stream.destroy(boom);
     await expect(seen).resolves.toBe(boom);
   });
+
+  it("stream.finished returns a cleanup function and fires callback on end", async () => {
+    const { PassThrough, finished } = await import("node:stream");
+    const pt = new PassThrough();
+    let calls = 0;
+    let seenErr: any = "unset";
+    const cleanup = finished(pt, { readable: true, writable: false }, (err: any) => {
+      calls++;
+      seenErr = err;
+    });
+    expect(typeof cleanup).toBe("function");
+    pt.resume();
+    pt.end("done");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toBe(1);
+    expect(seenErr).toBeUndefined();
+
+    // Calling cleanup before end suppresses callback
+    const pt2 = new PassThrough();
+    let suppressedCalls = 0;
+    const cleanup2 = finished(pt2, { readable: true, writable: false }, () => {
+      suppressedCalls++;
+    });
+    expect(typeof cleanup2).toBe("function");
+    cleanup2();
+    pt2.resume();
+    pt2.end("x");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(suppressedCalls).toBe(0);
+  });
 });

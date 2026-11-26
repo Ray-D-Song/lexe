@@ -1,10 +1,11 @@
-import {
+import wtDefault, {
   MessageChannel,
   MessagePort,
   getEnvironmentData,
   setEnvironmentData,
   isMainThread,
   threadId,
+  markAsUncloneable,
 } from "node:worker_threads";
 
 describe("worker_threads MessageChannel", () => {
@@ -189,8 +190,11 @@ describe("worker_threads Worker spawn", () => {
     });
     worker.postMessage({ ping: 1 });
     expect(await reply).toEqual({ pong: 1, workerData: { tag: "hello" } });
-    worker.terminate();
-    await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+    const exited = new Promise<number>((resolve) => worker.once("exit", resolve));
+    const termination = worker.terminate();
+    expect(termination).toBeInstanceOf(Promise);
+    expect(await termination).toBe(await exited);
+    expect(await worker.terminate()).toBeUndefined();
   });
 
   it("passes structured-clone payloads (Date, Map) across process IPC", async () => {
@@ -260,5 +264,19 @@ describe("worker_threads Worker spawn", () => {
     expect(view[0]).toBe(7);
     worker.terminate();
     await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+  });
+
+  it("exposes global MessagePort/MessageChannel matching worker_threads and markAsUncloneable", () => {
+    const g = globalThis as Record<string, any>;
+    expect(g.MessagePort).toBe(MessagePort);
+    expect(g.MessageChannel).toBe(MessageChannel);
+    const ch = new g.MessageChannel();
+    expect(ch.port1).toBeInstanceOf(MessagePort);
+    expect(ch.port1).toBeInstanceOf(g.MessagePort);
+    ch.port1.close();
+    ch.port2.close();
+    expect(typeof markAsUncloneable).toBe("function");
+    expect(wtDefault.markAsUncloneable).toBe(markAsUncloneable);
+    expect(() => markAsUncloneable({})).not.toThrow();
   });
 });

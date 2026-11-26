@@ -7,13 +7,21 @@
 //! enabling compatibility with libraries like dayjs.
 
 mod cldr_data;
+mod collator;
 mod date_time_format;
+mod list_format;
+mod number_format;
 mod pattern_formatter;
+mod segmenter;
 
+pub use collator::Collator;
 pub use date_time_format::{
     format_date_in_timezone, parse_to_locale_string_options, DateTimeFormat, DateTimeFormatOptions,
     ToLocaleStringOptions,
 };
+pub use list_format::ListFormat;
+pub use number_format::NumberFormat;
+pub use segmenter::Segmenter;
 
 use cldr_data::get_locale_data;
 use jiff::{
@@ -35,8 +43,12 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let intl = Object::new(ctx.clone())?;
     intl.set("supportedValuesOf", Func::from(supported_values_of))?;
 
-    // Add DateTimeFormat constructor
+    // Add Intl constructors
     Class::<DateTimeFormat>::define(&intl)?;
+    Class::<Segmenter>::define(&intl)?;
+    Class::<NumberFormat>::define(&intl)?;
+    Class::<ListFormat>::define(&intl)?;
+    Class::<Collator>::define(&intl)?;
 
     // Set Intl global
     globals.set("Intl", intl)?;
@@ -158,9 +170,9 @@ fn date_to_locale_string<'js>(
     }
 }
 
-/// Parse locale argument from JavaScript
-fn parse_locale_arg(locale: Opt<Value<'_>>) -> Result<String> {
-    if let Some(val) = locale.into_inner() {
+/// Parse optional locale argument from JavaScript
+pub(crate) fn parse_locale_value(val: Option<Value<'_>>) -> Result<String> {
+    if let Some(val) = val {
         if val.is_undefined() || val.is_null() {
             return Ok("en-US".to_string());
         }
@@ -176,6 +188,11 @@ fn parse_locale_arg(locale: Opt<Value<'_>>) -> Result<String> {
         }
     }
     Ok("en-US".to_string())
+}
+
+/// Parse locale argument from JavaScript
+fn parse_locale_arg(locale: Opt<Value<'_>>) -> Result<String> {
+    parse_locale_value(locale.into_inner())
 }
 
 /// Get date pattern for a given style

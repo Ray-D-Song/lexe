@@ -3121,4 +3121,287 @@ mod tests {
         })
         .await;
     }
+
+    #[tokio::test]
+    async fn napi_buffer_apis_and_is_buffer_parity() {
+        let _lock = gc_test_lock().await;
+        use crate::api::{
+            napi_create_buffer, napi_create_buffer_copy, napi_create_external_buffer,
+            napi_get_buffer_info, napi_is_buffer,
+        };
+        use std::os::raw::c_void;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        unsafe extern "C" fn external_buf_finalize(
+            _env: crate::types::napi_env,
+            data: *mut c_void,
+            hint: *mut c_void,
+        ) {
+            let calls = &*(hint as *const AtomicUsize);
+            calls.fetch_add(1, Ordering::SeqCst);
+            let _ = Box::from_raw(data as *mut [u8; 4]);
+        }
+
+        let finalize_calls = AtomicUsize::new(0);
+        let rt = AsyncRuntime::new().unwrap();
+        let ctx = AsyncContext::full(&rt).await.unwrap();
+        ctx.with(|ctx| {
+            ctx.eval::<(), _>("globalThis.Buffer = class Buffer extends Uint8Array {};")
+                .unwrap();
+            let raw = ctx.as_raw();
+            let mut env = Env::new(raw);
+            env.scopes.open();
+            let env_ptr = env.as_napi_env();
+
+            // 1. napi_create_buffer + write via data pointer + napi_is_buffer + napi_get_buffer_info
+            let mut data_ptr: *mut c_void = std::ptr::null_mut();
+            let mut buf_val = std::ptr::null_mut();
+            assert_eq!(
+                unsafe { napi_create_buffer(env_ptr, 4, &mut data_ptr, &mut buf_val) },
+                napi_status::napi_ok
+            );
+            assert!(!data_ptr.is_null());
+            unsafe {
+                std::slice::from_raw_parts_mut(data_ptr as *mut u8, 4)
+                    .copy_from_slice(&[10, 20, 30, 40]);
+            }
+            let mut is_buf = false;
+            assert_eq!(
+                unsafe { napi_is_buffer(env_ptr, buf_val, &mut is_buf) },
+                napi_status::napi_ok
+            );
+            assert!(is_buf);
+
+            let mut info_ptr: *mut c_void = std::ptr::null_mut();
+            let mut info_len = 0usize;
+            assert_eq!(
+                unsafe { napi_get_buffer_info(env_ptr, buf_val, &mut info_ptr, &mut info_len) },
+                napi_status::napi_ok
+            );
+            assert_eq!(info_len, 4);
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(info_ptr as *const u8, 4) },
+                &[10, 20, 30, 40]
+            );
+
+            // Plain Uint8Array -> is_buffer false, get_buffer_info reads slice with byteOffset
+            let u8_js = ctx
+                .eval::<rquickjs::Value, _>("new Uint8Array([1, 2, 3, 4]).subarray(1, 3)")
+                .unwrap();
+            let u8_handle = value_to_napi_owned(&mut env, unsafe {
+                qjs::JS_DupValue(raw.as_ptr(), u8_js.as_raw())
+            });
+            drop(u8_js);
+            assert_eq!(
+                unsafe { napi_is_buffer(env_ptr, u8_handle, &mut is_buf) },
+                napi_status::napi_ok
+            );
+            assert!(!is_buf);
+            assert_eq!(
+                unsafe { napi_get_buffer_info(env_ptr, u8_handle, &mut info_ptr, &mut info_len) },
+                napi_status::napi_ok
+            );
+            assert_eq!(info_len, 2);
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(info_ptr as *const u8, 2) },
+                &[2, 3]
+            );
+
+            // Non-buffer passed to napi_get_buffer_info leaves no pending JS exception.
+            let num_handle = value_to_napi_owned(&mut env, new_int32(42));
+            assert_ne!(
+                unsafe { napi_get_buffer_info(env_ptr, num_handle, &mut info_ptr, &mut info_len) },
+                napi_status::napi_ok
+            );
+            assert!(!unsafe { qjs::JS_HasException(raw.as_ptr()) });
+
+            // 2. 5-arg napi_create_buffer_copy (including zero-length null src)
+            let src = [7u8, 8, 9];
+            let mut copy_ptr: *mut c_void = std::ptr::null_mut();
+            let mut copy_val = std::ptr::null_mut();
+            assert_eq!(
+                unsafe {
+                    napi_create_buffer_copy(
+                        env_ptr,
+                        src.len(),
+                        src.as_ptr() as *const c_void,
+                        &mut copy_ptr,
+                        &mut copy_val,
+                    )
+                },
+                napi_status::napi_ok
+            );
+            assert!(!copy_ptr.is_null());
+            assert_ne!(copy_ptr as usize, src.as_ptr() as usize);
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(copy_ptr as *const u8, 3) },
+                &[7, 8, 9]
+            );
+
+            let mut zero_ptr: *mut c_void = std::ptr::null_mut();
+            let mut zero_val = std::ptr::null_mut();
+            assert_eq!(
+                unsafe {
+                    napi_create_buffer_copy(
+                        env_ptr,
+                        0,
+                        std::ptr::null(),
+                        &mut zero_ptr,
+                        &mut zero_val,
+                    )
+                },
+                napi_status::napi_ok
+            );
+            assert!(!zero_ptr.is_null());
+
+            // 3. napi_create_external_buffer + finalizer on dispose
+            let ext_box = Box::into_raw(Box::new([11u8, 22, 33, 44]));
+            let mut ext_val = std::ptr::null_mut();
+            assert_eq!(
+                unsafe {
+                    napi_create_external_buffer(
+                        env_ptr,
+                        4,
+                        ext_box as *mut c_void,
+                        Some(external_buf_finalize),
+                        &finalize_calls as *const AtomicUsize as *mut c_void,
+                        &mut ext_val,
+                    )
+                },
+                napi_status::napi_ok
+            );
+            assert_eq!(
+                unsafe { napi_get_buffer_info(env_ptr, ext_val, &mut info_ptr, &mut info_len) },
+                napi_status::napi_ok
+            );
+            assert_eq!(info_ptr as usize, ext_box as usize);
+            assert_eq!(info_len, 4);
+
+            env.scopes.close(raw.as_ptr());
+            env.dispose();
+        })
+        .await;
+        assert_eq!(finalize_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn napi_predicates_bigint_words_utf16_and_fatal_exception() {
+        use crate::api::{
+            napi_create_array_with_length, napi_create_string_utf8, napi_fatal_exception,
+            napi_get_and_clear_last_exception, napi_get_array_length, napi_get_value_bigint_words,
+            napi_get_value_string_utf16, napi_is_array, napi_is_error, napi_is_exception_pending,
+            napi_strict_equals,
+        };
+        use std::os::raw::c_int;
+
+        let rt = AsyncRuntime::new().unwrap();
+        let ctx = AsyncContext::full(&rt).await.unwrap();
+        ctx.with(|ctx| {
+            let raw = ctx.as_raw();
+            let mut env = Env::new(raw);
+            env.scopes.open();
+            let env_ptr = env.as_napi_env();
+
+            // napi_create_array_with_length & napi_is_array
+            let mut arr_val = std::ptr::null_mut();
+            assert_eq!(
+                unsafe { napi_create_array_with_length(env_ptr, 5, &mut arr_val) },
+                napi_status::napi_ok
+            );
+            let mut arr_len = 0u32;
+            assert_eq!(unsafe { napi_get_array_length(env_ptr, arr_val, &mut arr_len) }, napi_status::napi_ok);
+            assert_eq!(arr_len, 5);
+            let mut flag = false;
+            assert_eq!(unsafe { napi_is_array(env_ptr, arr_val, &mut flag) }, napi_status::napi_ok);
+            assert!(flag);
+
+            // napi_is_error
+            let err_js = ctx.eval::<rquickjs::Value, _>("new TypeError('boom')").unwrap();
+            let err_val = value_to_napi_owned(&mut env, unsafe { qjs::JS_DupValue(raw.as_ptr(), err_js.as_raw()) });
+            drop(err_js);
+            assert_eq!(unsafe { napi_is_error(env_ptr, err_val, &mut flag) }, napi_status::napi_ok);
+            assert!(flag);
+            assert_eq!(unsafe { napi_is_error(env_ptr, arr_val, &mut flag) }, napi_status::napi_ok);
+            assert!(!flag);
+
+            // napi_strict_equals (1 vs "1" false; NaN vs NaN false)
+            let mut s_one = std::ptr::null_mut();
+            assert_eq!(unsafe { napi_create_string_utf8(env_ptr, c"1".as_ptr(), 1, &mut s_one) }, napi_status::napi_ok);
+            let n_one = value_to_napi_owned(&mut env, new_int32(1));
+            assert_eq!(unsafe { napi_strict_equals(env_ptr, n_one, s_one, &mut flag) }, napi_status::napi_ok);
+            assert!(!flag);
+            assert_eq!(unsafe { napi_strict_equals(env_ptr, n_one, n_one, &mut flag) }, napi_status::napi_ok);
+            assert!(flag);
+
+            // napi_get_value_string_utf16 (query length + surrogate pairs + truncation)
+            let s_js = ctx.eval::<rquickjs::Value, _>("'A\\u{1F680}Z'").unwrap();
+            let s_val = value_to_napi_owned(&mut env, unsafe { qjs::JS_DupValue(raw.as_ptr(), s_js.as_raw()) });
+            drop(s_js);
+            let mut utf16_len = 0usize;
+            assert_eq!(
+                unsafe { napi_get_value_string_utf16(env_ptr, s_val, std::ptr::null_mut(), 0, &mut utf16_len) },
+                napi_status::napi_ok
+            );
+            assert_eq!(utf16_len, 4); // 'A' (1) + '🚀' surrogate pair (2) + 'Z' (1)
+            let mut small = [0xFFFFu16; 3];
+            assert_eq!(
+                unsafe { napi_get_value_string_utf16(env_ptr, s_val, small.as_mut_ptr(), small.len(), &mut utf16_len) },
+                napi_status::napi_ok
+            );
+            assert_eq!(utf16_len, 2);
+            assert_eq!(small, [0x0041, 0xD83D, 0]);
+
+            // napi_get_value_bigint_words
+            let bi_zero = ctx.eval::<rquickjs::Value, _>("0n").unwrap();
+            let bi_zero_h = value_to_napi_owned(&mut env, unsafe { qjs::JS_DupValue(raw.as_ptr(), bi_zero.as_raw()) });
+            drop(bi_zero);
+            let mut sign: c_int = 99;
+            let mut wc: usize = 4;
+            let mut words = [0u64; 4];
+            assert_eq!(
+                unsafe { napi_get_value_bigint_words(env_ptr, bi_zero_h, &mut sign, &mut wc, words.as_mut_ptr()) },
+                napi_status::napi_ok
+            );
+            assert_eq!(sign, 0);
+            assert_eq!(wc, 0);
+
+            let bi_neg = ctx.eval::<rquickjs::Value, _>("-((1n << 64n) + 0x123456789abcdef0n)").unwrap();
+            let bi_neg_h = value_to_napi_owned(&mut env, unsafe { qjs::JS_DupValue(raw.as_ptr(), bi_neg.as_raw()) });
+            drop(bi_neg);
+            let mut query_wc = 0usize;
+            assert_eq!(
+                unsafe { napi_get_value_bigint_words(env_ptr, bi_neg_h, &mut sign, &mut query_wc, std::ptr::null_mut()) },
+                napi_status::napi_ok
+            );
+            assert_eq!(sign, 1);
+            assert_eq!(query_wc, 2);
+            wc = 2;
+            assert_eq!(
+                unsafe { napi_get_value_bigint_words(env_ptr, bi_neg_h, &mut sign, &mut wc, words.as_mut_ptr()) },
+                napi_status::napi_ok
+            );
+            assert_eq!(sign, 1);
+            assert_eq!(wc, 2);
+            assert_eq!(&words[..2], &[0x123456789abcdef0, 1]);
+
+            // napi_fatal_exception (pending exception when unhandled, handled when process.emit returns true)
+            assert_eq!(unsafe { napi_fatal_exception(env_ptr, err_val) }, napi_status::napi_ok);
+            let mut pending = false;
+            assert_eq!(unsafe { napi_is_exception_pending(env_ptr, &mut pending) }, napi_status::napi_ok);
+            assert!(pending);
+            let mut cleared = std::ptr::null_mut();
+            assert_eq!(unsafe { napi_get_and_clear_last_exception(env_ptr, &mut cleared) }, napi_status::napi_ok);
+
+            ctx.eval::<(), _>("globalThis.process = { emit(ev, e) { globalThis.__caught = [ev, e.message]; return true; } };").unwrap();
+            assert_eq!(unsafe { napi_fatal_exception(env_ptr, err_val) }, napi_status::napi_ok);
+            assert_eq!(unsafe { napi_is_exception_pending(env_ptr, &mut pending) }, napi_status::napi_ok);
+            assert!(!pending);
+            let caught: String = ctx.eval("globalThis.__caught.join(':')").unwrap();
+            assert_eq!(caught, "uncaughtException:boom");
+
+            env.scopes.close(raw.as_ptr());
+            env.dispose();
+        })
+        .await;
+    }
 }

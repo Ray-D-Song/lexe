@@ -12,7 +12,7 @@ import { Transform } from "readable-stream/lib/_stream_transform.js";
 // @ts-ignore
 import { PassThrough } from "readable-stream/lib/_stream_passthrough.js";
 // @ts-ignore
-import { finished } from "readable-stream/lib/internal/streams/end-of-stream.js";
+import finished from "readable-stream/lib/internal/streams/end-of-stream.js";
 // @ts-ignore
 import { pipeline } from "readable-stream/lib/internal/streams/pipeline.js";
 

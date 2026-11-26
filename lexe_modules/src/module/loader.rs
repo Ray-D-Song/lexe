@@ -54,10 +54,13 @@ impl Loader for ModuleLoader {
 
         if short_circuit {
             trace!("+- Loading module via ShortCircuit: {}\n", name);
-            return match source {
-                AnyOf2::A(s) => Module::declare(ctx.clone(), name, s),
-                AnyOf2::B(b) => Module::declare(ctx.clone(), name, b.as_bytes(ctx)?),
+            let module = match source {
+                AnyOf2::A(s) => Module::declare(ctx.clone(), name, s)?,
+                AnyOf2::B(b) => Module::declare(ctx.clone(), name, b.as_bytes(ctx)?)?,
             };
+            let meta: Object = module.meta()?;
+            super::resolver::populate_import_meta(ctx, &meta, name)?;
+            return Ok(module);
         };
 
         let load = self

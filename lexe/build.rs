@@ -6,6 +6,7 @@ use std::env;
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_family = env::var("CARGO_CFG_TARGET_FAMILY").unwrap_or_default();
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
 
     if target_os == "macos" {
         // Reserve enough Mach-O header padding for `libsui::Macho::write_section`
@@ -21,7 +22,7 @@ fn main() {
         // linked solely by v8_compat's build.rs (static:+whole-archive).
         if target_os == "macos" {
             println!("cargo:rustc-link-arg=-Wl,-export_dynamic");
-        } else if target_family == "unix" {
+        } else if target_family == "unix" && target_env != "musl" {
             println!("cargo:rustc-link-arg=-rdynamic");
         }
     }

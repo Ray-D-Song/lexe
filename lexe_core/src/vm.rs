@@ -249,8 +249,9 @@ impl Vm {
         self.run(source, strict, global).await;
     }
 
-    pub async fn run_bytecode(&self, bytecode: &[u8]) {
+    pub async fn run_bytecode(&self, bytecode: &[u8], entry_path: Option<&std::path::Path>) {
         let bytecode = bytecode.to_vec();
+        let entry_path = entry_path.map(std::path::Path::to_path_buf);
         let rt_key = self.rt_key;
         self.ctx
             .async_with(async move |ctx| {
@@ -262,6 +263,16 @@ impl Vm {
                             eprintln!("Failed to evaluate module: {err:?}");
                             err
                         })?;
+                        let resolved_path = entry_path
+                            .or_else(|| std::env::current_exe().ok())
+                            .unwrap_or_else(|| std::path::PathBuf::from("index.js"));
+                        let entry_url = lexe_modules::module::resolver::path_or_url_to_file_url(
+                            &resolved_path.to_string_lossy(),
+                        );
+                        let meta: rquickjs::Object = module.meta()?;
+                        lexe_modules::module::resolver::populate_import_meta(
+                            &ctx, &meta, &entry_url,
+                        )?;
                         let (_module, promise) = module.eval()?;
                         promise
                     };
@@ -371,6 +382,7 @@ fn track_promise_rejection<'js>(
 ) -> Result<()> {
     let cache = rejection_tracker_cache(&ctx)?;
     cache.track.call::<_, ()>((promise, reason, is_handled))?;
+
     Ok(())
 }
 
@@ -534,6 +546,9 @@ pub fn shutdown_context_userdata<'js>(ctx: &Ctx<'js>) -> Result<()> {
             return Err(Error::Unknown);
         }
     }
+
+    #[cfg(feature = "ffi")]
+    crate::modules::ffi::shutdown_context(ctx)?;
 
     Ok(())
 }

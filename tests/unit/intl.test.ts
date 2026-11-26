@@ -131,3 +131,65 @@ describe("Intl.DateTimeFormat", () => {
     });
   });
 });
+
+describe("Intl.Segmenter", () => {
+  it("segments graphemes including surrogate pairs with UTF-16 indices and containing()", () => {
+    const seg = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    expect(seg.resolvedOptions()).toEqual({ locale: "en-US", granularity: "grapheme" });
+    const segments = seg.segment("A🚀B");
+    const items = Array.from(segments);
+    expect(items).toEqual([
+      { segment: "A", index: 0, input: "A🚀B" },
+      { segment: "🚀", index: 1, input: "A🚀B" },
+      { segment: "B", index: 3, input: "A🚀B" },
+    ]);
+    expect(segments.containing(2)).toEqual({ segment: "🚀", index: 1, input: "A🚀B" });
+    expect(segments.containing(99)).toBeUndefined();
+  });
+
+  it("segments words with isWordLike and sentences", () => {
+    const wordSeg = new Intl.Segmenter("en", { granularity: "word" });
+    const words = Array.from(wordSeg.segment("hi, world!"));
+    expect(words.find((w: any) => w.segment === "hi").isWordLike).toBe(true);
+    expect(words.find((w: any) => w.segment === ",").isWordLike).toBe(false);
+
+    const sentSeg = new Intl.Segmenter("en", { granularity: "sentence" });
+    const sents = Array.from(sentSeg.segment("Hello world. Next sentence!"));
+    expect(sents.length).toBe(2);
+  });
+});
+
+describe("Intl.NumberFormat", () => {
+  it("formats currency, grouping, and compact notation", () => {
+    const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+    expect(usd.format(1234.5)).toBe("$1,234.50");
+    expect(usd.format(-0.05)).toBe("-$0.05");
+
+    const compact = new Intl.NumberFormat("en-US", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
+    expect(compact.format(1500)).toBe("1.5K");
+    expect(compact.format(2000000)).toBe("2M");
+  });
+});
+
+describe("Intl.ListFormat", () => {
+  it("formats conjunction and disjunction lists", () => {
+    const conj = new Intl.ListFormat("en-US", { style: "long", type: "conjunction" });
+    expect(conj.format(["a", "b", "c"])).toBe("a, b, and c");
+    const disj = new Intl.ListFormat("en", { type: "disjunction" });
+    expect(disj.format(["foo", "bar"])).toBe("foo or bar");
+  });
+});
+
+describe("Intl.Collator", () => {
+  it("compares strings with numeric and sensitivity options", () => {
+    const num = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+    expect(["file10", "file2", "File1"].sort((a, b) => num.compare(a, b))).toEqual([
+      "File1",
+      "file2",
+      "file10",
+    ]);
+  });
+});

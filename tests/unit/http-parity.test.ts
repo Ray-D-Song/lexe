@@ -576,4 +576,63 @@ describe("node:https Server, Agent, and globalAgent parity", () => {
       expect(server.listening).toBe(false);
     }
   });
+
+  it("preserves headers passed as 3rd argument when writeHead statusMessage is undefined and supports flat header arrays", async () => {
+    const server = http.createServer((req: any, res: any) => {
+      if (req.url === "/undef-msg") {
+        res.writeHead(401, undefined as any, {
+          "content-type": "application/json",
+          "x-custom": "ok",
+        });
+        res.end('{"ok":false}');
+        return;
+      }
+      res.writeHead(200, [
+        "content-type",
+        "text/plain",
+        "x-dup",
+        "one",
+        "x-dup",
+        "two",
+      ] as any);
+      res.end("array-ok");
+    });
+    const { port, close } = await listenServer(server);
+    try {
+      const r1 = await new Promise<{ status: number; headers: any; body: string }>((resolve, reject) => {
+        http
+          .get({ host: "127.0.0.1", port, path: "/undef-msg" }, async (res: any) => {
+            resolve({
+              status: res.statusCode,
+              headers: res.headers,
+              body: await readBody(res),
+            });
+          })
+          .on("error", reject);
+      });
+      expect(r1.status).toBe(401);
+      expect(r1.headers["content-type"]).toBe("application/json");
+      expect(r1.headers["x-custom"]).toBe("ok");
+      expect(r1.body).toBe('{"ok":false}');
+
+      const r2 = await new Promise<{ status: number; headers: any; body: string }>((resolve, reject) => {
+        http
+          .get({ host: "127.0.0.1", port, path: "/flat-array" }, async (res: any) => {
+            resolve({
+              status: res.statusCode,
+              headers: res.headers,
+              body: await readBody(res),
+            });
+          })
+          .on("error", reject);
+      });
+      expect(r2.status).toBe(200);
+      expect(r2.headers["content-type"]).toBe("text/plain");
+      expect(String(r2.headers["x-dup"])).toContain("one");
+      expect(String(r2.headers["x-dup"])).toContain("two");
+      expect(r2.body).toBe("array-ok");
+    } finally {
+      await close();
+    }
+  });
 });

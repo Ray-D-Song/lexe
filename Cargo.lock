@@ -798,6 +798,7 @@ checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
 dependencies = [
  "const-oid",
  "der_derive",
+ "flagset",
  "pem-rfc7468",
  "zeroize",
 ]
@@ -1030,6 +1031,12 @@ name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
+
+[[package]]
+name = "flagset"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "flate2"
@@ -1819,7 +1826,7 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "lexe"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytes",
  "cc",
@@ -1833,6 +1840,7 @@ dependencies = [
  "lexe_http",
  "lexe_napi",
  "lexe_process",
+ "lexe_sea",
  "lexe_sqlite",
  "lexe_test",
  "lexe_timers",
@@ -1842,6 +1850,7 @@ dependencies = [
  "libsui",
  "rquickjs",
  "sha2 0.10.9",
+ "simd-json",
  "snmalloc-rs",
  "tokio",
  "tracing",
@@ -1852,7 +1861,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_abort"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_async_hooks",
  "lexe_events",
@@ -1866,7 +1875,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_assert"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -1875,7 +1884,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_async_hooks"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_hooking",
  "lexe_utils",
@@ -1885,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_buffer"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "itoa",
  "lexe_encoding",
@@ -1898,14 +1907,14 @@ dependencies = [
 
 [[package]]
 name = "lexe_build"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rustc_version",
 ]
 
 [[package]]
 name = "lexe_child_process"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "itoa",
  "lexe_buffer",
@@ -1921,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_compression"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "brotli",
  "brotlic",
@@ -1932,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_console"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_logging",
  "lexe_utils",
@@ -1941,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_constants"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_fs",
  "lexe_os",
@@ -1953,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_context"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_build",
  "lexe_test",
@@ -1965,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -2007,7 +2016,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_crypto"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2043,14 +2052,16 @@ dependencies = [
  "ring",
  "rquickjs",
  "rsa",
+ "sec1",
  "sha1 0.11.0",
  "spki",
  "x25519-dalek",
+ "x509-cert",
 ]
 
 [[package]]
 name = "lexe_dgram"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "itoa",
  "lexe_buffer",
@@ -2068,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_diagnostics_channel"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_utils",
  "rquickjs",
@@ -2076,7 +2087,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_dns"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "either",
  "lexe_context",
@@ -2091,7 +2102,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_dns_cache"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hyper-util",
  "lexe_context",
@@ -2103,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_encoding"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "base64-simd",
  "hex-simd",
@@ -2114,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_events"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_utils",
  "rquickjs",
@@ -2123,7 +2134,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_exceptions"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_utils",
  "rquickjs",
@@ -2131,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_fetch"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytes",
  "either",
@@ -2162,8 +2173,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "lexe_ffi"
+version = "0.1.4"
+dependencies = [
+ "lexe_buffer",
+ "lexe_test",
+ "lexe_utils",
+ "libffi",
+ "libloading",
+ "rquickjs",
+ "tokio",
+]
+
+[[package]]
 name = "lexe_fs"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "either",
  "junction",
@@ -2185,7 +2209,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_hooking"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_utils",
  "once_cell",
@@ -2194,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_http"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -2230,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_http2"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytes",
  "h2",
@@ -2257,7 +2281,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_inspector"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -2267,17 +2291,18 @@ dependencies = [
 
 [[package]]
 name = "lexe_intl"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "itoa",
  "jiff",
  "lexe_utils",
  "rquickjs",
+ "unicode-segmentation",
 ]
 
 [[package]]
 name = "lexe_json"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "criterion",
  "itoa",
@@ -2292,7 +2317,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_logging"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "itoa",
  "lexe_context",
@@ -2306,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_modules"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "home",
  "lexe_abort",
@@ -2323,6 +2348,7 @@ dependencies = [
  "lexe_events",
  "lexe_exceptions",
  "lexe_fetch",
+ "lexe_ffi",
  "lexe_fs",
  "lexe_hooking",
  "lexe_http",
@@ -2338,6 +2364,7 @@ dependencies = [
  "lexe_perf_hooks",
  "lexe_process",
  "lexe_querystring",
+ "lexe_sea",
  "lexe_sqlite",
  "lexe_stream_web",
  "lexe_string_decoder",
@@ -2360,12 +2387,13 @@ dependencies = [
  "simd-json",
  "tokio",
  "tracing",
+ "url",
  "v8_compat",
 ]
 
 [[package]]
 name = "lexe_napi"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_context",
  "lexe_test",
@@ -2382,14 +2410,14 @@ dependencies = [
 
 [[package]]
 name = "lexe_navigator"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rquickjs",
 ]
 
 [[package]]
 name = "lexe_net"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "itoa",
  "lexe_buffer",
@@ -2407,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_numbers"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "criterion",
  "itoa",
@@ -2420,7 +2448,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_os"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "home",
  "lexe_test",
@@ -2440,7 +2468,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_path"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "criterion",
  "lexe_utils",
@@ -2452,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_perf_hooks"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_events",
  "lexe_test",
@@ -2462,7 +2490,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_process"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_events",
  "lexe_hooking",
@@ -2478,15 +2506,28 @@ dependencies = [
 
 [[package]]
 name = "lexe_querystring"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_utils",
  "rquickjs",
 ]
 
 [[package]]
+name = "lexe_sea"
+version = "0.1.4"
+dependencies = [
+ "lexe_buffer",
+ "lexe_encoding",
+ "lexe_test",
+ "lexe_utils",
+ "rquickjs",
+ "tokio",
+ "zstd",
+]
+
+[[package]]
 name = "lexe_sqlite"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cc",
  "lexe_buffer",
@@ -2503,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_stream"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_buffer",
  "lexe_context",
@@ -2515,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_stream_web"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_abort",
  "lexe_test",
@@ -2527,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_string_decoder"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_buffer",
  "lexe_encoding",
@@ -2539,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_temporal"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "jiff",
  "lexe_utils",
@@ -2548,7 +2589,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_test"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "rquickjs",
  "uuid",
@@ -2556,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_test_tls"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "http",
  "http-body-util",
@@ -2572,7 +2613,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_timers"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_context",
  "lexe_hooking",
@@ -2585,7 +2626,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_tls"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "base64 0.22.1",
  "idna",
@@ -2616,7 +2657,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_tty"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "crossterm",
  "lexe_buffer",
@@ -2632,7 +2673,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_url"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "idna",
  "lexe_test",
@@ -2644,7 +2685,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_util"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_context",
  "lexe_encoding",
@@ -2657,7 +2698,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_utils"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_build",
  "lexe_test",
@@ -2670,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_v8"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -2680,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_vm"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_buffer",
  "lexe_test",
@@ -2692,7 +2733,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_webassembly"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_test",
  "lexe_utils",
@@ -2706,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_worker_threads"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lexe_context",
  "lexe_utils",
@@ -2717,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "lexe_zlib"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "crc32fast",
  "lexe_buffer",
@@ -2733,6 +2774,25 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libffi"
+version = "5.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a8d526bc07aa02e6826944ec446ecd8d228bd97b1cbd21e5bc5e3407a09a585"
+dependencies = [
+ "libc",
+ "libffi-sys",
+]
+
+[[package]]
+name = "libffi-sys"
+version = "4.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eab801a4ae9065bfea87f37204a7940523e752056e4a090eaaaab9b47fc826b5"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "libloading"
@@ -4242,6 +4302,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "tls_codec"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0de2e01245e2bb89d6f05801c564fa27624dbd7b1846859876c7dad82e90bf6b"
+dependencies = [
+ "tls_codec_derive",
+ "zeroize",
+]
+
+[[package]]
+name = "tls_codec_derive"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d2e76690929402faae40aebdda620a2c0e25dd6d3b9afe48867dfd95991f4bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "tokio"
 version = "1.52.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4473,7 +4554,7 @@ dependencies = [
 
 [[package]]
 name = "v8_compat"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cc",
  "libc",
@@ -5261,6 +5342,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "x509-cert"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9f58ad685a2945c7c063f5d69b5c27105d75bb85c740380d8fc64e79a098417"
+dependencies = [
+ "const-oid",
+ "der",
+ "spki",
+ "tls_codec",
+]
+
+[[package]]
 name = "x509-parser"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5367,6 +5460,20 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "zerotrie"

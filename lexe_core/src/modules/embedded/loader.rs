@@ -119,11 +119,19 @@ impl EmbeddedLoader {
         let ctx = ctx.clone();
 
         let (_, _, normalized_name, path) = Self::normalize_name(name);
+        let cache_name = path.strip_prefix("node:").unwrap_or(path);
 
-        if let Some(bytes) = BYTECODE_CACHE.get(path) {
-            trace!("Loading embedded module: {}\n", path);
+        if let Some(bytes) = BYTECODE_CACHE.get(cache_name) {
+            trace!("Loading embedded module: {}\n", cache_name);
 
-            return Ok((Self::load_bytecode_module(ctx, bytes)?, Some(path.into())));
+            return Ok((
+                Self::load_bytecode_module(ctx, bytes)?,
+                Some(cache_name.into()),
+            ));
+        }
+
+        if path.starts_with("file:") || path.starts_with("node:") {
+            return Err(Error::new_loading_message(path, "unable to load"));
         }
 
         let bytes = std::fs::read(path)?;
@@ -148,13 +156,7 @@ impl Loader for EmbeddedLoader {
         let (module, url) = Self::load_module(name, ctx)?;
         if let Some(url) = url {
             let meta: Object = module.meta()?;
-            meta.prop("url", url.as_str())?;
-            // Node 20.11+ / 24.x: import.meta.dirname / filename
-            let file_path = url.strip_prefix("file://").unwrap_or(url.as_str());
-            if let Some(parent) = std::path::Path::new(file_path).parent() {
-                meta.prop("dirname", parent.to_string_lossy().as_ref())?;
-            }
-            meta.prop("filename", file_path)?;
+            lexe_modules::module::resolver::populate_import_meta(ctx, &meta, url.as_str())?;
         }
 
         Ok(module)

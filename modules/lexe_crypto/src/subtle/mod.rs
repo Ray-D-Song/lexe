@@ -69,7 +69,7 @@ impl SubtleCrypto {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EllipticCurve {
     P256,
     P384,

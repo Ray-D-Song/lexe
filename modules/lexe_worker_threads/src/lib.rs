@@ -449,6 +449,45 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         Func::from(dispatch_worker_event_js),
     )?;
     globals.set("__lexeWorkerBroadcastEnv", Func::from(worker_broadcast_env))?;
+    // Expose global MessagePort / MessageChannel lazily from node:worker_threads so
+    // `globalThis.MessagePort === import("node:worker_threads").MessagePort` while keeping init ordering safe.
+    ctx.eval::<(), _>(
+        r#"(function() {
+  for (const name of ["MessagePort", "MessageChannel"]) {
+    if (name in globalThis) continue;
+    Object.defineProperty(globalThis, name, {
+      configurable: true,
+      enumerable: false,
+      get() {
+        let wt;
+        if (typeof process !== "undefined" && typeof process.getBuiltinModule === "function") {
+          wt = process.getBuiltinModule("node:worker_threads");
+        } else if (typeof require === "function") {
+          wt = require("node:worker_threads");
+        }
+        const val = wt && wt[name];
+        if (val !== undefined) {
+          Object.defineProperty(globalThis, name, {
+            value: val,
+            writable: true,
+            configurable: true,
+            enumerable: false,
+          });
+        }
+        return val;
+      },
+      set(v) {
+        Object.defineProperty(globalThis, name, {
+          value: v,
+          writable: true,
+          configurable: true,
+          enumerable: false,
+        });
+      },
+    });
+  }
+})();"#,
+    )?;
     Ok(())
 }
 

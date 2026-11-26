@@ -2,6 +2,7 @@ import defaultImport from "node:child_process";
 import legacyImport from "child_process";
 
 import { openSync, closeSync, readFileSync, rmSync } from "node:fs";
+import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import { platform, tmpdir } from "node:os";
 import process from "node:process";
@@ -497,5 +498,42 @@ describe("spawn options, properties, stdio, and unref", () => {
       });
       expect(mbErr?.code).toBe("ERR_CHILD_PROCESS_STDIO_MAXBUFFER");
     }
+  });
+
+  it("supports pipe, setEncoding, asyncIterator on stdout and write/end overloads on stdin", async () => {
+    // pipe + stdin write("...", "utf8", cb) -> true + end("...", cb)
+    const cmd = IS_WINDOWS ? "findstr" : "cat";
+    const args = IS_WINDOWS ? [".*"] : [];
+    const child = spawn(cmd, args);
+    const pt = new PassThrough();
+    child.stdout.pipe(pt);
+
+    const ptChunks: Buffer[] = [];
+    pt.on("data", (c: Buffer) => ptChunks.push(Buffer.from(c)));
+    const ptEnded = new Promise<void>((resolve) => pt.once("end", () => resolve()));
+
+    const wrote = await new Promise<boolean>((resolve, reject) => {
+      const ok = child.stdin.write("hello-", "utf8", (err?: any) => {
+        if (err) reject(err);
+        else resolve(ok);
+      });
+    });
+    expect(wrote).toBe(true);
+
+    await new Promise<void>((resolve) => {
+      child.stdin.end("world\n", "utf8", () => resolve());
+    });
+    await ptEnded;
+    expect(Buffer.concat(ptChunks).toString("utf8").trim()).toBe("hello-world");
+
+    // setEncoding + Symbol.asyncIterator
+    const c2 = spawn("echo", ["iter-line"]);
+    c2.stdout.setEncoding("utf8");
+    let collected = "";
+    for await (const chunk of c2.stdout as any) {
+      expect(typeof chunk).toBe("string");
+      collected += chunk;
+    }
+    expect(collected.trim()).toBe("iter-line");
   });
 });

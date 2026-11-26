@@ -446,7 +446,7 @@ typedef uint64_t js_dlimb_t;
 /* Must match the size of short_big_int in JSValueUnion */
 #define JS_LIMB_BITS 32
 #define JS_SHORT_BIG_INT_BITS JS_LIMB_BITS
-#define JS_BIGINT_MAX_SIZE ((1024 * 1024) / JS_LIMB_BITS) /* in limbs */
+#define JS_BIGINT_MAX_SIZE ((16 * 1024 * 1024) / JS_LIMB_BITS) /* in limbs (16 Mi-bits) */
 #define JS_SHORT_BIG_INT_MIN INT32_MIN
 #define JS_SHORT_BIG_INT_MAX INT32_MAX
 

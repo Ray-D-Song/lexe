@@ -19,7 +19,7 @@ use lexe_utils::{
 use rquickjs::{
     class::{Trace, Tracer},
     prelude::{Func, Opt, This},
-    Class, Ctx, Error, IntoJs, JsLifetime, Null, Object, Result, Value,
+    Array, Class, Ctx, Error, Function, IntoJs, JsLifetime, Null, Object, Result, Value,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, BufReader},
@@ -71,6 +71,7 @@ pub struct ReadableStreamInner<'js> {
     destroy_tx: Sender<Option<Value<'js>>>,
     is_ended: bool,
     is_destroyed: bool,
+    is_closed: bool,
     errored: bool,
     buffer: BytearrayBuffer,
     emit_close: bool,
@@ -135,6 +136,7 @@ impl<'js> ReadableStreamInner<'js> {
             high_water_mark: DEFAULT_BUFFER_SIZE.into(),
             listener: None,
             is_destroyed: false,
+            is_closed: false,
             emit_close,
             errored: false,
             paused: Arc::new(AtomicBool::new(false)),
@@ -238,11 +240,314 @@ where
         let proto = Class::<Self>::prototype(ctx)?
             .or_throw_msg(ctx, &["Prototype for ", Self::NAME, " not found"].concat())?;
 
-        proto.set("read", Func::from(Self::read))?;
+        proto.set("read", Func::from(Self::js_read))?;
 
         proto.set("destroy", Func::from(Self::destroy))?;
 
+        proto.set("pause", Func::from(Self::pause))?;
+
+        proto.set("resume", Func::from(Self::resume))?;
+
+        proto.set("isPaused", Func::from(Self::is_paused))?;
+
+        let state_fn = Function::new(ctx.clone(), Self::get_readable_flags)?;
+        let drain_fn = Function::new(ctx.clone(), Self::drain_for_js)?;
+        let install: Function = ctx.eval(
+            r#"(function (proto, stateFn, drainFn) {
+  if (proto.__lexeReadableHooked) return;
+  Object.defineProperty(proto, "__lexeReadableHooked", { value: true });
+
+  const kPipes = Symbol("lexe.readable.pipes");
+  const kDecoder = Symbol("lexe.readable.decoder");
+  const kEncoding = Symbol("lexe.readable.encoding");
+  const kWrappedListeners = Symbol("lexe.readable.wrapped");
+
+  Object.defineProperties(proto, {
+    readable: { get() { const s = stateFn.call(this); return !s[0] && !s[1]; }, enumerable: true, configurable: true },
+    readableEnded: { get() { return stateFn.call(this)[0]; }, enumerable: true, configurable: true },
+    destroyed: { get() { return stateFn.call(this)[1]; }, enumerable: true, configurable: true },
+    closed: { get() { return stateFn.call(this)[2]; }, enumerable: true, configurable: true },
+    readableFlowing: { get() { return stateFn.call(this)[3]; }, enumerable: true, configurable: true },
+    readableObjectMode: { value: false, enumerable: true, configurable: true },
+  });
+
+  function decodeChunk(stream, chunk) {
+    if (chunk === null || chunk === undefined) return chunk;
+    const dec = stream[kDecoder];
+    if (!dec) return chunk;
+    if (typeof chunk === "string") return chunk;
+    if (typeof dec.write === "function") return dec.write(chunk);
+    if (typeof dec.decode === "function") return dec.decode(chunk, { stream: true });
+    return Buffer.isBuffer(chunk) ? chunk.toString(stream[kEncoding]) : chunk;
+  }
+
+  const origRead = proto.read;
+  if (typeof origRead === "function") {
+    proto.read = function (size) {
+      const chunk = origRead.call(this, size);
+      return decodeChunk(this, chunk);
+    };
+  }
+
+  proto.setEncoding = function (encoding) {
+    const enc = String(encoding);
+    this[kEncoding] = enc;
+    if (typeof require === "function") {
+      try {
+        const { StringDecoder } = require("node:string_decoder");
+        this[kDecoder] = new StringDecoder(enc);
+        return this;
+      } catch {}
+    }
+    this[kDecoder] = new TextDecoder(enc);
+    return this;
+  };
+
+  proto.pipe = function (dest, options) {
+    const src = this;
+    if (!dest || typeof dest.write !== "function") {
+      throw new TypeError("dest must be a writable stream");
+    }
+    const endDest = !options || options.end !== false;
+    let list = src[kPipes];
+    if (!list) {
+      list = [];
+      src[kPipes] = list;
+    }
+
+    let cleaned = false;
+    let pausedByPipe = false;
+
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      src.off("data", onData);
+      src.off("end", onEnd);
+      src.off("close", onClose);
+      if (typeof dest.off === "function") {
+        dest.off("drain", onDrain);
+        dest.off("close", cleanup);
+        dest.off("finish", cleanup);
+      }
+      const arr = src[kPipes];
+      if (arr) {
+        const idx = arr.findIndex((p) => p.dest === dest);
+        if (idx !== -1) arr.splice(idx, 1);
+      }
+    };
+
+    const onDrain = () => {
+      if (pausedByPipe) {
+        pausedByPipe = false;
+        src.resume();
+      }
+    };
+
+    const onData = (chunk) => {
+      const ok = dest.write(chunk);
+      if (ok === false && !cleaned) {
+        pausedByPipe = true;
+        src.pause();
+      }
+    };
+
+    const onEnd = () => {
+      cleanup();
+      if (endDest && typeof dest.end === "function") {
+        dest.end();
+      }
+    };
+
+    const onClose = () => {
+      cleanup();
+    };
+
+    list.push({ dest, cleanup });
+    if (typeof dest.on === "function") {
+      dest.on("drain", onDrain);
+      dest.once("close", cleanup);
+      dest.once("finish", cleanup);
+    }
+    if (typeof dest.emit === "function") {
+      dest.emit("pipe", src);
+    }
+    src.on("data", onData);
+    src.once("end", onEnd);
+    src.once("close", onClose);
+    if (src.readableEnded) {
+      queueMicrotask(onEnd);
+    }
+    return dest;
+  };
+
+  proto.unpipe = function (dest) {
+    const arr = this[kPipes];
+    if (!arr || arr.length === 0) return this;
+    if (dest === undefined) {
+      for (const item of arr.slice()) {
+        item.cleanup();
+        if (typeof item.dest.emit === "function") {
+          item.dest.emit("unpipe", this);
+        }
+      }
+      return this;
+    }
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i].dest === dest) {
+        const item = arr[i];
+        item.cleanup();
+        if (typeof dest.emit === "function") {
+          dest.emit("unpipe", this);
+        }
+      }
+    }
+    return this;
+  };
+
+  const origResume = proto.resume;
+  if (typeof origResume === "function") {
+    proto.resume = function () {
+      const ret = origResume.call(this);
+      queueMicrotask(() => {
+        try { drainFn.call(this); } catch {}
+      });
+      return ret;
+    };
+  }
+
+  for (const m of ["on", "once", "addListener", "prependListener", "prependOnceListener"]) {
+    const orig = proto[m];
+    if (typeof orig !== "function") continue;
+    proto[m] = function (ev, listener) {
+      if (ev === "data" && typeof listener === "function") {
+        let map = this[kWrappedListeners];
+        if (!map) {
+          map = new WeakMap();
+          this[kWrappedListeners] = map;
+        }
+        let wrapped = map.get(listener);
+        if (!wrapped) {
+          const stream = this;
+          wrapped = function (chunk) {
+            return listener.call(this, decodeChunk(stream, chunk));
+          };
+          map.set(listener, wrapped);
+        }
+        const ret = orig.call(this, ev, wrapped);
+        queueMicrotask(() => {
+          try {
+            if (!this.isPaused()) drainFn.call(this);
+          } catch {}
+        });
+        return ret;
+      }
+      return orig.call(this, ev, listener);
+    };
+  }
+
+  for (const m of ["off", "removeListener"]) {
+    const orig = proto[m];
+    if (typeof orig !== "function") continue;
+    proto[m] = function (ev, listener) {
+      if (ev === "data" && typeof listener === "function" && this[kWrappedListeners]) {
+        const wrapped = this[kWrappedListeners].get(listener);
+        if (wrapped) return orig.call(this, ev, wrapped);
+      }
+      return orig.call(this, ev, listener);
+    };
+  }
+
+  proto[Symbol.asyncIterator] = async function* () {
+    const queue = [];
+    let ended = Boolean(this.readableEnded);
+    let err = null;
+    let notify = null;
+    const wake = () => {
+      if (notify) {
+        const fn = notify;
+        notify = null;
+        fn();
+      }
+    };
+    const onData = (chunk) => { queue.push(chunk); wake(); };
+    const onEnd = () => { ended = true; wake(); };
+    const onClose = () => { ended = true; wake(); };
+    const onError = (e) => { err = e; ended = true; wake(); };
+    this.on("data", onData);
+    this.once("end", onEnd);
+    this.once("close", onClose);
+    this.once("error", onError);
+    try {
+      while (true) {
+        while (queue.length > 0) {
+          yield queue.shift();
+        }
+        if (err !== null) throw err;
+        if (ended) return;
+        await new Promise((resolve) => { notify = resolve; });
+      }
+    } finally {
+      this.off("data", onData);
+      this.off("end", onEnd);
+      this.off("close", onClose);
+      this.off("error", onError);
+    }
+  };
+})"#,
+        )?;
+        install.call::<_, ()>((proto, state_fn, drain_fn))?;
+
         Ok(())
+    }
+
+    fn get_readable_flags(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        let borrow = this.borrow();
+        let inner = borrow.inner();
+        let arr = Array::new(ctx.clone())?;
+        arr.set(0, inner.is_ended)?;
+        arr.set(1, inner.is_destroyed)?;
+        arr.set(2, inner.is_closed)?;
+        let flowing: Value<'js> = match inner.state {
+            ReadableState::Init => Null.into_value(ctx.clone()),
+            ReadableState::Flowing => true.into_js(&ctx)?,
+            ReadableState::Paused => false.into_js(&ctx)?,
+        };
+        arr.set(3, flowing)?;
+        arr.into_js(&ctx)
+    }
+
+    fn drain_for_js(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<()> {
+        Self::drain(this.0, &ctx)
+    }
+
+    fn pause(this: This<Class<'js, Self>>) -> Class<'js, Self> {
+        {
+            let mut borrow = this.borrow_mut();
+            let inner = borrow.inner_mut();
+            inner.state = ReadableState::Paused;
+            inner.paused.store(true, Ordering::Release);
+        }
+        this.0
+    }
+
+    fn resume(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Class<'js, Self>> {
+        {
+            let mut borrow = this.borrow_mut();
+            let inner = borrow.inner_mut();
+            if inner.state != ReadableState::Flowing {
+                inner.state = ReadableState::Flowing;
+                let _ = inner.data_listener_attached_tx.send(());
+            }
+            inner.paused.store(false, Ordering::Release);
+        }
+        let _ = Self::drain(this.0.clone(), &ctx);
+        Ok(this.0)
+    }
+
+    fn is_paused(this: This<Class<'js, Self>>) -> bool {
+        let borrow = this.borrow();
+        let inner = borrow.inner();
+        matches!(inner.state, ReadableState::Paused) || inner.paused.load(Ordering::Acquire)
     }
 
     fn destroy(this: This<Class<'js, Self>>, error: Opt<Value<'js>>) -> Class<'js, Self> {
@@ -252,6 +557,14 @@ where
         let _ = inner.destroy_tx.send(error.0);
         drop(borrow);
         this.0
+    }
+
+    fn js_read(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        size: Opt<Option<usize>>,
+    ) -> Result<Value<'js>> {
+        Self::read(this, ctx, Opt(size.0.flatten()))
     }
 
     fn read(this: This<Class<'js, Self>>, ctx: Ctx<'js>, size: Opt<usize>) -> Result<Value<'js>> {
@@ -588,7 +901,6 @@ where
             let read_function = async move {
                 let mut reader = Some(BufReader::new(readable));
                 let mut buffer = Vec::<u8>::with_capacity(DEFAULT_BUFFER_SIZE);
-                let mut last_state = ReadableState::Init;
                 let mut error_value = None;
                 let io_loop_ref = io_loop_ref;
 
@@ -642,9 +954,11 @@ where
 
                                 match state {
                                     ReadableState::Flowing => {
-                                        if last_state == ReadableState::Paused {
-                                            if let Some(empty_buffer) = ba_buffer.read(None) {
-                                                buffer.extend(empty_buffer);
+                                        if let Some(buffered) = ba_buffer.read(None) {
+                                            if !buffered.is_empty() {
+                                                let mut merged = buffered;
+                                                merged.extend_from_slice(&buffer);
+                                                buffer = merged;
                                             }
                                         }
 
@@ -685,12 +999,15 @@ where
                                             }
                                             break;
                                         } else if !this2.borrow().inner().has_consumer() {
-                                            // Nobody consumes this stream: buffering
-                                            // past the high-water mark would block on
-                                            // backpressure until the child exits, and
-                                            // the exit path itself waits for this loop.
-                                            // Node still emits `close` here, so drop the
-                                            // bytes and keep draining to EOF.
+                                            // Buffer initial bytes up to the high-water mark so an
+                                            // async consumer attaching on a later tick (e.g. `.pipe`)
+                                            // receives early output, without blocking unconsumed pipes.
+                                            let avail =
+                                                DEFAULT_BUFFER_SIZE.saturating_sub(ba_buffer.len());
+                                            if avail > 0 && !buffer.is_empty() {
+                                                let take = buffer.len().min(avail);
+                                                ba_buffer.write_forced(&buffer[..take]);
+                                            }
                                             buffer.clear();
                                             buffer.reserve(DEFAULT_BUFFER_SIZE);
                                         } else {
@@ -712,9 +1029,7 @@ where
                                                     set_destroyed_and_error(&mut is_destroyed,  &mut error_value, error);
                                                     break;
                                                 }
-                                                _ = listener_attached_tx.recv() => {
-                                                    ba_buffer.clear().await
-                                                }
+                                                _ = listener_attached_tx.recv() => {}
                                                 _ = handoff_rx.recv() => {
                                                     handoff_requested = true;
                                                 }
@@ -749,10 +1064,6 @@ where
                                         }
                                     },
                                 }
-
-                                last_state = state;
-
-
                             }
                             error = destroy_rx.recv()  => {
                                 set_destroyed_and_error(&mut is_destroyed,  &mut error_value, error);
@@ -805,6 +1116,7 @@ where
             let had_error = read_function.emit_error("readable",&ctx2, this.clone())?;
 
             if emit_close && !handoff_completed.load(Ordering::SeqCst) {
+                this.borrow_mut().inner_mut().is_closed = true;
                 Self::emit_close(this,&ctx2,had_error)?;
             }
 

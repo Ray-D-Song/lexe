@@ -99,6 +99,47 @@ const STREAM_CLASSES: &[&str] = &[
     "ZstdDecompress",
 ];
 
+/// Legacy top-level zlib constants mirrored from `zlib.constants`.
+const LEGACY_CONSTANTS: &[&str] = &[
+    "Z_NO_FLUSH",
+    "Z_PARTIAL_FLUSH",
+    "Z_SYNC_FLUSH",
+    "Z_FULL_FLUSH",
+    "Z_FINISH",
+    "Z_BLOCK",
+    "Z_TREES",
+    "Z_OK",
+    "Z_STREAM_END",
+    "Z_NEED_DICT",
+    "Z_ERRNO",
+    "Z_STREAM_ERROR",
+    "Z_DATA_ERROR",
+    "Z_MEM_ERROR",
+    "Z_BUF_ERROR",
+    "Z_VERSION_ERROR",
+    "Z_NO_COMPRESSION",
+    "Z_BEST_SPEED",
+    "Z_BEST_COMPRESSION",
+    "Z_DEFAULT_COMPRESSION",
+    "Z_DEFAULT_STRATEGY",
+    "Z_FILTERED",
+    "Z_HUFFMAN_ONLY",
+    "Z_RLE",
+    "Z_FIXED",
+    "Z_MIN_WINDOWBITS",
+    "Z_MAX_WINDOWBITS",
+    "Z_DEFAULT_WINDOWBITS",
+    "Z_MIN_CHUNK",
+    "Z_MAX_CHUNK",
+    "Z_DEFAULT_CHUNK",
+    "Z_MIN_MEMLEVEL",
+    "Z_MAX_MEMLEVEL",
+    "Z_DEFAULT_MEMLEVEL",
+    "Z_MIN_LEVEL",
+    "Z_MAX_LEVEL",
+    "Z_DEFAULT_LEVEL",
+];
+
 /// Builds the streaming half of `node:zlib` on top of `stream.Transform`.
 ///
 /// `build(createEncoder)` receives the Rust encoder constructor
@@ -380,6 +421,9 @@ impl ModuleDef for ZlibModule {
         for &name in STREAM_CLASSES {
             declare.declare(name)?;
         }
+        for &name in LEGACY_CONSTANTS {
+            declare.declare(name)?;
+        }
         declare.declare("constants")?;
 
         declare.declare("default")?;
@@ -440,8 +484,13 @@ impl ModuleDef for ZlibModule {
                 default.set(name, class)?;
             }
 
-            let constants = glue.get::<_, Function>("constants")?;
-            default.set("constants", constants.call::<_, Object>(())?)?;
+            let constants_fn = glue.get::<_, Function>("constants")?;
+            let constants_obj: Object = constants_fn.call(())?;
+            for &name in LEGACY_CONSTANTS {
+                let val: Value = constants_obj.get(name)?;
+                default.set(name, val)?;
+            }
+            default.set("constants", constants_obj)?;
 
             Ok(())
         })

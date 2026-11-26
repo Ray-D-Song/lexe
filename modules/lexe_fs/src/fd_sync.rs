@@ -319,67 +319,10 @@ pub(crate) fn with_fd<T>(
 pub fn open_sync<'js>(
     ctx: Ctx<'js>,
     path: String,
-    flags: Opt<String>,
-    mode: Opt<u32>,
+    flags: Opt<Value<'js>>,
+    mode: Opt<Value<'js>>,
 ) -> Result<i32> {
-    use std::fs::OpenOptions;
-
-    let flag = flags.0.unwrap_or_else(|| "r".to_string());
-    if flag.contains('r') || flag.contains('+') {
-        lexe_utils::permissions::ensure_fs_read(&ctx, &path)?;
-    }
-    if flag != "r" {
-        lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
-    }
-
-    let mut options = OpenOptions::new();
-    match flag.as_str() {
-        "r" | "rs" | "sr" => {
-            options.read(true);
-        },
-        "r+" | "rs+" | "sr+" => {
-            options.read(true).write(true);
-        },
-        "w" => {
-            options.write(true).create(true).truncate(true);
-        },
-        "wx" | "xw" => {
-            options.write(true).create_new(true);
-        },
-        "w+" => {
-            options.read(true).write(true).create(true).truncate(true);
-        },
-        "wx+" | "xw+" => {
-            options.read(true).write(true).create_new(true);
-        },
-        "a" | "as" => {
-            options.append(true).create(true);
-        },
-        "ax" | "xa" => {
-            options.append(true).create_new(true);
-        },
-        "a+" | "as+" => {
-            options.read(true).append(true).create(true);
-        },
-        "ax+" | "xa+" => {
-            options.read(true).append(true).create_new(true);
-        },
-        _ => {
-            return Err(throw_invalid_arg_value(
-                &ctx,
-                &format!("The argument 'flags' is invalid. Received '{flag}'"),
-            ));
-        },
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(mode.0.unwrap_or(0o666));
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = mode;
-    }
+    let (options, _crt) = crate::open::build_std_open_options(&ctx, &path, flags, mode)?;
 
     let path_buf = PathBuf::from(&path);
     let file = options

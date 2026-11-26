@@ -406,4 +406,25 @@ describe("fs and fs/promises full Node.js parity", () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("chmod and chmodSync report ENOENT error codes for missing files", async () => {
+    const dir = makeTmpDir();
+    const missing = path.join(dir, "missing.db-shm");
+    try {
+      await expect(FP.chmod(missing, 0o600)).rejects.toMatchObject({
+        code: "ENOENT",
+        syscall: "chmod",
+      });
+      let syncErr: any;
+      try {
+        fs.chmodSync(missing, 0o600);
+      } catch (e) {
+        syncErr = e;
+      }
+      expect(syncErr?.code).toBe("ENOENT");
+      expect(syncErr?.syscall).toBe("chmod");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

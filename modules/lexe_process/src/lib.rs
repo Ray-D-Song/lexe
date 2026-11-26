@@ -876,6 +876,7 @@ impl ModuleDef for ProcessModule {
             }
         }
 
+        declare.declare("getBuiltinModule")?;
         declare.declare("default")?;
         Ok(())
     }
@@ -909,6 +910,10 @@ impl ModuleDef for ProcessModule {
             }
         }
 
+        let get_builtin = process
+            .get::<_, Value>("getBuiltinModule")
+            .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+        exports.export("getBuiltinModule", get_builtin)?;
         exports.export("default", process)?;
 
         Ok(())

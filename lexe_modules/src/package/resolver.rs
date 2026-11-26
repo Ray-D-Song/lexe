@@ -125,11 +125,20 @@ impl Resolver for PackageResolver {
             return Ok(name.to_string());
         }
 
+        if let Some((fs_path, _)) = crate::module::resolver::file_url_to_path_and_query(name) {
+            if Path::new(&fs_path).is_file() {
+                return Ok(name.to_string());
+            }
+        }
+
         let base = base.trim_start_matches(CJS_IMPORT_PREFIX);
+        let base_fs = crate::module::resolver::file_url_to_path_and_query(base)
+            .map(|(p, _)| p)
+            .unwrap_or_else(|| base.to_string());
 
-        trace!("Try resolve '{}' from '{}'", name, base);
+        trace!("Try resolve '{}' from '{}'", name, base_fs);
 
-        require_resolve(ctx, name, base, None, true).map(|name| name.into_owned())
+        require_resolve(ctx, name, &base_fs, None, true).map(|name| name.into_owned())
     }
 }
 

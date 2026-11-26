@@ -398,13 +398,18 @@ fn dlopen_impl(
     }
 
     if let Some(module) = take_pending_module() {
-        return run_register_func(
+        let final_exports = run_register_func(
             napi_env,
             module.nm_register_func,
             exports_napi,
             ctx_ptr,
             exports_obj,
-        );
+        )?;
+        std::mem::forget(library);
+        unsafe {
+            (*env_ptr).close_all_scopes();
+        }
+        return Ok(final_exports);
     }
 
     type RegisterV1Fn = unsafe extern "C" fn(env: napi_env, exports: napi_value) -> napi_value;
@@ -458,5 +463,17 @@ pub fn process_dlopen(
     filename: &str,
     _flags: u32,
 ) -> Result<JSValue, String> {
-    dlopen_impl(ctx_ptr, module_exports, filename)
+    #[cfg(target_env = "musl")]
+    {
+        let _ = (ctx_ptr, module_exports, filename);
+        Err(
+            "Native addon loading requires a dynamically linked lexe build (not musl+static)"
+                .to_string(),
+        )
+    }
+
+    #[cfg(not(target_env = "musl"))]
+    {
+        dlopen_impl(ctx_ptr, module_exports, filename)
+    }
 }

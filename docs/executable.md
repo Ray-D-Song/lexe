@@ -62,6 +62,18 @@ This produces:
 - `-d, --outdir <dir>`: Output directory (defaults to `./dist` when `-p` is used).
 - `-p, --platform <list>`: Comma-separated list of target platforms.
 - `--runtime-dir <dir>`: Local directory containing prebuilt `lexe` binaries for target platforms (can also be set via `LEXE_BIN_DIR`).
+- `--sea-config <file>`: Read the entrypoint, output path, and named assets from a JSON SEA configuration; enables `node:sea` in the compiled application.
+- `--sea`: Enable SEA mode without a configuration file.
+- `--asset <key>=<path>`: Embed a named asset; may be repeated.
+- `--assets-dir <dir>`: Embed a directory, using relative paths as asset keys.
+
+### Embedded Assets
+
+```shell
+lexe compile app.mjs --executable --asset greeting.txt=./greeting.txt -o my-app
+```
+
+The bundled script can read the asset with `getAsset("greeting.txt", "utf8")` from `node:sea`. Assets are compressed inside the executable, so the original files are not needed at runtime. A SEA configuration can also provide `main`, `output`, and an `assets` map from keys to file paths. Lexe's compiled container is distinct from Node's SEA blob format.
 
 ## Runtime Template Resolution & Auto-Download
 

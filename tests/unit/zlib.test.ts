@@ -351,5 +351,7 @@ describe("unzip, crc32, streaming controls, and zlib options", () => {
     expect(toClose.bytesWritten).toBe(3);
     await new Promise<void>((resolve) => toClose.close(() => resolve()));
     expect(toClose.bytesWritten).toBe(3);
+    expect(zlib.Z_SYNC_FLUSH).toBe(zlib.constants.Z_SYNC_FLUSH);
+    expect(zlib.Z_DEFAULT_COMPRESSION).toBe(zlib.constants.Z_DEFAULT_COMPRESSION);
   });
 });

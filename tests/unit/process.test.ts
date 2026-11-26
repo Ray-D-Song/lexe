@@ -674,4 +674,16 @@ describe("extended Node process APIs", () => {
       rmSync(deniedFile, { force: true });
     }
   });
+
+  it("supports process.getBuiltinModule for ordinary, node:-prefixed, and missing modules", () => {
+    const fsMod = process.getBuiltinModule("fs");
+    const nodeFsMod = process.getBuiltinModule("node:fs");
+    expect(typeof fsMod.readFileSync).toBe("function");
+    expect(nodeFsMod).toBe(fsMod);
+    const seaMod = process.getBuiltinModule("node:sea");
+    expect(typeof seaMod.isSea).toBe("function");
+    expect(process.getBuiltinModule("sea")).toBeUndefined();
+    expect(process.getBuiltinModule("nonexistent-builtin")).toBeUndefined();
+    expect(process.getBuiltinModule(123 as any)).toBeUndefined();
+  });
 });

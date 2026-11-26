@@ -39,12 +39,12 @@ pub mod crt_flags {
 pub fn crt_flags_for_node_open(flags: &str) -> i32 {
     use crt_flags::*;
     match flags {
-        "r" => O_RDONLY | O_BINARY,
-        "r+" => O_RDWR | O_BINARY,
-        "w" | "wx" => O_WRONLY | O_BINARY,
-        "w+" | "wx+" => O_RDWR | O_BINARY,
-        "a" | "ax" => O_WRONLY | O_APPEND | O_BINARY,
-        "a+" => O_RDWR | O_APPEND | O_BINARY,
+        "r" | "rs" | "sr" => O_RDONLY | O_BINARY,
+        "r+" | "rs+" | "sr+" => O_RDWR | O_BINARY,
+        "w" | "wx" | "xw" => O_WRONLY | O_BINARY,
+        "w+" | "wx+" | "xw+" => O_RDWR | O_BINARY,
+        "a" | "as" | "ax" | "xa" => O_WRONLY | O_APPEND | O_BINARY,
+        "a+" | "as+" | "ax+" | "xa+" => O_RDWR | O_APPEND | O_BINARY,
         // Default read (same as open default "r").
         _ => O_RDONLY | O_BINARY,
     }
@@ -280,12 +280,12 @@ impl FileHandle {
     async fn read<'js>(
         &mut self,
         ctx: Ctx<'js>,
-        buffer_or_options: Opt<Either<ArrayBufferView<'js>, ReadOptions<'js>>>,
-        options_or_offset: Opt<Either<ReadOptions<'js>, usize>>,
-        length: Opt<usize>,
+        buffer_or_options: Opt<Option<Either<ArrayBufferView<'js>, ReadOptions<'js>>>>,
+        options_or_offset: Opt<Option<Either<ReadOptions<'js>, usize>>>,
+        length: Opt<Option<usize>>,
         position: Opt<Option<i64>>,
     ) -> Result<Object<'js>> {
-        let options_1 = match buffer_or_options.0 {
+        let options_1 = match buffer_or_options.0.flatten() {
             Some(Either::Left(buffer)) => ReadOptions {
                 buffer: Some(buffer),
                 ..Default::default()
@@ -293,7 +293,7 @@ impl FileHandle {
             Some(Either::Right(options)) => options,
             None => ReadOptions::default(),
         };
-        let options_2 = match options_or_offset.0 {
+        let options_2 = match options_or_offset.0.flatten() {
             Some(Either::Left(options)) => options,
             Some(Either::Right(offset)) => ReadOptions {
                 offset: Some(offset),
@@ -312,7 +312,7 @@ impl FileHandle {
         let length = options_1
             .length
             .or(options_2.length)
-            .or(length.0)
+            .or(length.0.flatten())
             .unwrap_or_else(|| buffer.len().saturating_sub(offset));
         let position = options_1
             .position
@@ -436,7 +436,7 @@ impl FileHandle {
     async fn read_file<'js>(
         &mut self,
         ctx: Ctx<'js>,
-        options: Opt<Either<String, read_file::ReadFileOptions>>,
+        options: Opt<Option<Either<String, read_file::ReadFileOptions>>>,
     ) -> Result<Value<'js>> {
         let size = self
             .file(&ctx)?
@@ -473,8 +473,8 @@ impl FileHandle {
             .or_throw_msg(&ctx, "Can't sync file")
     }
 
-    async fn truncate(&mut self, ctx: Ctx<'_>, len: Opt<u64>) -> Result<()> {
-        let len = len.0.unwrap_or(0);
+    async fn truncate(&mut self, ctx: Ctx<'_>, len: Opt<Option<u64>>) -> Result<()> {
+        let len = len.0.flatten().unwrap_or(0);
         self.file_mut(&ctx)?
             .set_len(len)
             .await
@@ -514,12 +514,12 @@ impl FileHandle {
         &mut self,
         ctx: Ctx<'js>,
         buffer_or_string: Either<ArrayBufferView<'js>, String>,
-        offset_or_options_or_position: Opt<Either<Either<i64, Null>, WriteOptions>>,
-        length_or_encoding: Opt<Either<usize, String>>,
+        offset_or_options_or_position: Opt<Option<Either<Either<i64, Null>, WriteOptions>>>,
+        length_or_encoding: Opt<Option<Either<usize, String>>>,
         position: Opt<Option<i64>>,
     ) -> Result<Object<'js>> {
         let mut pos_from_str_arg2 = None;
-        let mut options = match offset_or_options_or_position.0 {
+        let mut options = match offset_or_options_or_position.0.flatten() {
             Some(Either::Left(Either::Left(offset_or_position))) => {
                 if buffer_or_string.is_left() {
                     WriteOptions {
@@ -534,7 +534,8 @@ impl FileHandle {
             Some(Either::Right(options)) => options,
             _ => WriteOptions::default(),
         };
-        if let Some(Either::Left(length)) = length_or_encoding.0 {
+        let length_or_encoding = length_or_encoding.0.flatten();
+        if let Some(Either::Left(length)) = length_or_encoding {
             options.length = Some(length);
         }
 
@@ -545,7 +546,6 @@ impl FileHandle {
             },
             Either::Right(string) => {
                 let encoding = length_or_encoding
-                    .0
                     .and_then(|e| e.right())
                     .unwrap_or_else(|| DEFAULT_ENCODING.to_string());
                 let buffer = Encoder::from_str(&encoding)
@@ -675,9 +675,9 @@ impl FileHandle {
         &mut self,
         ctx: Ctx<'js>,
         data: Either<ArrayBufferView<'js>, String>,
-        options_or_encoding: Opt<Either<WriteFileOptions, String>>,
+        options_or_encoding: Opt<Option<Either<WriteFileOptions, String>>>,
     ) -> Result<()> {
-        let encoding = match options_or_encoding.0 {
+        let encoding = match options_or_encoding.0.flatten() {
             Some(Either::Left(options)) => options.encoding,
             Some(Either::Right(encoding)) => Some(encoding),
             _ => None,
@@ -714,7 +714,7 @@ impl FileHandle {
         &mut self,
         ctx: Ctx<'js>,
         data: Either<ArrayBufferView<'js>, String>,
-        options_or_encoding: Opt<Either<WriteFileOptions, String>>,
+        options_or_encoding: Opt<Option<Either<WriteFileOptions, String>>>,
     ) -> Result<()> {
         let file = self.file_mut(&ctx)?;
 
@@ -726,7 +726,7 @@ impl FileHandle {
             .await
             .or_throw_msg(&ctx, "Failed to seek file")?;
 
-        let encoding = match options_or_encoding.0 {
+        let encoding = match options_or_encoding.0.flatten() {
             Some(Either::Left(options)) => options.encoding,
             Some(Either::Right(encoding)) => Some(encoding),
             _ => None,

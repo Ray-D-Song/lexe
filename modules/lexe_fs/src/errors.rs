@@ -12,6 +12,17 @@ pub fn io_error_code(err: &io::Error) -> &'static str {
         match raw {
             libc::EPERM => return "EPERM",
             libc::EBADF => return "EBADF",
+            libc::ELOOP => return "ELOOP",
+            libc::ENOTEMPTY => return "ENOTEMPTY",
+            libc::EXDEV => return "EXDEV",
+            libc::EMFILE => return "EMFILE",
+            libc::ENFILE => return "ENFILE",
+            libc::EROFS => return "EROFS",
+            libc::ENAMETOOLONG => return "ENAMETOOLONG",
+            libc::ESPIPE => return "ESPIPE",
+            libc::EFBIG => return "EFBIG",
+            libc::ENODEV => return "ENODEV",
+            libc::ENXIO => return "ENXIO",
             libc::ENOSPC => return "ENOSPC",
             libc::ENOSYS => return "ENOSYS",
             #[allow(unreachable_patterns)]

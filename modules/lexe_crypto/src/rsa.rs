@@ -12,8 +12,17 @@ use crate::hash::HashAlgorithm;
 use crate::provider::{CryptoError, CryptoProvider};
 use crate::CRYPTO_PROVIDER;
 
-/// Node `crypto.constants.RSA_PKCS1_OAEP_PADDING`.
+/// Node `crypto.constants` RSA & EC point conversion constants.
+pub const RSA_PKCS1_PADDING: i32 = 1;
+pub const RSA_NO_PADDING: i32 = 3;
 pub const RSA_PKCS1_OAEP_PADDING: i32 = 4;
+pub const RSA_PKCS1_PSS_PADDING: i32 = 6;
+pub const RSA_PSS_SALTLEN_DIGEST: i32 = -1;
+pub const RSA_PSS_SALTLEN_MAX_SIGN: i32 = -2;
+pub const RSA_PSS_SALTLEN_AUTO: i32 = -2;
+pub const POINT_CONVERSION_COMPRESSED: i32 = 2;
+pub const POINT_CONVERSION_UNCOMPRESSED: i32 = 4;
+pub const POINT_CONVERSION_HYBRID: i32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RsaKeyError {
@@ -320,7 +329,19 @@ pub fn public_encrypt<'js>(
 /// Build the `crypto.constants` object with the supported padding constant.
 pub fn create_constants_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
     let constants = Object::new(ctx.clone())?;
+    constants.set("RSA_PKCS1_PADDING", RSA_PKCS1_PADDING)?;
+    constants.set("RSA_NO_PADDING", RSA_NO_PADDING)?;
     constants.set("RSA_PKCS1_OAEP_PADDING", RSA_PKCS1_OAEP_PADDING)?;
+    constants.set("RSA_PKCS1_PSS_PADDING", RSA_PKCS1_PSS_PADDING)?;
+    constants.set("RSA_PSS_SALTLEN_DIGEST", RSA_PSS_SALTLEN_DIGEST)?;
+    constants.set("RSA_PSS_SALTLEN_MAX_SIGN", RSA_PSS_SALTLEN_MAX_SIGN)?;
+    constants.set("RSA_PSS_SALTLEN_AUTO", RSA_PSS_SALTLEN_AUTO)?;
+    constants.set("POINT_CONVERSION_COMPRESSED", POINT_CONVERSION_COMPRESSED)?;
+    constants.set(
+        "POINT_CONVERSION_UNCOMPRESSED",
+        POINT_CONVERSION_UNCOMPRESSED,
+    )?;
+    constants.set("POINT_CONVERSION_HYBRID", POINT_CONVERSION_HYBRID)?;
     Ok(constants)
 }
 

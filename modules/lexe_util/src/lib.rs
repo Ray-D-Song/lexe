@@ -356,9 +356,7 @@ fn get_or_create_types_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         || types.isSymbolObject(value);
     },
 
-    // --- platform objects that cannot exist here --------------------------
-    // Node registers these only when the corresponding subsystem is present;
-    // reporting `false` is the correct answer for every value.
+    // Native object checks use hooks from the corresponding subsystem.
     isExternal(value) {
       return typeof value === "object" && value !== null
         && !!globalThis.__lexeIsExternal
@@ -1113,6 +1111,171 @@ fn parse_env_js<'js>(ctx: Ctx<'js>, content: Value<'js>) -> Result<Object<'js>> 
     Ok(obj)
 }
 
+fn create_is_deep_strict_equal<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
+    ctx.eval(
+        r#"(function () {
+  const objectToString = Object.prototype.toString;
+  const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+  const isObjectLike = (v) => typeof v === "object" && v !== null;
+  const tagOf = (v) => objectToString.call(v).slice(8, -1);
+
+  function ownEnumerableKeys(obj) {
+    const keys = Object.keys(obj);
+    for (const sym of Object.getOwnPropertySymbols(obj)) {
+      if (Object.getOwnPropertyDescriptor(obj, sym).enumerable) keys.push(sym);
+    }
+    return keys;
+  }
+
+  function bytesEqual(x, y) {
+    if (x.length !== y.length) return false;
+    for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false;
+    return true;
+  }
+
+  function viewBytes(view) {
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
+
+  function keysEqual(a, b, keysA, keysB, seen) {
+    if (keysA.length !== keysB.length) return false;
+    const remaining = keysB.slice();
+    for (const ka of keysA) {
+      const idx = remaining.indexOf(ka);
+      if (idx === -1) return false;
+      remaining.splice(idx, 1);
+      if (!inner(a[ka], b[ka], seen)) return false;
+    }
+    return true;
+  }
+
+  function mapsEqual(a, b, seen) {
+    if (a.size !== b.size) return false;
+    const bEntries = Array.from(b.entries());
+    const used = new Array(bEntries.length).fill(false);
+    for (const [ak, av] of a.entries()) {
+      let found = false;
+      for (let i = 0; i < bEntries.length; i++) {
+        if (used[i]) continue;
+        if (inner(ak, bEntries[i][0], seen) && inner(av, bEntries[i][1], seen)) {
+          used[i] = true;
+          found = true;
+          break;
+        }
+      }
+      if (!found) return false;
+    }
+    return true;
+  }
+
+  function setsEqual(a, b, seen) {
+    if (a.size !== b.size) return false;
+    const bItems = Array.from(b);
+    const used = new Array(bItems.length).fill(false);
+    for (const av of a) {
+      let found = false;
+      for (let i = 0; i < bItems.length; i++) {
+        if (used[i]) continue;
+        if (inner(av, bItems[i], seen)) {
+          used[i] = true;
+          found = true;
+          break;
+        }
+      }
+      if (!found) return false;
+    }
+    return true;
+  }
+
+  function inner(a, b, seen) {
+    if (Object.is(a, b)) return true;
+    if (!isObjectLike(a) || !isObjectLike(b)) return false;
+
+    for (const pair of seen) {
+      if (pair[0] === a && pair[1] === b) return true;
+    }
+
+    const tagA = tagOf(a);
+    const tagB = tagOf(b);
+    if (tagA !== tagB) return false;
+    if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
+
+    const nextSeen = seen.concat([[a, b]]);
+
+    switch (tagA) {
+      case "Date":
+        if (!Object.is(a.getTime(), b.getTime())) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "RegExp":
+        if (a.source !== b.source || a.flags !== b.flags) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "Number":
+      case "String":
+      case "Boolean":
+      case "BigInt":
+      case "Symbol":
+        if (!Object.is(a.valueOf(), b.valueOf())) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "ArrayBuffer":
+      case "SharedArrayBuffer":
+        if (a.byteLength !== b.byteLength) return false;
+        if (!bytesEqual(new Uint8Array(a), new Uint8Array(b))) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "DataView":
+        if (a.byteLength !== b.byteLength) return false;
+        if (!bytesEqual(viewBytes(a), viewBytes(b))) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "Error":
+        if (a.name !== b.name || a.message !== b.message) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "Promise":
+      case "WeakMap":
+      case "WeakSet":
+        return false;
+      case "Map":
+        if (!mapsEqual(a, b, nextSeen)) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "Set":
+        if (!setsEqual(a, b, nextSeen)) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      case "URL":
+        if (a.href !== b.href) return false;
+        return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+      default:
+        break;
+    }
+
+    if (ArrayBuffer.isView(a)) {
+      if (a.byteLength !== b.byteLength) return false;
+      if (!bytesEqual(viewBytes(a), viewBytes(b))) return false;
+      const isIndex = (k) => typeof k !== "symbol" && /^\d+$/.test(String(k));
+      const extraA = ownEnumerableKeys(a).filter((k) => !isIndex(k));
+      const extraB = ownEnumerableKeys(b).filter((k) => !isIndex(k));
+      return keysEqual(a, b, extraA, extraB, nextSeen);
+    }
+
+    if (Array.isArray(a)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (hasOwn(a, i) !== hasOwn(b, i)) return false;
+        if (hasOwn(a, i) && !inner(a[i], b[i], nextSeen)) return false;
+      }
+      const isIndex = (k) => typeof k !== "symbol" && /^\d+$/.test(String(k));
+      const extraA = ownEnumerableKeys(a).filter((k) => !isIndex(k));
+      const extraB = ownEnumerableKeys(b).filter((k) => !isIndex(k));
+      return keysEqual(a, b, extraA, extraB, nextSeen);
+    }
+
+    return keysEqual(a, b, ownEnumerableKeys(a), ownEnumerableKeys(b), nextSeen);
+  }
+
+  return function isDeepStrictEqual(val1, val2) {
+    return inner(val1, val2, []);
+  };
+})()"#,
+    )
+}
+
 fn create_strip_vt_control_characters<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
     // ANSI/VT stripper aligned with Node's inspect.stripVTControlCharacters.
     ctx.eval(
@@ -1475,6 +1638,7 @@ impl ModuleDef for UtilModule {
         declare.declare("deprecate")?;
         declare.declare("styleText")?;
         declare.declare("stripVTControlCharacters")?;
+        declare.declare("isDeepStrictEqual")?;
         declare.declare("parseEnv")?;
         declare.declare("default")?;
         Ok(())
@@ -1494,6 +1658,7 @@ impl ModuleDef for UtilModule {
             let deprecate = create_deprecate(ctx)?;
             let style_text = create_style_text(ctx)?;
             let strip_vt = create_strip_vt_control_characters(ctx)?;
+            let is_deep_strict_equal = create_is_deep_strict_equal(ctx)?;
 
             default.set(stringify!(TextEncoder), encoder)?;
             default.set(stringify!(TextDecoder), decoder)?;
@@ -1513,6 +1678,7 @@ impl ModuleDef for UtilModule {
             default.set("deprecate", deprecate)?;
             default.set("styleText", style_text)?;
             default.set("stripVTControlCharacters", strip_vt)?;
+            default.set("isDeepStrictEqual", is_deep_strict_equal)?;
             default.set("parseEnv", Func::from(parse_env_js))?;
             let inspect_symbol =
                 Symbol::new_global(ctx.clone(), CUSTOM_INSPECT_SYMBOL_DESCRIPTION)?;

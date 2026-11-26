@@ -1,6 +1,6 @@
 [package]
 name = "lexe_core"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 license-file = "LICENSE"
 
@@ -37,6 +37,7 @@ base = [
   "path",
   "perf-hooks",
   "process",
+  "sea",
   "stream-web",
   "string-decoder",
   "temporal",
@@ -86,6 +87,8 @@ v8 = ["lexe_modules/v8"]
 vm = ["lexe_modules/vm"]
 webassembly = ["lexe_modules/webassembly"]
 zlib = ["lexe_modules/zlib"]
+sea = ["lexe_modules/sea"]
+ffi = ["lexe_modules/ffi"]
 sqlite = ["lexe_modules/sqlite"]
 napi = ["lexe_modules/napi"]
 v8-compat = ["lexe_modules/v8-compat"]

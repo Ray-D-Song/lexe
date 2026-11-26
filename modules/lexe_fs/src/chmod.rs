@@ -1,15 +1,8 @@
-#[cfg(unix)]
-use lexe_utils::result::ResultExt;
 use rquickjs::{Ctx, Exception, Result};
 #[cfg(unix)]
 use std::os::unix::prelude::PermissionsExt;
 
 use crate::errors::throw_fs_error;
-
-#[cfg(unix)]
-pub(crate) fn chmod_error(path: &str) -> String {
-    ["Can't set permissions of \"", path, "\""].concat()
-}
 
 pub(crate) async fn set_mode(ctx: Ctx<'_>, path: &str, mode: u32) -> Result<()> {
     lexe_utils::permissions::ensure_fs_write(&ctx, path)?;
@@ -17,7 +10,7 @@ pub(crate) async fn set_mode(ctx: Ctx<'_>, path: &str, mode: u32) -> Result<()> 
     {
         tokio::fs::set_permissions(path, PermissionsExt::from_mode(mode))
             .await
-            .or_throw_msg(&ctx, &chmod_error(path))?;
+            .map_err(|err| throw_fs_error(&ctx, err, "chmod", path))?;
     }
     #[cfg(not(unix))]
     {
@@ -31,7 +24,7 @@ pub(crate) fn set_mode_sync(ctx: Ctx<'_>, path: &str, mode: u32) -> Result<()> {
     #[cfg(unix)]
     {
         std::fs::set_permissions(path, PermissionsExt::from_mode(mode))
-            .or_throw_msg(&ctx, &chmod_error(path))?;
+            .map_err(|err| throw_fs_error(&ctx, err, "chmod", path))?;
     }
     #[cfg(not(unix))]
     {

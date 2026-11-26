@@ -1,19 +1,19 @@
 [package]
 name = "lexe"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 license-file = "LICENSE"
 build = "build.rs"
 
 [features]
-default = ["base", "macro", "tls-ring", "crypto-rust"]
+default = ["base", "macro", "tls-ring", "crypto-rust", "napi", "ffi"]
 base = ["lexe_core/base", "sqlite", "dep:lexe_http"]
 console = ["lexe_core/console"]
 path = ["lexe_core/path"]
 process = ["lexe_core/process"]
 timers = ["lexe_core/timers"]
 # WASI / wasm32-wasip1 subset: no tokio net/process/fs, no native addons.
-wasi = ["macro", "console", "path", "process", "timers"]
+wasi = ["macro", "console", "path", "process", "timers", "sea"]
 http = ["lexe_core/http", "dep:lexe_http"]
 macro = ["lexe_core/macro"]
 uncompressed = ["lexe_core/uncompressed"]
@@ -35,6 +35,8 @@ crypto-openssl = ["lexe_core/crypto-openssl"]
 
 # OpenSSL vendored (builds OpenSSL from source)
 openssl-vendored = ["lexe_core/openssl-vendored"]
+sea = ["lexe_core/sea"]
+ffi = ["lexe_core/ffi"]
 sqlite = ["lexe_core/sqlite", "dep:lexe_sqlite"]
 napi = ["lexe_core/napi", "dep:lexe_napi"]
 v8-compat = ["napi", "lexe_napi/v8-compat", "lexe_core/v8-compat", "dep:lexe_napi", "dep:v8_compat"]
@@ -70,8 +72,10 @@ crossterm = { version = "0.29", features = [
 ], default-features = false }
 http-body-util = { version = "0.1", default-features = false }
 hyper = { version = "1", features = ["client"], default-features = false }
+lexe_sea = { version = "0.1.4", path = "../modules/lexe_sea" }
 libsui = "0.16"
 sha2 = { version = "0.10", default-features = false, features = ["std"] }
+simd-json = { version = "0.17", default-features = false }
 tokio = { version = "1", features = ["io-util", "net", "rt-multi-thread", "signal"], default-features = false }
 
 [target.'cfg(not(any(target_os = "windows", target_family = "wasm")))'.dependencies]
@@ -84,7 +88,7 @@ snmalloc-rs = { version = "0.7", features = [
 libc = "0.2"
 
 [dev-dependencies]
-lexe_test = { version = "0.1.3", path = "../libs/lexe_test" }
+lexe_test = { version = "0.1.4", path = "../libs/lexe_test" }
 
 [build-dependencies]
 cc = "1"

@@ -285,20 +285,10 @@ pub struct DateTimeFormat {
 impl DateTimeFormat {
     #[qjs(constructor)]
     pub fn new(ctx: Ctx<'_>, locales: Opt<Value<'_>>, options: Opt<Object<'_>>) -> Result<Self> {
-        let mut opts = DateTimeFormatOptions::default();
-
-        // Parse locale (we only care about extracting the language tag)
-        if let Some(locale_val) = locales.into_inner() {
-            if let Some(s) = locale_val.as_string() {
-                opts.locale = s.to_string()?;
-            } else if let Some(arr) = locale_val.as_array() {
-                if let Ok(first) = arr.get::<Value>(0) {
-                    if let Some(s) = first.as_string() {
-                        opts.locale = s.to_string()?;
-                    }
-                }
-            }
-        }
+        let mut opts = DateTimeFormatOptions {
+            locale: crate::parse_locale_value(locales.into_inner())?,
+            ..Default::default()
+        };
 
         // Parse options
         if let Some(options_obj) = options.into_inner() {

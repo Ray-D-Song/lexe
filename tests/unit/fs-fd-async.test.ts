@@ -335,4 +335,59 @@ describe("async fd family", () => {
       cleanup();
     }
   });
+
+  it("handles explicit undefined optional arguments and numeric open flags", async () => {
+    const { dir, file, cleanup } = tmp("hello");
+    const subDir = path.join(dir, "sub");
+    const linkPath = path.join(dir, "link.txt");
+    try {
+      await fs.promises.mkdir(subDir, undefined as any);
+      const entries = await fs.promises.readdir(dir, undefined as any);
+      expect(entries).toContain("sub");
+
+      const content = await fs.promises.readFile(file, undefined as any);
+      expect(Buffer.isBuffer(content)).toBe(true);
+      expect((content as Buffer).toString()).toBe("hello");
+
+      const fh = await fs.promises.open(file, undefined as any, undefined as any);
+      const readRes = await fh.read(Buffer.alloc(5), 0, undefined as any, undefined as any);
+      expect(readRes.bytesRead).toBe(5);
+      expect(readRes.buffer.toString()).toBe("hello");
+      await fh.close();
+
+      const [cbFd] = await call<[number]>((cb) =>
+        F.open(file, "r", undefined, cb)
+      );
+      expect(typeof cbFd).toBe("number");
+      fs.closeSync(cbFd);
+
+      const syncFd = fs.openSync(file, undefined as any, undefined as any);
+      expect(typeof syncFd).toBe("number");
+      fs.closeSync(syncFd);
+
+      if (os.platform() !== "win32" && typeof fs.constants.O_NOFOLLOW === "number") {
+        const fhNum = await fs.promises.open(
+          file,
+          (fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) as any,
+          undefined as any
+        );
+        await fhNum.close();
+
+        fs.symlinkSync(file, linkPath, undefined as any);
+        let loopErr: any;
+        try {
+          await fs.promises.open(
+            linkPath,
+            (fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) as any,
+            undefined as any
+          );
+        } catch (e) {
+          loopErr = e;
+        }
+        expect(loopErr?.code).toBe("ELOOP");
+      }
+    } finally {
+      cleanup();
+    }
+  });
 });

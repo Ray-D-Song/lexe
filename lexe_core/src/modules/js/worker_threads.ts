@@ -279,6 +279,7 @@ export const parentPort: WorkerParentPort | null = isMainThread
 
 export class Worker extends EventEmitter {
   readonly threadId: number;
+  #exited = false;
   #handle: {
     postMessage: (data: unknown, transfer?: { transfer?: unknown[] }) => void;
     terminate: () => void;
@@ -302,6 +303,7 @@ export class Worker extends EventEmitter {
     if (options.eval) spawnOptions.eval = true;
 
     const handle = globalThis.__lexeWorkerSpawn(path, spawnOptions, (event, arg) => {
+      if (event === "exit") this.#exited = true;
       if (event === "exit" && arg != null && typeof arg === "object") {
         const rec = arg as { code?: unknown; signal?: unknown };
         this.emit("exit", rec.code ?? 0, rec.signal ?? null);
@@ -321,8 +323,11 @@ export class Worker extends EventEmitter {
     }
   }
 
-  terminate(): void {
+  terminate(): Promise<number | undefined> {
+    if (this.#exited) return Promise.resolve(undefined);
+    const exited = new Promise<number>((resolve) => this.once("exit", resolve));
     this.#handle.terminate();
+    return exited;
   }
 
   ref(): this {
@@ -368,6 +373,8 @@ export function setEnvironmentData(key: unknown, value: unknown): void {
 
 export function markAsUntransferable(_object: unknown): void {}
 
+export function markAsUncloneable(_object: unknown): void {}
+
 export function isMarkedAsUntransferable(_object: unknown): boolean {
   return false;
 }
@@ -396,6 +403,7 @@ export default {
   getEnvironmentData,
   setEnvironmentData,
   markAsUntransferable,
+  markAsUncloneable,
   isMarkedAsUntransferable,
   moveMessagePortToContext,
   receiveMessageOnPort,

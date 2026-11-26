@@ -1,7 +1,7 @@
 [package]
 name = "lexe_buffer"
 description = "lexe Module buffer"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -12,8 +12,8 @@ path = "src/lib.rs"
 
 [dependencies]
 itoa = { version = "1", default-features = false }
-lexe_encoding = { version = "0.1.3", path = "../../libs/lexe_encoding" }
-lexe_utils = { version = "0.1.3", path = "../../libs/lexe_utils", default-features = false }
+lexe_encoding = { version = "0.1.4", path = "../../libs/lexe_encoding" }
+lexe_utils = { version = "0.1.4", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", features = [
   "futures",
 ], default-features = false }

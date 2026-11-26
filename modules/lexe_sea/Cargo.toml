@@ -1,0 +1,22 @@
+[package]
+name = "lexe_sea"
+description = "lexe Module node:sea"
+version = "0.1.4"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Ray-D-Song/lexe"
+
+[lib]
+name = "lexe_sea"
+path = "src/lib.rs"
+
+[dependencies]
+lexe_encoding = { version = "0.1.4", path = "../../libs/lexe_encoding" }
+lexe_utils = { version = "0.1.4", path = "../../libs/lexe_utils", default-features = false }
+rquickjs = { version = "=0.12.1", default-features = false }
+zstd = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+lexe_buffer = { path = "../lexe_buffer" }
+lexe_test = { path = "../../libs/lexe_test" }
+tokio = { version = "1", features = ["macros", "rt"] }

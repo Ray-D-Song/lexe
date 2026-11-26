@@ -22,9 +22,13 @@ pub fn unlink_sync(ctx: Ctx<'_>, path: String) -> Result<()> {
 }
 
 #[allow(clippy::manual_async_fn)]
-pub async fn rmdir<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<()> {
+pub async fn rmdir<'js>(
+    ctx: Ctx<'js>,
+    path: String,
+    options: Opt<Option<Object<'js>>>,
+) -> Result<()> {
     lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
-    let recursive = get_params_rm_dir(options);
+    let recursive = get_params_rm_dir(Opt(options.0.flatten()));
 
     if recursive {
         fs::remove_dir_all(&path).await
@@ -37,9 +41,13 @@ pub async fn rmdir<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) 
 }
 
 #[allow(clippy::manual_async_fn)]
-pub fn rmdir_sync<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<()> {
+pub fn rmdir_sync<'js>(
+    ctx: Ctx<'js>,
+    path: String,
+    options: Opt<Option<Object<'js>>>,
+) -> Result<()> {
     lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
-    let recursive = get_params_rm_dir(options);
+    let recursive = get_params_rm_dir(Opt(options.0.flatten()));
 
     if recursive {
         std::fs::remove_dir_all(&path)
@@ -51,9 +59,13 @@ pub fn rmdir_sync<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -
     Ok(())
 }
 
-pub async fn rmfile<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>) -> Result<()> {
+pub async fn rmfile<'js>(
+    ctx: Ctx<'js>,
+    path: String,
+    options: Opt<Option<Object<'js>>>,
+) -> Result<()> {
     lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
-    let (recursive, force) = get_params_rm(options);
+    let (recursive, force) = get_params_rm(Opt(options.0.flatten()));
 
     let res = async move {
         let is_dir = fs::metadata(&path)
@@ -81,9 +93,9 @@ pub async fn rmfile<'js>(ctx: Ctx<'js>, path: String, options: Opt<Object<'js>>)
     Ok(())
 }
 
-pub fn rmfile_sync(ctx: Ctx<'_>, path: String, options: Opt<Object<'_>>) -> Result<()> {
+pub fn rmfile_sync(ctx: Ctx<'_>, path: String, options: Opt<Option<Object<'_>>>) -> Result<()> {
     lexe_utils::permissions::ensure_fs_write(&ctx, &path)?;
-    let (recursive, force) = get_params_rm(options);
+    let (recursive, force) = get_params_rm(Opt(options.0.flatten()));
 
     let res = (|| -> Result<()> {
         let is_dir = std::fs::metadata(&path).map(|metadata| metadata.is_dir())?;

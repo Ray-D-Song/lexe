@@ -1273,19 +1273,17 @@ impl<'js> WriteStream<'js> {
         ctx: Ctx<'js>,
         chunk: Value<'js>,
         encoding_or_cb: Opt<Value<'js>>,
-        cb: Opt<rquickjs::Function<'js>>,
+        cb: Opt<Option<rquickjs::Function<'js>>>,
     ) -> Result<bool> {
-        let callback = if let Some(v) = cb.0 {
-            Some(v)
-        } else if let Some(v) = encoding_or_cb.0.as_ref() {
-            if v.is_function() {
-                Some(rquickjs::Function::from_value(v.clone())?)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let callback = cb.0.flatten().or_else(|| {
+            encoding_or_cb.0.as_ref().and_then(|v| {
+                if v.is_function() {
+                    rquickjs::Function::from_value(v.clone()).ok()
+                } else {
+                    None
+                }
+            })
+        });
 
         if this.0.borrow().ended {
             let err = Exception::from_message(ctx.clone(), "write after end")?;
@@ -1372,28 +1370,50 @@ impl<'js> WriteStream<'js> {
         ctx: Ctx<'js>,
         chunk: Opt<Value<'js>>,
         encoding_or_cb: Opt<Value<'js>>,
-        cb: Opt<rquickjs::Function<'js>>,
+        cb: Opt<Option<rquickjs::Function<'js>>>,
     ) -> Result<Class<'js, Self>> {
-        if let Some(chunk) = chunk.0 {
-            let _ = Self::write(This(this.0.clone()), ctx.clone(), chunk, encoding_or_cb, cb)?;
-        } else if let Some(cb) = cb.0.or_else(|| {
-            encoding_or_cb
-                .0
-                .and_then(|v| rquickjs::Function::from_value(v).ok())
-        }) {
-            let cb2 = cb;
-            ctx.clone().spawn_exit(async move {
-                let _ = cb2.call::<_, ()>(());
-                Ok(())
-            })?;
+        let explicit_cb = cb.0.flatten();
+        let data_chunk = match chunk.0 {
+            Some(v) if v.is_function() => {
+                let cb_fn = rquickjs::Function::from_value(v)?;
+                Self::finish_end(&this, &ctx)?;
+                ctx.clone().spawn_exit(async move {
+                    let _ = cb_fn.call::<_, ()>(());
+                    Ok(())
+                })?;
+                return Ok(this.0);
+            },
+            Some(v) if v.is_undefined() || v.is_null() => None,
+            other => other,
+        };
+
+        if let Some(chunk_val) = data_chunk {
+            let _ = Self::write(
+                This(this.0.clone()),
+                ctx.clone(),
+                chunk_val,
+                encoding_or_cb,
+                Opt(Some(explicit_cb)),
+            )?;
+            Self::finish_end(&this, &ctx)?;
+        } else {
+            let callback = explicit_cb.or_else(|| {
+                encoding_or_cb.0.and_then(|v| {
+                    if v.is_function() {
+                        rquickjs::Function::from_value(v).ok()
+                    } else {
+                        None
+                    }
+                })
+            });
+            Self::finish_end(&this, &ctx)?;
+            if let Some(cb_fn) = callback {
+                ctx.clone().spawn_exit(async move {
+                    let _ = cb_fn.call::<_, ()>(());
+                    Ok(())
+                })?;
+            }
         }
-        {
-            let mut ws = this.0.borrow_mut();
-            ws.ended = true;
-            ws.ended_flag.store(true, Ordering::Release);
-            ws.winch_stop.notify_waiters();
-        }
-        let _ = WriteStream::emit_str(this.0.clone(), &ctx, "finish", vec![], false);
         Ok(this.0)
     }
 
@@ -1406,10 +1426,10 @@ impl<'js> WriteStream<'js> {
         this: This<Class<'js, Self>>,
         ctx: Ctx<'js>,
         x: i32,
-        y: Opt<i32>,
-        cb: Opt<rquickjs::Function<'js>>,
+        y: Opt<Option<i32>>,
+        cb: Opt<Option<rquickjs::Function<'js>>>,
     ) -> Result<bool> {
-        let data = if let Some(y) = y.0 {
+        let data = if let Some(y) = y.0.flatten() {
             format!("\x1b[{};{}H", y + 1, x + 1)
         } else {
             format!("\x1b[{}G", x + 1)
@@ -1423,7 +1443,7 @@ impl<'js> WriteStream<'js> {
         ctx: Ctx<'js>,
         dx: i32,
         dy: i32,
-        cb: Opt<rquickjs::Function<'js>>,
+        cb: Opt<Option<rquickjs::Function<'js>>>,
     ) -> Result<bool> {
         let mut data = String::new();
         if dx < 0 {
@@ -1437,7 +1457,7 @@ impl<'js> WriteStream<'js> {
             data.push_str(&format!("\x1b[{}B", dy));
         }
         if data.is_empty() {
-            if let Some(cb) = cb.0 {
+            if let Some(cb) = cb.0.flatten() {
                 let cb2 = cb;
                 ctx.clone().spawn_exit(async move {
                     let _ = cb2.call::<_, ()>(());
@@ -1453,10 +1473,10 @@ impl<'js> WriteStream<'js> {
     pub fn clear_line(
         this: This<Class<'js, Self>>,
         ctx: Ctx<'js>,
-        dir: Opt<i32>,
-        cb: Opt<rquickjs::Function<'js>>,
+        dir: Opt<Option<i32>>,
+        cb: Opt<Option<rquickjs::Function<'js>>>,
     ) -> Result<bool> {
-        let dir = dir.0.unwrap_or(0);
+        let dir = dir.0.flatten().unwrap_or(0);
         let seq = if dir < 0 {
             "\x1b[1K"
         } else if dir > 0 {
@@ -1471,7 +1491,7 @@ impl<'js> WriteStream<'js> {
     pub fn clear_screen_down(
         this: This<Class<'js, Self>>,
         ctx: Ctx<'js>,
-        cb: Opt<rquickjs::Function<'js>>,
+        cb: Opt<Option<rquickjs::Function<'js>>>,
     ) -> Result<bool> {
         let val = "\x1b[0J".into_js(&ctx)?;
         Self::write(this, ctx, val, Opt(None), cb)
@@ -1578,6 +1598,21 @@ impl<'js> WriteStream<'js> {
 }
 
 impl<'js> WriteStream<'js> {
+    fn finish_end(this: &This<Class<'js, Self>>, ctx: &Ctx<'js>) -> Result<()> {
+        let was_ended = {
+            let mut ws = this.0.borrow_mut();
+            let prev = ws.ended;
+            ws.ended = true;
+            ws.ended_flag.store(true, Ordering::Release);
+            ws.winch_stop.notify_waiters();
+            prev
+        };
+        if !was_ended {
+            let _ = WriteStream::emit_str(this.0.clone(), ctx, "finish", vec![], false);
+        }
+        Ok(())
+    }
+
     fn start_resize_watch(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<()> {
         #[cfg(unix)]
         {

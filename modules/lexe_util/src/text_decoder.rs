@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 use lexe_encoding::{Encoder, IncrementalDecoder};
 use lexe_utils::{bytes::ObjectBytes, object::ObjectExt, result::ResultExt};
-use rquickjs::{atom::PredefinedAtom, function::Opt, Ctx, Object, Result, Value};
+use rquickjs::{
+    atom::PredefinedAtom, function::Opt, prelude::Coerced, Ctx, FromJs, Object, Result, Value,
+};
 
 #[rquickjs::class]
 #[derive(rquickjs::class::Trace, rquickjs::JsLifetime)]
@@ -19,13 +21,22 @@ pub struct TextDecoder {
 #[rquickjs::methods]
 impl<'js> TextDecoder {
     #[qjs(constructor)]
-    pub fn new(ctx: Ctx<'js>, label: Opt<String>, options: Opt<Object<'js>>) -> Result<Self> {
+    pub fn new(
+        ctx: Ctx<'js>,
+        label: Opt<Value<'js>>,
+        options: Opt<Option<Object<'js>>>,
+    ) -> Result<Self> {
         let mut fatal = false;
         let mut ignore_bom = false;
 
-        let encoder = Encoder::from_optional_str(label.as_deref()).or_throw_range(&ctx, "")?;
+        let label_str: Option<String> = match label.0 {
+            None => None,
+            Some(v) if v.is_undefined() => None,
+            Some(v) => Some(Coerced::<String>::from_js(&ctx, v)?.0),
+        };
+        let encoder = Encoder::from_optional_str(label_str.as_deref()).or_throw_range(&ctx, "")?;
 
-        if let Some(options) = options.0 {
+        if let Some(options) = options.0.flatten() {
             if let Some(opt) = options.get_optional("fatal")? {
                 fatal = opt;
             }

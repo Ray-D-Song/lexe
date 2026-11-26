@@ -126,11 +126,21 @@ impl PackageLoader {
     ) -> Result<(Module<'js>, Option<String>)> {
         let ctx = ctx.clone();
 
-        let (from_cjs_import, is_cjs, normalized_name, path) = Self::normalize_name(name);
+        let (from_cjs_import, is_cjs, normalized_name, raw_path) = Self::normalize_name(name);
+
+        let url_path = crate::module::resolver::file_url_to_path_and_query(raw_path);
+        let fs_path_owned;
+        let path: &str = match &url_path {
+            Some((fs_path, _)) => {
+                fs_path_owned = fs_path.clone();
+                fs_path_owned.as_str()
+            },
+            None => raw_path,
+        };
 
         //json files can never be from CJS imports as they are handled by require
         if !from_cjs_import {
-            if normalized_name.ends_with(".json") {
+            if path.ends_with(".json") {
                 let attr_json = attr
                     .clone()
                     .and_then(|v| v.get_type().ok().flatten())
@@ -161,28 +171,36 @@ impl PackageLoader {
                 detect_file_format(path).map_err(|err| err.throw(&ctx))?
             };
             if format.is_cjs() {
-                let url = ["file://", path].concat();
+                let url = if url_path.is_some() {
+                    raw_path.to_string()
+                } else {
+                    crate::module::resolver::path_or_url_to_file_url(path)
+                };
                 trace!("+- Loading cjs module: {}\n", normalized_name);
                 return Ok((Self::load_cjs_module(path, ctx)?, Some(url)));
             }
         }
 
-        let path = path::resolve_path([path].iter())?;
-        let path = path.as_str();
+        let resolved_fs = path::resolve_path([path].iter())?;
+        let cache_key = if url_path.is_some() {
+            raw_path
+        } else {
+            resolved_fs.as_str()
+        };
 
         let binding = ctx.userdata::<RefCell<ModuleCache>>().or_throw(&ctx)?;
 
         let module = if let Some(module) = {
             let cache = binding.borrow();
-            cache.esm.get(path).cloned()
+            cache.esm.get(cache_key).cloned()
         } {
-            trace!("+- Loading esm module via cache: {}\n", path);
+            trace!("+- Loading esm module via cache: {}\n", cache_key);
             (module, None)
         } else {
-            let bytes = std::fs::read(path)?;
+            let bytes = std::fs::read(&resolved_fs)?;
             let module = if from_cjs_import {
-                trace!("+- Loading cjs module via import: {}\n", path);
-                let source = prepend_cjs_dirname_filename(path, &bytes)?;
+                trace!("+- Loading cjs module via import: {}\n", resolved_fs);
+                let source = prepend_cjs_dirname_filename(&resolved_fs, &bytes)?;
                 Module::declare(ctx.clone(), normalized_name, source)?
             } else {
                 let mut source: &[u8] = &bytes;
@@ -191,15 +209,20 @@ impl PackageLoader {
                     source = source.splitn(2, |&c| c == b'\n').nth(1).unwrap_or(source);
                 }
 
-                trace!("+- Loading esm module: {}\n", path);
+                trace!("+- Loading esm module: {}\n", resolved_fs);
                 Module::declare(ctx.clone(), normalized_name, source)?
             };
             {
                 let mut cache = binding.borrow_mut();
-                cache.esm.insert(path.into(), module.clone());
+                cache.esm.insert(cache_key.into(), module.clone());
             }
 
-            (module, Some(["file://", path].concat()))
+            let url = if url_path.is_some() {
+                raw_path.to_string()
+            } else {
+                crate::module::resolver::path_or_url_to_file_url(&resolved_fs)
+            };
+            (module, Some(url))
         };
 
         Ok(module)
@@ -217,12 +240,7 @@ impl Loader for PackageLoader {
         let (module, url) = Self::load_module(ctx, name, &attr)?;
         if let Some(url) = url {
             let meta: Object = module.meta()?;
-            meta.prop("url", url.as_str())?;
-            // Node 20.11+ / 24.x: import.meta.dirname and import.meta.filename
-            let file_path = url.strip_prefix("file://").unwrap_or(url.as_str());
-            let dirname = path::dirname(file_path);
-            meta.prop("dirname", dirname)?;
-            meta.prop("filename", file_path)?;
+            crate::module::resolver::populate_import_meta(ctx, &meta, &url)?;
         }
 
         Ok(module)

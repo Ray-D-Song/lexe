@@ -39,6 +39,8 @@ mod modules {
     pub use lexe_exceptions as exceptions;
     #[cfg(feature = "fetch")]
     pub use lexe_fetch as fetch;
+    #[cfg(feature = "ffi")]
+    pub use lexe_ffi as ffi;
     #[cfg(feature = "fs")]
     pub use lexe_fs as fs;
     #[cfg(feature = "http")]
@@ -65,6 +67,8 @@ mod modules {
     pub use lexe_process as process;
     #[cfg(feature = "querystring")]
     pub use lexe_querystring as querystring;
+    #[cfg(feature = "sea")]
+    pub use lexe_sea as sea;
     #[cfg(feature = "sqlite")]
     pub use lexe_sqlite as sqlite;
     #[cfg(feature = "stream-web")]

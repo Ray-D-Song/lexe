@@ -27,6 +27,8 @@ pub use lexe_modules::events;
 pub use lexe_modules::exceptions;
 #[cfg(feature = "fetch")]
 pub use lexe_modules::fetch;
+#[cfg(feature = "ffi")]
+pub use lexe_modules::ffi;
 #[cfg(feature = "fs")]
 pub use lexe_modules::fs;
 #[cfg(any(feature = "http", feature = "https"))]
@@ -48,6 +50,8 @@ pub use lexe_modules::path;
 pub use lexe_modules::perf_hooks;
 #[cfg(feature = "process")]
 pub use lexe_modules::process;
+#[cfg(feature = "sea")]
+pub use lexe_modules::sea;
 #[cfg(feature = "sqlite")]
 pub use lexe_modules::sqlite;
 #[cfg(feature = "stream-web")]

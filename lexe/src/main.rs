@@ -139,28 +139,60 @@ async fn main() -> Result<ExitCode, Box<dyn Error + Send + Sync>> {
             .map_err(|e| e.to_string().into());
     }
 
-    let cli = parse_node_cli_flags(env::args().collect());
-    set_argv(cli.argv);
-    set_exec_argv(cli.exec_argv);
-    NO_WARNINGS.store(cli.no_warnings, Ordering::Relaxed);
-    TRACE_WARNINGS.store(cli.trace_warnings, Ordering::Relaxed);
-    set_source_maps_default(cli.source_maps_enabled);
-    if cli.permission_enabled {
-        lexe_utils::permissions::init(cli.permission_config);
-    }
+    #[cfg(not(target_family = "wasm"))]
+    let embedded_bytecode = if let Some(raw_payload) = executable::extract_embedded_bytecode() {
+        let payload = lexe_sea::container::decode_embedded_payload(&raw_payload)?;
+        if payload.is_sea {
+            lexe_sea::init_sea(payload.keys, payload.assets);
+        }
+        let raw_args: Vec<String> = env::args().collect();
+        let app_argv = if payload.sea_argv_mode {
+            let mut v = Vec::with_capacity(raw_args.len() + 1);
+            let exe = raw_args.first().cloned().unwrap_or_default();
+            v.push(exe.clone());
+            v.push(exe);
+            if raw_args.len() > 1 {
+                v.extend_from_slice(&raw_args[1..]);
+            }
+            v
+        } else {
+            raw_args
+        };
+        set_argv(app_argv);
+        set_exec_argv(Vec::new());
+        Some(payload.bytecode)
+    } else {
+        None
+    };
+
+    #[cfg(target_family = "wasm")]
+    let embedded_bytecode: Option<Vec<u8>> = None;
+
+    let sqlite_enabled = if embedded_bytecode.is_none() {
+        let cli = parse_node_cli_flags(env::args().collect());
+        set_argv(cli.argv);
+        set_exec_argv(cli.exec_argv);
+        NO_WARNINGS.store(cli.no_warnings, Ordering::Relaxed);
+        TRACE_WARNINGS.store(cli.trace_warnings, Ordering::Relaxed);
+        set_source_maps_default(cli.source_maps_enabled);
+        if cli.permission_enabled {
+            lexe_utils::permissions::init(cli.permission_config);
+        }
+        cli.sqlite_enabled
+    } else {
+        true
+    };
 
     let vm = Vm::from_options(VmOptions {
-        sqlite_enabled: cli.sqlite_enabled,
-        module_builder: ModuleBuilder::with_config(ModuleBuilderConfig {
-            sqlite_enabled: cli.sqlite_enabled,
-        })
-        .with_global(lexe_core::modules::embedded::init)
-        .with_global(lexe_core::builtins_inspect::init)
-        .with_global(lexe_worker_threads::init)
-        .with_module(lexe_core::modules::lexe::hex::LexeHexModule)
-        .with_module(lexe_core::modules::lexe::qjs::LexeQjsModule)
-        .with_module(lexe_core::modules::lexe::util::LexeUtilModule)
-        .with_module(lexe_core::modules::lexe::xml::LexeXmlModule),
+        sqlite_enabled,
+        module_builder: ModuleBuilder::with_config(ModuleBuilderConfig { sqlite_enabled })
+            .with_global(lexe_core::modules::embedded::init)
+            .with_global(lexe_core::builtins_inspect::init)
+            .with_global(lexe_worker_threads::init)
+            .with_module(lexe_core::modules::lexe::hex::LexeHexModule)
+            .with_module(lexe_core::modules::lexe::qjs::LexeQjsModule)
+            .with_module(lexe_core::modules::lexe::util::LexeUtilModule)
+            .with_module(lexe_core::modules::lexe::xml::LexeXmlModule),
         ..VmOptions::default()
     })
     .await?;
@@ -175,7 +207,7 @@ async fn main() -> Result<ExitCode, Box<dyn Error + Send + Sync>> {
             .await;
     }
 
-    start_cli(&vm).await;
+    start_cli(&vm, embedded_bytecode).await;
 
     #[cfg(not(target_family = "wasm"))]
     signal_bridge::install(&vm).await?;
@@ -443,6 +475,10 @@ Options:
                       lrt file is expected to be executed by the lexe version
                       that created it.
                       --executable           Create a self-contained executable
+                      --sea                  Enable node:sea asset/argv mode for executable
+                      --sea-config <json>    Load SEA main/output/assets from a JSON config
+                      --asset <key>=<path>   Embed an asset (repeatable with --executable)
+                      --assets-dir <dir>     Embed all files in directory recursively
                       -o, --output <name>    Output path or base filename
                       -d, --outdir <dir>     Output directory (default: ./dist with -p)
                       -p, --platform <list>  Comma-separated target platforms:
@@ -464,10 +500,10 @@ Options:
     );
 }
 
-async fn start_cli(vm: &Vm) {
-    #[cfg(not(target_family = "wasm"))]
-    if let Some(module) = executable::extract_embedded_bytecode() {
-        return vm.run_bytecode(&module).await;
+async fn start_cli(vm: &Vm, embedded_bytecode: Option<Vec<u8>>) {
+    if let Some(module) = embedded_bytecode {
+        let exe = std::env::current_exe().ok();
+        return vm.run_bytecode(&module, exe.as_deref()).await;
     }
 
     let args: Vec<String> = argv();

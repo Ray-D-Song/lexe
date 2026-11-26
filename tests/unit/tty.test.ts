@@ -37,3 +37,37 @@ it("handles SIGWINCH signal delivery via process.kill without terminating", () =
   process.off("signal", onSig);
   expect(sawSignal).toBe(false); // async delivery; verifying no crash/exit
 });
+
+it("WriteStream.end handles callback overload without stringifying callback function", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lexe-tty-end-"));
+  const filePath = path.join(dir, "end.txt");
+  const fd = fs.openSync(filePath, "w");
+  try {
+    const ws = new defaultImport.WriteStream(fd);
+    expect(ws.write("first\n", "utf8", undefined as any)).toBe(true);
+    let finishEvents = 0;
+    ws.on("finish", () => {
+      finishEvents++;
+    });
+    await new Promise<void>((resolve) => {
+      ws.end(() => resolve());
+    });
+    expect(finishEvents).toBe(1);
+    expect(fs.readFileSync(filePath, "utf8")).toBe("first\n");
+
+    const filePath2 = path.join(dir, "end2.txt");
+    const fd2 = fs.openSync(filePath2, "w");
+    try {
+      const ws2 = new defaultImport.WriteStream(fd2);
+      await new Promise<void>((resolve) => {
+        ws2.end(undefined as any, () => resolve());
+      });
+      expect(fs.readFileSync(filePath2, "utf8")).toBe("");
+    } finally {
+      fs.closeSync(fd2);
+    }
+  } finally {
+    fs.closeSync(fd);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

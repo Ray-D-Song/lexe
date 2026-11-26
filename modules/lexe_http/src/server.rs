@@ -1426,31 +1426,97 @@ impl<'js> ServerResponse<'js> {
             .and_then(|value| value.as_int())
             .ok_or_else(|| Exception::throw_type(&ctx, "statusCode is required"))?
             as u16;
-        let next = args.next();
-        let (status_message, headers) = match next {
+        let second = args.next();
+        let third = args.next();
+        let (status_message, headers_val) = match second {
             Some(value) if value.is_string() => (
                 value
                     .as_string()
                     .map(|value| value.to_string())
                     .transpose()?,
-                args.next().and_then(|value| value.as_object().cloned()),
+                third.filter(|v| !v.is_undefined() && !v.is_null()),
             ),
-            Some(value) => (None, value.as_object().cloned()),
-            None => (None, None),
+            other => {
+                // Node `writeHead(statusCode[, statusMessage][, headers])`:
+                // when `statusMessage` is omitted/undefined, the third argument still provides `headers`.
+                let headers = match third {
+                    Some(v) if !v.is_undefined() && !v.is_null() => Some(v),
+                    _ => other.filter(|v| !v.is_undefined() && !v.is_null()),
+                };
+                (None, headers)
+            },
+        };
+        enum ParsedHeadHeaders {
+            None,
+            Pairs(Vec<(String, Vec<String>, bool)>),
+            Map(Vec<(String, Vec<String>, bool)>),
+        }
+        let parsed_headers = match headers_val {
+            Some(val) if val.as_array().is_some() => {
+                let arr = val.as_array().expect("checked array");
+                if arr.len() % 2 != 0 {
+                    return Err(throw_coded(
+                        &ctx,
+                        ErrorKind::Type,
+                        "ERR_INVALID_ARG_VALUE",
+                        "headers array must have an even number of elements",
+                    ));
+                }
+                let mut pairs = Vec::with_capacity(arr.len() / 2);
+                for idx in (0..arr.len()).step_by(2) {
+                    let name_val: Value = arr.get(idx)?;
+                    let Some(name_s) = name_val.as_string() else {
+                        return Err(throw_coded(
+                            &ctx,
+                            ErrorKind::Type,
+                            "ERR_INVALID_HTTP_TOKEN",
+                            "Header name must be a valid HTTP token",
+                        ));
+                    };
+                    let name = name_s.to_string()?;
+                    validate_header_name_str(&ctx, &name)?;
+                    let value: Value = arr.get(idx + 1)?;
+                    let (values, is_array) = header_value_to_list_with_kind(&ctx, &name, value)?;
+                    pairs.push((name, values, is_array));
+                }
+                ParsedHeadHeaders::Pairs(pairs)
+            },
+            Some(val) if val.as_object().is_some() => {
+                let headers = val.as_object().expect("checked object");
+                let mut entries = Vec::new();
+                for name in headers.keys::<String>() {
+                    let name = name?;
+                    validate_header_name_str(&ctx, &name)?;
+                    let value: Value = headers.get(&name)?;
+                    let (values, is_array) = header_value_to_list_with_kind(&ctx, &name, value)?;
+                    entries.push((name, values, is_array));
+                }
+                ParsedHeadHeaders::Map(entries)
+            },
+            _ => ParsedHeadHeaders::None,
         };
         let mut response = this.borrow_mut();
         response.status_code = status_code;
         if let Some(status_message) = status_message {
             response.status_message = Some(status_message);
         }
-        if let Some(headers) = headers {
-            for name in headers.keys::<String>() {
-                let name = name?;
-                validate_header_name_str(&ctx, &name)?;
-                let value: Value = headers.get(&name)?;
-                let (values, is_array) = header_value_to_list_with_kind(&ctx, &name, value)?;
-                response.headers.set(&name, values, is_array);
-            }
+        match parsed_headers {
+            ParsedHeadHeaders::Pairs(pairs) => {
+                for (name, _, _) in &pairs {
+                    response.headers.remove(name);
+                }
+                for (name, values, is_array) in pairs {
+                    if !name.is_empty() {
+                        response.headers.append(&name, values, is_array);
+                    }
+                }
+            },
+            ParsedHeadHeaders::Map(entries) => {
+                for (name, values, is_array) in entries {
+                    response.headers.set(&name, values, is_array);
+                }
+            },
+            ParsedHeadHeaders::None => {},
         }
         response.start();
         drop(response);
@@ -2407,6 +2473,12 @@ where
         };
 
         match outcome {
+            ConnectionOutcome::ClosedByServer => {
+                // Retained requests/responses can keep the socket's duplicated fd alive.
+                if let Ok(socket) = socket_class(&ctx, &socket) {
+                    Socket::destroy(This(socket), Opt(None));
+                }
+            },
             ConnectionOutcome::HyperResult(Err(error)) => {
                 if let Ok(sock_cls) = socket_class(&ctx, &socket) {
                     attach_upgrade_writer(&sock_cls, err_write_tx);

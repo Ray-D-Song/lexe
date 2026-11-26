@@ -1267,8 +1267,8 @@ impl ModuleDef for FsModule {
     }
 }
 
-fn zeroed_stats_js<'js>(ctx: Ctx<'js>, bigint: Opt<bool>) -> Result<Value<'js>> {
-    zeroed_stats(&ctx, bigint.0.unwrap_or(false))
+fn zeroed_stats_js<'js>(ctx: Ctx<'js>, bigint: Opt<Option<bool>>) -> Result<Value<'js>> {
+    zeroed_stats(&ctx, bigint.0.flatten().unwrap_or(false))
 }
 
 fn exists_sync<'js>(ctx: Ctx<'js>, path: Value<'js>) -> bool {
@@ -1336,7 +1336,7 @@ fn export_promises<'js>(ctx: &Ctx<'js>, exports: &Object<'js>) -> Result<()> {
 async fn open_as_blob<'js>(
     ctx: Ctx<'js>,
     path: Value<'js>,
-    options: Opt<Object<'js>>,
+    options: Opt<Option<Object<'js>>>,
 ) -> Result<Value<'js>> {
     let resolved = path_from_value(&ctx, path)?;
     lexe_utils::permissions::ensure_fs_read(&ctx, &resolved)?;
@@ -1345,6 +1345,7 @@ async fn open_as_blob<'js>(
         .map_err(|err| crate::errors::throw_fs_error(&ctx, err, "open", &resolved))?;
     let mime_type = options
         .0
+        .flatten()
         .and_then(|o| o.get::<_, Option<String>>("type").ok().flatten())
         .unwrap_or_default();
 
@@ -1775,7 +1776,7 @@ fn lutimes_async<'js>(
 async fn opendir<'js>(ctx: Ctx<'js>, path: String) -> Result<Value<'js>> {
     let opts = Object::new(ctx.clone())?;
     opts.set("withFileTypes", true)?;
-    let entries: Value = read_dir(ctx.clone(), path.clone(), Opt(Some(opts)))
+    let entries: Value = read_dir(ctx.clone(), path.clone(), Opt(Some(Some(opts))))
         .await?
         .into_js(&ctx)?;
     let ctor: Value = ctx.globals().get("__lexeFsDirClass")?;
@@ -1790,7 +1791,7 @@ fn opendir_sync<'js>(ctx: Ctx<'js>, path: String) -> Result<Value<'js>> {
     let opts = Object::new(ctx.clone())?;
     opts.set("withFileTypes", true)?;
     let entries: Value =
-        read_dir_sync(ctx.clone(), path.clone(), Opt(Some(opts)))?.into_js(&ctx)?;
+        read_dir_sync(ctx.clone(), path.clone(), Opt(Some(Some(opts))))?.into_js(&ctx)?;
     let ctor: Value = ctx.globals().get("__lexeFsDirClass")?;
     let Some(ctor) = ctor.as_constructor().cloned() else {
         return Err(Exception::throw_message(&ctx, "fs.Dir is not registered"));

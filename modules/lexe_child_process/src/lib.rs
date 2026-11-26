@@ -1091,17 +1091,17 @@ impl ModuleDef for ChildProcessModule {
         let ctor = Class::<ChildProcess>::create_constructor(ctx)?
             .or_throw_msg(ctx, "Failed to create ChildProcess constructor")?;
         ChildProcess::add_event_emitter_prototype(ctx)?;
-        DefaultWritableStream::add_writable_stream_prototype(ctx)?;
         DefaultWritableStream::add_event_emitter_prototype(ctx)?;
-        DefaultReadableStream::add_readable_stream_prototype(ctx)?;
+        DefaultWritableStream::add_writable_stream_prototype(ctx)?;
         DefaultReadableStream::add_event_emitter_prototype(ctx)?;
+        DefaultReadableStream::add_readable_stream_prototype(ctx)?;
         #[cfg(unix)]
         {
             ChildPipe::add_event_emitter_prototype(ctx)?;
             ChildPipe::add_readable_stream_prototype(ctx)?;
             ChildPipe::add_writable_stream_prototype(ctx)?;
             if let Some(proto) = Class::<ChildPipe>::prototype(ctx)? {
-                proto.set("write", Func::from(ChildPipe::write_flushed))?;
+                proto.set("write", Func::from(ChildPipe::js_write_flushed))?;
                 proto.set("destroy", Func::from(ChildPipe::destroy))?;
             }
         }
