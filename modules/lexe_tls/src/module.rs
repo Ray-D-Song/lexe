@@ -79,11 +79,7 @@ const TLS_SOCKET_GLUE_JS: &str = r#"(function () {
         }
         this._secureEstablished = false;
         this._controlReleased = false;
-        this.secureConnecting = true;
-        this.servername = opts.servername || null;
-        this.alpnProtocol = null;
-        this.authorized = false;
-        this.authorizationError = null;
+        this._servername = opts.servername || null;
 
         // Node installs `writeAfterFIN` when the peer ends a non-half-open
         // socket; `_onEof` applies it, since the native side now always keeps
@@ -139,9 +135,38 @@ const TLS_SOCKET_GLUE_JS: &str = r#"(function () {
         return this._secureEstablished;
       }
 
+      get encrypted() {
+        return true;
+      }
+
+      get secureConnecting() {
+        if (this._secureEstablished) return false;
+        const handle = this._handle;
+        return handle ? handle.secureConnecting : true;
+      }
+
+      get servername() {
+        const handle = this._handle;
+        return (handle && handle.servername) || this._servername || null;
+      }
+
+      get alpnProtocol() {
+        const handle = this._handle;
+        return handle ? handle.alpnProtocol : false;
+      }
+
+      get authorized() {
+        const handle = this._handle;
+        return handle ? handle.authorized : false;
+      }
+
+      get authorizationError() {
+        const handle = this._handle;
+        return handle ? handle.authorizationError : null;
+      }
+
       setSecureEstablished() {
         this._secureEstablished = true;
-        this.secureConnecting = false;
         this._controlReleased = true;
       }
 
@@ -179,7 +204,7 @@ const TLS_SOCKET_GLUE_JS: &str = r#"(function () {
       // forbids renegotiation, so the request is ignored like Node.
       setServername(name) {
         if (this._secureEstablished) return this;
-        this.servername = name;
+        this._servername = name;
         return this;
       }
 

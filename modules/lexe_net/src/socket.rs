@@ -52,15 +52,28 @@ impl<'js> SteamEvents<'js> for Socket<'js> {
         // A closed socket owns no further I/O: it must stop keeping the process
         // alive, exactly like Node releasing the handle at `close`.
         this.borrow().loop_ref.unreference();
-        // Emit first (listeners may inspect the handle), then drop the owner
-        // reference so the cycle can be collected.
-        let result = Self::emit_str(
-            this.clone(),
-            ctx,
-            "close",
-            vec![had_error.into_js(ctx)?],
-            false,
-        );
+        let owner = this.borrow().js_owner.clone();
+        let result = if let Some(ref owner) = owner {
+            if let Ok(hook) = owner.get::<_, Function>("_onClose") {
+                hook.call::<_, ()>((This(owner.clone()), had_error))
+            } else {
+                Self::emit_str(
+                    this.clone(),
+                    ctx,
+                    "close",
+                    vec![had_error.into_js(ctx)?],
+                    false,
+                )
+            }
+        } else {
+            Self::emit_str(
+                this.clone(),
+                ctx,
+                "close",
+                vec![had_error.into_js(ctx)?],
+                false,
+            )
+        };
         this.borrow_mut().js_owner = None;
         result
     }
@@ -75,15 +88,15 @@ pub enum TransportState {
 }
 
 #[derive(Debug, Clone, Default)]
-struct KeepAliveOptions {
-    enabled: bool,
-    initial_delay: Option<Duration>,
+pub struct KeepAliveOptions {
+    pub enabled: bool,
+    pub initial_delay: Option<Duration>,
 }
 
 #[derive(Debug, Clone, Default)]
-struct TcpSocketOptions {
-    no_delay: Option<bool>,
-    keep_alive: Option<KeepAliveOptions>,
+pub struct TcpSocketOptions {
+    pub no_delay: Option<bool>,
+    pub keep_alive: Option<KeepAliveOptions>,
 }
 
 enum RawShutdown {
@@ -239,7 +252,7 @@ impl<'js> Socket<'js> {
 
     pub fn reset_and_destroy(this: This<Class<'js, Self>>) -> Class<'js, Self> {
         if let Some(control) = this.borrow().tcp_control.as_ref() {
-            let _ = SockRef::from(control.as_ref()).set_linger(Some(Duration::ZERO));
+            reset_tcp_linger(control);
         }
         Self::destroy_inner(this, Opt(None), false)
     }
@@ -376,12 +389,13 @@ impl<'js> Socket<'js> {
         error: Opt<Value<'js>>,
         shutdown: bool,
     ) -> Class<'js, Self> {
-        // Drop the JS owner eagerly: holding it past close leaves an
-        // uncollectable `this <-> _handle` cycle that aborts teardown with
-        // QuickJS's `gc_obj_list` assertion.
-        this.borrow_mut().js_owner = None;
         {
             let mut borrow = this.borrow_mut();
+            // When no I/O loop is active to call `emit_close`, release the JS owner now
+            // so `this <-> _handle` doesn't pin GC objects across teardown.
+            if matches!(borrow.transport_state, TransportState::Closed) && !borrow.connecting {
+                borrow.js_owner = None;
+            }
             if let Some(control) = borrow.tcp_control.take() {
                 if shutdown {
                     let _ = control.shutdown(Shutdown::Both);
@@ -431,26 +445,16 @@ impl<'js> Socket<'js> {
         ctx: Ctx<'js>,
         no_delay: Opt<bool>,
     ) -> Result<Class<'js, Self>> {
-        let enable = no_delay.0.unwrap_or(true);
         let control = {
             let mut borrow = this.borrow_mut();
-
-            // Skip redundant syscalls when the same value is already stored.
-            if borrow.tcp_options.no_delay == Some(enable) {
-                None
-            } else {
-                borrow.tcp_options.no_delay = Some(enable);
-
-                // Detached (post-STARTTLS) sockets only update local state.
-                if borrow.transport_state == TransportState::Detached {
-                    None
-                } else {
-                    borrow.tcp_control.clone()
-                }
+            let detached = borrow.transport_state == TransportState::Detached;
+            match prepare_no_delay_option(&mut borrow.tcp_options, no_delay) {
+                Some(enable) if !detached => borrow.tcp_control.clone().map(|c| (c, enable)),
+                _ => None,
             }
         };
 
-        if let Some(control) = control {
+        if let Some((control, enable)) = control {
             control
                 .set_nodelay(enable)
                 .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
@@ -467,49 +471,12 @@ impl<'js> Socket<'js> {
         enable: Opt<Value<'js>>,
         initial_delay: Opt<Value<'js>>,
     ) -> Result<Class<'js, Self>> {
-        let enabled = match enable.0 {
-            Some(value) => value_to_bool(&value),
-            None => false,
-        };
-        let delay_secs = normalize_keep_alive_delay(&ctx, initial_delay.0)?;
-        let delay = if delay_secs == 0 {
-            None
-        } else {
-            Some(Duration::from_secs(delay_secs))
-        };
-
         let apply = {
             let mut borrow = this.borrow_mut();
-            let prev_delay = borrow
-                .tcp_options
-                .keep_alive
-                .as_ref()
-                .and_then(|ka| ka.initial_delay);
-            // Keep prior delay when disabling so re-enable can reapply it.
-            let saved_delay = delay.or(prev_delay);
-
-            let options = KeepAliveOptions {
-                enabled,
-                initial_delay: if enabled {
-                    delay.or(prev_delay)
-                } else {
-                    saved_delay
-                },
-            };
-
-            let unchanged = borrow.tcp_options.keep_alive.as_ref().map(|ka| {
-                ka.enabled == options.enabled && ka.initial_delay == options.initial_delay
-            }) == Some(true);
-
-            if unchanged {
-                None
-            } else {
-                borrow.tcp_options.keep_alive = Some(options.clone());
-                if borrow.transport_state == TransportState::Detached {
-                    None
-                } else {
-                    borrow.tcp_control.clone().map(|c| (c, options))
-                }
+            let detached = borrow.transport_state == TransportState::Detached;
+            match prepare_keep_alive_option(&ctx, &mut borrow.tcp_options, enable, initial_delay)? {
+                Some(options) if !detached => borrow.tcp_control.clone().map(|c| (c, options)),
+                _ => None,
             }
         };
 
@@ -602,7 +569,9 @@ impl<'js> Socket<'js> {
 
         if let Some(first) = args.next() {
             if let Some(opts) = first.as_object() {
-                port = opts.get_optional("port")?;
+                if let Some(port_val) = opts.get_optional::<_, Value>("port")? {
+                    port = parse_port_value(&ctx, &port_val)?;
+                }
                 path = opts.get_optional("path")?;
                 if let Some(host_arg) = opts.get_optional("host")? {
                     host = host_arg
@@ -823,6 +792,11 @@ impl<'js> Socket<'js> {
 }
 
 impl<'js> Socket<'js> {
+    /// Snapshot the socket's TCP control fd and pending TCP options (used during TLS handoff).
+    pub fn tcp_control_and_options(&self) -> (Option<Arc<std::net::TcpStream>>, TcpSocketOptions) {
+        (self.tcp_control.clone(), self.tcp_options.clone())
+    }
+
     pub fn new(ctx: Ctx<'js>, allow_half_open: bool) -> Result<Class<'js, Self>> {
         let emitter = EventEmitter::new();
 
@@ -1370,7 +1344,99 @@ fn normalize_keep_alive_delay(ctx: &Ctx<'_>, value: Option<Value<'_>>) -> Result
     Ok((n as u64) / 1000)
 }
 
-fn apply_keep_alive(stream: &std::net::TcpStream, options: &KeepAliveOptions) -> io::Result<()> {
+pub fn parse_port_value(ctx: &Ctx<'_>, value: &Value<'_>) -> Result<Option<u16>> {
+    if value.is_undefined() || value.is_null() {
+        return Ok(None);
+    }
+    if let Some(n) = value.as_number() {
+        if !n.is_finite() || !(0.0..=65535.0).contains(&n) {
+            return Err(Exception::throw_range(
+                ctx,
+                "Port should be >= 0 and < 65536.",
+            ));
+        }
+        return Ok(Some(n as u16));
+    }
+    if let Some(s) = value.as_string() {
+        let s = s.to_string()?;
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return Err(Exception::throw_range(
+                ctx,
+                "Port should be >= 0 and < 65536.",
+            ));
+        }
+        let port = trimmed
+            .parse::<u16>()
+            .map_err(|_| Exception::throw_range(ctx, "Port should be >= 0 and < 65536."))?;
+        return Ok(Some(port));
+    }
+    Err(Exception::throw_type(
+        ctx,
+        "The \"port\" option must be of type number or string.",
+    ))
+}
+
+pub fn prepare_no_delay_option(options: &mut TcpSocketOptions, no_delay: Opt<bool>) -> Option<bool> {
+    let enable = no_delay.0.unwrap_or(true);
+    if options.no_delay == Some(enable) {
+        None
+    } else {
+        options.no_delay = Some(enable);
+        Some(enable)
+    }
+}
+
+pub fn prepare_keep_alive_option(
+    ctx: &Ctx<'_>,
+    options: &mut TcpSocketOptions,
+    enable: Opt<Value<'_>>,
+    initial_delay: Opt<Value<'_>>,
+) -> Result<Option<KeepAliveOptions>> {
+    let enabled = match enable.0 {
+        Some(value) => value_to_bool(&value),
+        None => false,
+    };
+    let delay_secs = normalize_keep_alive_delay(ctx, initial_delay.0)?;
+    let delay = if delay_secs == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(delay_secs))
+    };
+
+    let prev_delay = options
+        .keep_alive
+        .as_ref()
+        .and_then(|ka| ka.initial_delay);
+    // Keep prior delay when disabling so re-enable can reapply it.
+    let saved_delay = delay.or(prev_delay);
+
+    let next = KeepAliveOptions {
+        enabled,
+        initial_delay: if enabled {
+            delay.or(prev_delay)
+        } else {
+            saved_delay
+        },
+    };
+
+    let unchanged = options.keep_alive.as_ref().map(|ka| {
+        ka.enabled == next.enabled && ka.initial_delay == next.initial_delay
+    }) == Some(true);
+
+    if unchanged {
+        Ok(None)
+    } else {
+        options.keep_alive = Some(next.clone());
+        Ok(Some(next))
+    }
+}
+
+pub fn reset_tcp_linger(stream: &std::net::TcpStream) {
+    let _ = SockRef::from(stream).set_linger(Some(Duration::ZERO));
+}
+
+pub fn apply_keep_alive(stream: &std::net::TcpStream, options: &KeepAliveOptions) -> io::Result<()> {
     let sock = SockRef::from(stream);
     sock.set_keepalive(options.enabled)?;
     if options.enabled {
@@ -1385,7 +1451,7 @@ fn apply_keep_alive(stream: &std::net::TcpStream, options: &KeepAliveOptions) ->
     Ok(())
 }
 
-fn apply_tcp_options(stream: &std::net::TcpStream, options: &TcpSocketOptions) -> io::Result<()> {
+pub fn apply_tcp_options(stream: &std::net::TcpStream, options: &TcpSocketOptions) -> io::Result<()> {
     if let Some(no_delay) = options.no_delay {
         stream.set_nodelay(no_delay)?;
     }

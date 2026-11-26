@@ -180,8 +180,10 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
                 let net_socket = net_handle_of(&socket_val)
                     .ok_or_else(|| Exception::throw_type(&ctx2, "socket must be a net.Socket"))?;
 
+                let (net_control, net_options) = net_socket.borrow().tcp_control_and_options();
                 let (read_half, write_half, prefix) =
                     Socket::begin_tls_handoff(&ctx2, net_socket.clone()).await?;
+                TlsSocket::adopt_tcp_control(&tls_socket2, &ctx2, net_control, net_options)?;
 
                 let addresses = net_socket.borrow();
                 let mut tls_borrow = tls_socket2.borrow_mut();
@@ -191,6 +193,8 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
                 tls_borrow.local_address = addresses.local_address().clone();
                 tls_borrow.local_port = addresses.local_port();
                 tls_borrow.local_family = addresses.local_family().clone();
+                tls_borrow.auto_select_family_attempted_addresses =
+                    addresses.auto_select_family_attempted_addresses();
                 drop(tls_borrow);
                 drop(addresses);
 
@@ -236,13 +240,14 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
                 )?;
 
                 let had_error = rw_join(&ctx2, readable_done, writable_done).await?;
+                tls_socket2.borrow_mut().tcp_control = None;
                 TlsSocket::emit_close(tls_socket2, &ctx2, had_error)?;
                 Ok(())
             } else if let Some(port) = port {
                 check_network_access(&ctx2, &connect_host, port)?;
                 let addr = get_hostname(&connect_host, port);
                 let tcp = TcpStream::connect(addr).await.or_throw(&ctx2)?;
-                TlsSocket::set_addresses_from_tcp(&tls_socket2, &ctx2, &tcp)?;
+                let tcp = TlsSocket::attach_tcp_stream(&tls_socket2, &ctx2, tcp)?;
                 TlsSocket::mark_tcp_connected(&tls_socket2, &ctx2)?;
 
                 let connect_opts = ConnectOptions {
@@ -284,6 +289,7 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
                 )?;
 
                 let had_error = rw_join(&ctx2, readable_done, writable_done).await?;
+                tls_socket2.borrow_mut().tcp_control = None;
                 TlsSocket::emit_close(tls_socket2, &ctx2, had_error)?;
                 Ok(())
             } else {

@@ -1,7 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -11,12 +14,18 @@ use lexe_events::{Emitter, EventEmitter, EventList};
 use lexe_utils::bytes::ObjectBytes;
 use rquickjs::{
     class::{Trace, Tracer},
-    prelude::{Opt, This},
-    Array, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Result, Undefined, Value,
+    prelude::{Opt, Rest, This},
+    Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Result, Undefined, Value,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot, Notify};
 
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, std::convert::Infallible>;
+
+pub enum ClientStreamMsg {
+    Data(Bytes),
+    End(Option<Bytes>),
+    Reset(u32),
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StreamRole {
@@ -36,6 +45,11 @@ pub struct Http2Stream<'js> {
     pub(crate) status_code: u16,
     response_tx: Option<oneshot::Sender<Response<BoxBody>>>,
     response_started: bool,
+    pub(crate) closed: bool,
+    pub(crate) destroyed: bool,
+    paused: Arc<AtomicBool>,
+    resume_notify: Arc<Notify>,
+    write_tx: Option<mpsc::UnboundedSender<ClientStreamMsg>>,
 }
 
 unsafe impl<'js> JsLifetime<'js> for Http2Stream<'js> {
@@ -78,8 +92,46 @@ impl<'js> Http2Stream<'js> {
                 status_code: 200,
                 response_tx: None,
                 response_started: false,
+                closed: false,
+                destroyed: false,
+                paused: Arc::new(AtomicBool::new(false)),
+                resume_notify: Arc::new(Notify::new()),
+                write_tx: None,
             },
         )
+    }
+
+    pub fn new_client_request(
+        ctx: &Ctx<'js>,
+        method: String,
+        path: String,
+        scheme: String,
+        authority: String,
+        write_tx: mpsc::UnboundedSender<ClientStreamMsg>,
+    ) -> Result<(Class<'js, Self>, Arc<AtomicBool>, Arc<Notify>)> {
+        let paused = Arc::new(AtomicBool::new(false));
+        let resume_notify = Arc::new(Notify::new());
+        let instance = Class::instance(
+            ctx.clone(),
+            Self {
+                emitter: EventEmitter::new(),
+                role: StreamRole::Request,
+                method,
+                path,
+                scheme,
+                authority,
+                headers: Object::new(ctx.clone())?,
+                status_code: 200,
+                response_tx: None,
+                response_started: false,
+                closed: false,
+                destroyed: false,
+                paused: paused.clone(),
+                resume_notify: resume_notify.clone(),
+                write_tx: Some(write_tx),
+            },
+        )?;
+        Ok((instance, paused, resume_notify))
     }
 
     pub fn new_response(
@@ -99,6 +151,11 @@ impl<'js> Http2Stream<'js> {
                 status_code: 200,
                 response_tx: Some(tx),
                 response_started: false,
+                closed: false,
+                destroyed: false,
+                paused: Arc::new(AtomicBool::new(false)),
+                resume_notify: Arc::new(Notify::new()),
+                write_tx: None,
             },
         )
     }
@@ -150,6 +207,16 @@ impl<'js> Http2Stream<'js> {
         "2.0"
     }
 
+    #[qjs(get, enumerable)]
+    fn closed(&self) -> bool {
+        self.closed
+    }
+
+    #[qjs(get, enumerable)]
+    fn destroyed(&self) -> bool {
+        self.destroyed
+    }
+
     #[qjs(get, rename = "statusCode")]
     fn status_code_get(&self) -> u16 {
         self.status_code
@@ -158,6 +225,54 @@ impl<'js> Http2Stream<'js> {
     #[qjs(set, rename = "statusCode")]
     fn status_code_set(&mut self, code: u16) {
         self.status_code = code;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Acquire)
+    }
+
+    pub fn pause(this: This<Class<'js, Self>>) -> Class<'js, Self> {
+        this.borrow().paused.store(true, Ordering::Release);
+        this.0
+    }
+
+    pub fn resume(this: This<Class<'js, Self>>) -> Class<'js, Self> {
+        let notify = {
+            let borrow = this.borrow();
+            borrow.paused.store(false, Ordering::Release);
+            borrow.resume_notify.clone()
+        };
+        notify.notify_waiters();
+        this.0
+    }
+
+    pub fn set_timeout(
+        this: This<Class<'js, Self>>,
+        _msecs: Opt<Value<'js>>,
+        _cb: Opt<Function<'js>>,
+    ) -> Class<'js, Self> {
+        this.0
+    }
+
+    pub fn write(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        chunk: Value<'js>,
+        encoding_or_cb: Opt<Value<'js>>,
+        cb: Opt<Function<'js>>,
+    ) -> Result<bool> {
+        let callback = cb
+            .0
+            .or_else(|| encoding_or_cb.0.and_then(|v| v.into_function()));
+        let bytes = value_to_bytes(&ctx, chunk)?;
+        let tx = this.borrow().write_tx.clone();
+        if let Some(tx) = tx {
+            let _ = tx.send(ClientStreamMsg::Data(Bytes::from(bytes)));
+        }
+        if let Some(cb) = callback {
+            cb.defer(())?;
+        }
+        Ok(true)
     }
 
     pub fn write_head(
@@ -181,36 +296,123 @@ impl<'js> Http2Stream<'js> {
         Ok(())
     }
 
-    pub fn end(this: This<Class<'js, Self>>, ctx: Ctx<'js>, chunk: Opt<Value<'js>>) -> Result<()> {
-        if this.borrow().role != StreamRole::Response {
-            return Err(Exception::throw_type(&ctx, "end on non-response stream"));
-        }
-        let mut stream = this.borrow_mut();
-        if stream.response_started {
-            return Ok(());
-        }
-        stream.response_started = true;
-        let body_bytes = chunk
-            .0
-            .map(|v| value_to_bytes(&ctx, v))
-            .transpose()?
-            .unwrap_or_default();
-        let mut builder = Response::builder().status(stream.status_code);
-        for entry in stream.headers.props::<String, Value>() {
-            let (key, val) = entry?;
-            if let Some(val) = val.as_string() {
-                if let Ok(s) = val.to_string() {
-                    builder = builder.header(key.as_str(), s.as_str());
+    pub fn end(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        args: Rest<Value<'js>>,
+    ) -> Result<Class<'js, Self>> {
+        if this.borrow().role == StreamRole::Response {
+            let first = args.0.into_iter().next();
+            let mut stream = this.borrow_mut();
+            if stream.response_started {
+                return Ok(this.0.clone());
+            }
+            stream.response_started = true;
+            let body_bytes = first
+                .filter(|v| !v.is_undefined() && !v.is_null() && !v.is_function())
+                .map(|v| value_to_bytes(&ctx, v))
+                .transpose()?
+                .unwrap_or_default();
+            let mut builder = Response::builder().status(stream.status_code);
+            for entry in stream.headers.props::<String, Value>() {
+                let (key, val) = entry?;
+                if let Some(val) = val.as_string() {
+                    if let Ok(s) = val.to_string() {
+                        builder = builder.header(key.as_str(), s.as_str());
+                    }
                 }
             }
+            let response = builder
+                .body(Full::new(Bytes::from(body_bytes)).boxed())
+                .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()));
+            if let Some(tx) = stream.response_tx.take() {
+                let _ = tx.send(response);
+            }
+            return Ok(this.0.clone());
         }
-        let response = builder
-            .body(Full::new(Bytes::from(body_bytes)).boxed())
-            .unwrap_or_else(|_| Response::new(Full::new(Bytes::new()).boxed()));
-        if let Some(tx) = stream.response_tx.take() {
-            let _ = tx.send(response);
+
+        let mut data_val = None;
+        let mut callback = None;
+        for arg in args.0 {
+            if arg.is_function() {
+                callback = arg.into_function();
+            } else if !arg.is_undefined() && !arg.is_null() && data_val.is_none() && !arg.is_string()
+            {
+                data_val = Some(arg);
+            } else if arg.is_string() && data_val.is_none() {
+                data_val = Some(arg);
+            }
+        }
+        let body = data_val
+            .map(|v| value_to_bytes(&ctx, v))
+            .transpose()?
+            .map(Bytes::from);
+        let tx = this.borrow_mut().write_tx.take();
+        if let Some(tx) = tx {
+            let _ = tx.send(ClientStreamMsg::End(body));
+        }
+        if let Some(cb) = callback {
+            cb.defer(())?;
+        }
+        Ok(this.0)
+    }
+
+    pub fn close(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        code_or_cb: Opt<Value<'js>>,
+        cb: Opt<Function<'js>>,
+    ) -> Result<()> {
+        let mut code = 0u32;
+        let mut callback = cb.0;
+        if let Some(first) = code_or_cb.0 {
+            if first.is_function() {
+                callback = first.into_function();
+            } else if let Some(n) = first.as_int() {
+                code = n.max(0) as u32;
+            }
+        }
+        let already_closed = {
+            let mut borrow = this.borrow_mut();
+            let prev = borrow.closed;
+            borrow.closed = true;
+            borrow.paused.store(false, Ordering::Release);
+            borrow.resume_notify.notify_waiters();
+            if let Some(tx) = borrow.write_tx.take() {
+                let _ = tx.send(ClientStreamMsg::Reset(code));
+            }
+            prev
+        };
+        if let Some(cb) = callback {
+            cb.defer(())?;
+        }
+        if !already_closed {
+            Self::emit_str(this.0, &ctx, "close", vec![], false)?;
         }
         Ok(())
+    }
+
+    pub fn destroy(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        _err: Opt<Value<'js>>,
+    ) -> Result<Class<'js, Self>> {
+        let already_closed = {
+            let mut borrow = this.borrow_mut();
+            let prev = borrow.closed;
+            borrow.destroyed = true;
+            borrow.closed = true;
+            borrow.paused.store(false, Ordering::Release);
+            borrow.resume_notify.notify_waiters();
+            if let Some(tx) = borrow.write_tx.take() {
+                let _ = tx.send(ClientStreamMsg::Reset(0x8)); // CANCEL
+            }
+            prev
+        };
+        if !already_closed {
+            Self::emit_str(this.0.clone(), &ctx, "close", vec![], false)?;
+        }
+        Ok(this.0)
     }
 }
 

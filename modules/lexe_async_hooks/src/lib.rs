@@ -168,24 +168,22 @@ fn create_hook<'js>(ctx: Ctx<'js>, hooks_obj: Object<'js>) -> Result<Value<'js>>
     let obj = Object::new(ctx.clone())?;
     {
         let enabled_clone = enabled.clone();
-        let ctx_for_enable = ctx.clone();
         obj.set(
             "enable",
-            Function::new(ctx.clone(), move || -> Result<()> {
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<()> {
                 *enabled_clone.borrow_mut() = true;
-                refresh_tracking_flag(&ctx_for_enable)?;
+                refresh_tracking_flag(&ctx)?;
                 Ok(())
             }),
         )?;
     }
     {
         let enabled_clone = enabled.clone();
-        let ctx_for_disable = ctx.clone();
         obj.set(
             "disable",
-            Function::new(ctx.clone(), move || -> Result<()> {
+            Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<()> {
                 *enabled_clone.borrow_mut() = false;
-                refresh_tracking_flag(&ctx_for_disable)?;
+                refresh_tracking_flag(&ctx)?;
                 Ok(())
             }),
         )?;

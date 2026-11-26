@@ -28,3 +28,14 @@ it("ESM import works", async () => {
   const tls = await import("node:tls");
   expect(typeof tls.connect).toBe("function");
 });
+
+it("TLSSocket exposes setKeepAlive, setNoDelay, and live TLS getters", () => {
+  const sock = new legacyImport.TLSSocket();
+  expect(sock.encrypted).toBe(true);
+  expect(sock.alpnProtocol).toBe(false);
+  expect(sock.authorized).toBe(false);
+  expect(Array.isArray(sock.autoSelectFamilyAttemptedAddresses)).toBe(true);
+  expect(sock.setNoDelay(true)).toBe(sock);
+  expect(sock.setKeepAlive(true, 1000)).toBe(sock);
+  sock.destroy();
+});

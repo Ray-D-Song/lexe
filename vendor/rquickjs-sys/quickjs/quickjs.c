@@ -329,6 +329,9 @@ struct JSRuntime {
     void *host_promise_rejection_tracker_opaque;
 
     struct list_head job_list; /* list of JSJobEntry.link */
+    JSValue *kept_objects;
+    int kept_objects_count;
+    int kept_objects_size;
 
     bool module_normalize_has_attr;
     union {
@@ -1356,6 +1359,8 @@ static void reset_weak_ref(JSRuntime *rt, JSWeakRefRecord **first_weak_ref);
 static bool is_valid_weakref_target(JSValueConst val);
 static void insert_weakref_record(JSValueConst target,
                                   struct JSWeakRefRecord *wr);
+static void js_add_kept_object(JSRuntime *rt, JSValueConst val);
+static void js_clear_kept_objects(JSRuntime *rt);
 static JSValue js_array_buffer_constructor3(JSContext *ctx,
                                             JSValueConst new_target,
                                             uint64_t len, uint64_t *max_len,
@@ -2223,6 +2228,8 @@ int JS_ExecutePendingJob(JSRuntime *rt, JSContext **pctx)
         ret = 1;
     JS_FreeValue(ctx, res);
     js_free(ctx, e);
+    if (!rt->current_stack_frame && list_empty(&rt->job_list))
+        js_clear_kept_objects(rt);
     *pctx = ctx;
     return ret;
 }
@@ -2255,6 +2262,8 @@ int JS_ExecutePendingJobForContext(JSRuntime *rt, JSContext *target_ctx)
         ret = 1;
     JS_FreeValue(target_ctx, res);
     js_free(target_ctx, e);
+    if (!rt->current_stack_frame && list_empty(&rt->job_list))
+        js_clear_kept_objects(rt);
     return ret;
 }
 
@@ -2363,6 +2372,7 @@ void JS_FreeRuntime(JSRuntime *rt)
     }
     init_list_head(&rt->job_list);
 
+    js_clear_kept_objects(rt);
     JS_RunGC(rt);
 
     /* Ensure native addon gc objects are collected before runtime teardown. */
@@ -6357,6 +6367,8 @@ static JSValue js_call_c_function_data(JSContext *ctx, JSValueConst func_obj,
     sf->arg_count = argc;
     ret = s->func(ctx, this_val, argc, arg_buf, s->magic, vc(s->data));
     rt->current_stack_frame = sf->prev_frame;
+    if (!rt->current_stack_frame && list_empty(&rt->job_list))
+        js_clear_kept_objects(rt);
     return ret;
 }
 
@@ -6482,6 +6494,8 @@ static JSValue js_call_c_closure(JSContext *ctx, JSValueConst func_obj,
     sf->arg_count = argc;
     ret = s->func(ctx, this_val, argc, arg_buf, s->magic, s->opaque);
     rt->current_stack_frame = sf->prev_frame;
+    if (!rt->current_stack_frame && list_empty(&rt->job_list))
+        js_clear_kept_objects(rt);
 
     return ret;
 }
@@ -17632,6 +17646,8 @@ static JSValue js_call_c_function(JSContext *ctx, JSValueConst func_obj,
     }
 
     rt->current_stack_frame = sf->prev_frame;
+    if (!rt->current_stack_frame && list_empty(&rt->job_list))
+        js_clear_kept_objects(rt);
     return ret_val;
 }
 
@@ -20523,6 +20539,8 @@ static JSValue JS_CallInternal(JSContext *caller_ctx, JSValueConst func_obj,
         }
     }
     rt->current_stack_frame = sf->prev_frame;
+    if (!rt->current_stack_frame && list_empty(&rt->job_list))
+        js_clear_kept_objects(rt);
     return ret_val;
 }
 
@@ -62054,6 +62072,45 @@ static void js_weakref_finalizer(JSRuntime *rt, JSValueConst val)
     js_free_rt(rt, wr);
 }
 
+static void js_add_kept_object(JSRuntime *rt, JSValueConst val)
+{
+    int i;
+    if (rt->in_free)
+        return;
+    for (i = 0; i < rt->kept_objects_count; i++) {
+        if (JS_VALUE_GET_PTR(rt->kept_objects[i]) == JS_VALUE_GET_PTR(val)
+            && JS_VALUE_GET_TAG(rt->kept_objects[i]) == JS_VALUE_GET_TAG(val))
+            return;
+    }
+    if (rt->kept_objects_count >= rt->kept_objects_size) {
+        int new_size = rt->kept_objects_size ? rt->kept_objects_size * 2 : 8;
+        JSValue *new_buf = js_realloc_rt(rt, rt->kept_objects,
+                                         sizeof(JSValue) * new_size);
+        if (!new_buf)
+            return;
+        rt->kept_objects = new_buf;
+        rt->kept_objects_size = new_size;
+    }
+    rt->kept_objects[rt->kept_objects_count++] = JS_DupValueRT(rt, val);
+}
+
+static void js_clear_kept_objects(JSRuntime *rt)
+{
+    JSValue *kept;
+    int count, i;
+    if (!rt->kept_objects)
+        return;
+    kept = rt->kept_objects;
+    count = rt->kept_objects_count;
+    rt->kept_objects = NULL;
+    rt->kept_objects_count = 0;
+    rt->kept_objects_size = 0;
+    for (i = 0; i < count; i++) {
+        JS_FreeValueRT(rt, kept[i]);
+    }
+    js_free_rt(rt, kept);
+}
+
 static JSValue js_weakref_constructor(JSContext *ctx, JSValueConst new_target,
                                       int argc, JSValueConst *argv)
 {
@@ -62082,6 +62139,7 @@ static JSValue js_weakref_constructor(JSContext *ctx, JSValueConst new_target,
     wr->kind = JS_WEAK_REF_KIND_WEAK_REF;
     wr->u.weak_ref_data = wrd;
     insert_weakref_record(arg, wr);
+    js_add_kept_object(ctx->rt, arg);
 
     JS_SetOpaqueInternal(obj, wrd);
     return obj;
@@ -62094,6 +62152,7 @@ static JSValue js_weakref_deref(JSContext *ctx, JSValueConst this_val, int argc,
         return JS_EXCEPTION;
     if (wrd == &js_weakref_sentinel)
         return JS_UNDEFINED;
+    js_add_kept_object(ctx->rt, wrd->target);
     return js_dup(wrd->target);
 }
 

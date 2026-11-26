@@ -106,8 +106,8 @@ pub fn parse_tls_options<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<TlsOp
     if let Some(host) = obj.get::<_, Option<String>>("host")? {
         options.host = Some(host);
     }
-    if let Some(port) = obj.get::<_, Option<u16>>("port")? {
-        options.port = Some(port);
+    if let Some(port_val) = obj.get::<_, Option<Value>>("port")? {
+        options.port = lexe_net::parse_port_value(ctx, &port_val)?;
     }
     if let Some(reject) = obj.get::<_, Option<bool>>("rejectUnauthorized")? {
         options.reject_unauthorized = reject;

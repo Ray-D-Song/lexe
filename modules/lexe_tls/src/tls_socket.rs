@@ -1,9 +1,19 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-use std::sync::{Arc, Mutex, RwLock};
+use std::{
+    io,
+    net::Shutdown,
+    pin::Pin,
+    sync::{Arc, Mutex, RwLock},
+    task::{Context, Poll},
+};
 
 use lexe_context::CtxExtension;
 use lexe_events::{Emitter, EventEmitter, EventKey, EventList};
+use lexe_net::{
+    apply_keep_alive, apply_tcp_options, prepare_keep_alive_option, prepare_no_delay_option,
+    reset_tcp_linger, TcpSocketOptions, TransportState,
+};
 use lexe_stream::{
     impl_stream_events,
     readable::{ReadableStream, ReadableStreamInner},
@@ -18,7 +28,7 @@ use rquickjs::{
     prelude::{Opt, Rest, This},
     Class, Ctx, Exception, Function, IntoJs, JsLifetime, Null, Object, Result, Value,
 };
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::oneshot::Receiver;
 
 use crate::backend::{
@@ -71,6 +81,7 @@ pub struct TlsSocket<'js> {
     pub(crate) remote_address: Option<String>,
     pub(crate) remote_family: Option<String>,
     pub(crate) remote_port: Option<u16>,
+    pub(crate) auto_select_family_attempted_addresses: Vec<String>,
     ready_state: ReadyState,
     #[allow(dead_code)]
     allow_half_open: bool,
@@ -85,6 +96,9 @@ pub struct TlsSocket<'js> {
     peer_certs: Vec<CertObject>,
     local_cert_der: Option<Vec<u8>>,
     pub(crate) check_server_identity_cb: Option<Function<'js>>,
+    tcp_options: TcpSocketOptions,
+    pub(crate) tcp_control: Option<Arc<std::net::TcpStream>>,
+    pub(crate) transport_state: TransportState,
     loop_ref: Arc<EventLoopRef>,
     /// The JS `tls.TLSSocket` (a `net.Socket`, hence a Duplex) owning this
     /// handle. Same split as `net.Socket`: the native class is only the
@@ -202,8 +216,10 @@ impl<'js> TlsSocket<'js> {
         let ctx2 = ctx.clone();
 
         ctx.spawn_exit(async move {
+            let (net_control, net_options) = net_socket.borrow().tcp_control_and_options();
             let (read_half, write_half, prefix) =
                 lexe_net::Socket::begin_tls_handoff(&ctx2, net_socket).await?;
+            Self::adopt_tcp_control(&this2, &ctx2, net_control, net_options)?;
             let io = lexe_net::PrefixedTcpStream::new(prefix, read_half, write_half);
             let accept_opts = crate::backend::AcceptOptions {
                 context: secure_context,
@@ -237,6 +253,7 @@ impl<'js> TlsSocket<'js> {
             let (readable_done, writable_done) =
                 Self::process_split_io(&this2, &ctx2, reader, writer, true)?;
             let had_error = rw_join(&ctx2, readable_done, writable_done).await?;
+            this2.borrow_mut().tcp_control = None;
             Self::emit_close(this2, &ctx2, had_error)?;
             Ok::<_, rquickjs::Error>(())
         })?;
@@ -253,6 +270,65 @@ impl<'js> TlsSocket<'js> {
     pub fn resume_reading(this: This<Class<'js, Self>>) -> Class<'js, Self> {
         this.borrow().readable_stream_inner.resume_reading();
         this.0
+    }
+
+    /// `pause()` told us to back off: park the native read loop.
+    pub fn pause_reading(this: This<Class<'js, Self>>) -> Class<'js, Self> {
+        this.borrow().readable_stream_inner.pause_reading();
+        this.0
+    }
+
+    pub fn reset_and_destroy(this: This<Class<'js, Self>>) -> Class<'js, Self> {
+        if let Some(control) = this.borrow().tcp_control.as_ref() {
+            reset_tcp_linger(control);
+        }
+        Self::destroy_inner(this, Opt(None), false)
+    }
+
+    /// Node-compatible `socket.setNoDelay([noDelay])`. Defaults to `true`.
+    pub fn set_no_delay(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        no_delay: Opt<bool>,
+    ) -> Result<Class<'js, Self>> {
+        let control = {
+            let mut borrow = this.borrow_mut();
+            match prepare_no_delay_option(&mut borrow.tcp_options, no_delay) {
+                Some(enable) => borrow.tcp_control.clone().map(|c| (c, enable)),
+                None => None,
+            }
+        };
+
+        if let Some((control, enable)) = control {
+            control
+                .set_nodelay(enable)
+                .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
+        }
+
+        Ok(this.0)
+    }
+
+    /// Node-compatible `socket.setKeepAlive([enable[, initialDelay]])`.
+    pub fn set_keep_alive(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        enable: Opt<Value<'js>>,
+        initial_delay: Opt<Value<'js>>,
+    ) -> Result<Class<'js, Self>> {
+        let apply = {
+            let mut borrow = this.borrow_mut();
+            match prepare_keep_alive_option(&ctx, &mut borrow.tcp_options, enable, initial_delay)? {
+                Some(options) => borrow.tcp_control.clone().map(|c| (c, options)),
+                None => None,
+            }
+        };
+
+        if let Some((control, options)) = apply {
+            apply_keep_alive(&control, &options)
+                .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
+        }
+
+        Ok(this.0)
     }
 
     #[qjs(get, enumerable)]
@@ -357,6 +433,11 @@ impl<'js> TlsSocket<'js> {
     }
 
     #[qjs(get, enumerable)]
+    pub fn auto_select_family_attempted_addresses(&self) -> Vec<String> {
+        self.auto_select_family_attempted_addresses.clone()
+    }
+
+    #[qjs(get, enumerable)]
     pub fn ready_state(&self) -> String {
         self.ready_state.to_string()
     }
@@ -411,10 +492,27 @@ impl<'js> TlsSocket<'js> {
     }
 
     pub fn destroy(this: This<Class<'js, Self>>, error: Opt<Value<'js>>) -> Class<'js, Self> {
-        // Drop the owner eagerly so the `this <-> _handle` cycle is collectable
-        // before runtime teardown (same reason as `net.Socket::destroy`).
-        this.borrow_mut().js_owner = None;
-        this.borrow_mut().destroyed = true;
+        Self::destroy_inner(this, error, true)
+    }
+
+    fn destroy_inner(
+        this: This<Class<'js, Self>>,
+        error: Opt<Value<'js>>,
+        shutdown: bool,
+    ) -> Class<'js, Self> {
+        {
+            let mut borrow = this.borrow_mut();
+            // Drop the owner eagerly so the `this <-> _handle` cycle is collectable
+            // before runtime teardown (same reason as `net.Socket::destroy`).
+            borrow.js_owner = None;
+            borrow.destroyed = true;
+            if let Some(control) = borrow.tcp_control.take() {
+                if shutdown {
+                    let _ = control.shutdown(Shutdown::Both);
+                }
+            }
+            borrow.loop_ref.unreference();
+        }
         ReadableStream::destroy(This(this.clone()), Opt(None));
         WritableStream::destroy(This(this.clone()), error);
         this.0
@@ -514,6 +612,7 @@ impl<'js> TlsSocket<'js> {
                 remote_address: None,
                 remote_family: None,
                 remote_port: None,
+                auto_select_family_attempted_addresses: Vec::new(),
                 readable_stream_inner,
                 writable_stream_inner,
                 allow_half_open,
@@ -528,6 +627,9 @@ impl<'js> TlsSocket<'js> {
                 peer_certs: Vec::new(),
                 local_cert_der: None,
                 check_server_identity_cb: None,
+                tcp_options: TcpSocketOptions::default(),
+                tcp_control: None,
+                transport_state: TransportState::Attached,
                 loop_ref: EventLoopRef::new_referenced(rt_key),
                 js_owner: None,
             },
@@ -570,6 +672,45 @@ impl<'js> TlsSocket<'js> {
         }
     }
 
+    pub fn emit_close(this: Class<'js, Self>, ctx: &Ctx<'js>, had_error: bool) -> Result<()> {
+        if matches!(
+            this.borrow().transport_state,
+            TransportState::HandoffPending | TransportState::Detached
+        ) {
+            let mut borrow = this.borrow_mut();
+            borrow.tcp_control = None;
+            borrow.loop_ref.unreference();
+            return Ok(());
+        }
+        let owner = this.borrow().js_owner.clone();
+        let result = if let Some(ref owner) = owner {
+            if let Ok(hook) = owner.get::<_, Function>("_onClose") {
+                hook.call::<_, ()>((This(owner.clone()), had_error))
+            } else {
+                Self::emit_str(
+                    this.clone(),
+                    ctx,
+                    "close",
+                    vec![had_error.into_js(ctx)?],
+                    false,
+                )
+            }
+        } else {
+            Self::emit_str(
+                this.clone(),
+                ctx,
+                "close",
+                vec![had_error.into_js(ctx)?],
+                false,
+            )
+        };
+        let mut borrow = this.borrow_mut();
+        borrow.js_owner = None;
+        borrow.tcp_control = None;
+        borrow.loop_ref.unreference();
+        result
+    }
+
     pub fn fail_connect(this: Class<'js, Self>, ctx: &Ctx<'js>, error: Value<'js>) -> Result<()> {
         {
             let mut borrow = this.borrow_mut();
@@ -578,6 +719,7 @@ impl<'js> TlsSocket<'js> {
             borrow.pending = false;
             borrow.ready_state = ReadyState::Closed;
             borrow.destroyed = true;
+            borrow.tcp_control = None;
         }
         if this.borrow().has_listener_str("error") {
             Self::emit_str(this.clone(), ctx, "error", vec![error], false)?;
@@ -748,6 +890,8 @@ impl<'js> TlsSocket<'js> {
                 WritableStream::end(This(end_this.clone()));
             }
         };
+        let reader: Box<dyn AsyncRead + Send + Unpin> = Box::new(CloseNotifyEofReader(reader));
+        let writer: Box<dyn AsyncWrite + Send + Unpin> = Box::new(writer);
         let readable_done = match owner.clone() {
             Some(owner) => ReadableStream::process_callback_loop_duplex(
                 this.clone(),
@@ -816,6 +960,169 @@ impl<'js> TlsSocket<'js> {
         }
         drop(borrow);
         Ok(())
+    }
+
+    pub fn attach_tcp_stream(
+        this: &Class<'js, Self>,
+        ctx: &Ctx<'js>,
+        stream: tokio::net::TcpStream,
+    ) -> Result<tokio::net::TcpStream> {
+        Self::set_addresses_from_tcp(this, ctx, &stream)?;
+        let std_stream = stream.into_std().or_throw(ctx)?;
+        let control = Arc::new(std_stream.try_clone().or_throw(ctx)?);
+        let options = this.borrow().tcp_options.clone();
+        if let Err(err) = apply_tcp_options(&control, &options) {
+            return Err(Exception::throw_message(ctx, &err.to_string()));
+        }
+        this.borrow_mut().tcp_control = Some(control);
+        match tokio::net::TcpStream::from_std(std_stream) {
+            Ok(stream) => Ok(stream),
+            Err(err) => {
+                this.borrow_mut().tcp_control = None;
+                Err(Exception::throw_message(ctx, &err.to_string()))
+            },
+        }
+    }
+
+    pub fn adopt_tcp_control(
+        this: &Class<'js, Self>,
+        ctx: &Ctx<'js>,
+        control: Option<Arc<std::net::TcpStream>>,
+        mut net_options: TcpSocketOptions,
+    ) -> Result<()> {
+        let tls_options = {
+            let mut borrow = this.borrow_mut();
+            let tls_only = borrow.tcp_options.clone();
+            if tls_only.no_delay.is_some() {
+                net_options.no_delay = tls_only.no_delay;
+            }
+            if tls_only.keep_alive.is_some() {
+                net_options.keep_alive = tls_only.keep_alive.clone();
+            }
+            borrow.tcp_options = net_options;
+            borrow.tcp_control = control.clone();
+            tls_only
+        };
+
+        if let Some(control) = control {
+            if let Err(err) = apply_tcp_options(&control, &tls_options) {
+                return Err(Exception::throw_message(ctx, &err.to_string()));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn begin_http2_handoff(
+        ctx: &Ctx<'js>,
+        this: Class<'js, Self>,
+    ) -> Result<(
+        Box<dyn AsyncRead + Send + Unpin>,
+        Box<dyn AsyncWrite + Send + Unpin>,
+        Vec<u8>,
+    )> {
+        {
+            let borrow = this.borrow();
+            if borrow.destroyed {
+                return Err(Exception::throw_message(ctx, "Socket destroyed"));
+            }
+            if borrow.transport_state != TransportState::Attached {
+                return Err(Exception::throw_message(
+                    ctx,
+                    "Socket transport is not attached",
+                ));
+            }
+        }
+
+        this.borrow_mut().transport_state = TransportState::HandoffPending;
+
+        let flush_rx = WritableStream::request_flush_barrier(this.clone(), ctx)?;
+        match tokio::time::timeout(std::time::Duration::from_secs(10), flush_rx).await {
+            Ok(Ok(())) => {},
+            Ok(Err(_)) => {
+                this.borrow_mut().transport_state = TransportState::Attached;
+                return Err(Exception::throw_message(ctx, "Flush barrier failed"));
+            },
+            Err(_) => {
+                this.borrow_mut().transport_state = TransportState::Attached;
+                return Err(Exception::throw_message(ctx, "Flush barrier timeout"));
+            },
+        }
+
+        this.borrow_mut().transport_state = TransportState::Detached;
+
+        let fail_handoff = |this: &Class<'js, Self>| {
+            let mut borrow = this.borrow_mut();
+            borrow.transport_state = TransportState::Closed;
+            borrow.destroyed = true;
+        };
+
+        let read_rx = match ReadableStream::request_handoff::<Box<dyn AsyncRead + Send + Unpin>>(
+            this.clone(),
+            ctx,
+        ) {
+            Ok(rx) => rx,
+            Err(err) => {
+                fail_handoff(&this);
+                return Err(err);
+            },
+        };
+        let write_rx = match WritableStream::request_handoff::<Box<dyn AsyncWrite + Send + Unpin>>(
+            this.clone(),
+            ctx,
+        ) {
+            Ok(rx) => rx,
+            Err(err) => {
+                fail_handoff(&this);
+                return Err(err);
+            },
+        };
+
+        let (read_half, read_prefix) =
+            match tokio::time::timeout(std::time::Duration::from_secs(10), read_rx).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(_)) | Err(_) => {
+                    fail_handoff(&this);
+                    return Err(Exception::throw_message(ctx, "Readable handoff failed"));
+                },
+            };
+        let write_half =
+            match tokio::time::timeout(std::time::Duration::from_secs(10), write_rx).await {
+                Ok(Ok(half)) => half,
+                Ok(Err(_)) | Err(_) => {
+                    fail_handoff(&this);
+                    return Err(Exception::throw_message(ctx, "Writable handoff failed"));
+                },
+            };
+
+        {
+            let mut borrow = this.borrow_mut();
+            borrow.tcp_control = None;
+            borrow.loop_ref.unreference();
+        }
+
+        Ok((read_half, write_half, read_prefix))
+    }
+}
+
+struct CloseNotifyEofReader<R>(R);
+
+impl<R: AsyncRead + Unpin> AsyncRead for CloseNotifyEofReader<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let filled_before = buf.filled().len();
+        match Pin::new(&mut self.0).poll_read(cx, buf) {
+            Poll::Ready(Err(err))
+                if err.kind() == io::ErrorKind::UnexpectedEof
+                    && err.to_string().contains("close_notify") =>
+            {
+                debug_assert_eq!(buf.filled().len(), filled_before);
+                Poll::Ready(Ok(()))
+            },
+            other => other,
+        }
     }
 }
 

@@ -2250,6 +2250,7 @@ dependencies = [
  "lexe_buffer",
  "lexe_context",
  "lexe_events",
+ "lexe_net",
  "lexe_test",
  "lexe_test_tls",
  "lexe_timers",

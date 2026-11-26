@@ -14,8 +14,8 @@ use lexe_utils::{
 };
 use rquickjs::{
     module::{Declarations, Exports, ModuleDef},
-    prelude::{Func, Opt, Rest, This},
-    Class, Ctx, Exception, Function, IntoJs, Object, Result, Value,
+    prelude::{Func, Opt, This},
+    Class, Ctx, Function, Object, Result, Value,
 };
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions as NamedPipeServerOptions};
@@ -38,7 +38,10 @@ mod socket;
 mod transport;
 
 pub use self::server::Server;
-pub use self::socket::{Socket, TransportState};
+pub use self::socket::{
+    apply_keep_alive, apply_tcp_options, parse_port_value, prepare_keep_alive_option,
+    prepare_no_delay_option, reset_tcp_linger, Socket, TcpSocketOptions, TransportState,
+};
 pub use self::transport::PrefixedTcpStream;
 
 const LOCALHOST: &str = "localhost";
@@ -581,6 +584,14 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
         }
       }
 
+      _onClose(hadError) {
+        if (this._closeEmitted) return;
+        this._closeEmitted = true;
+        this.connecting = false;
+        this._clearTimeout();
+        process.nextTick(() => this.emit("close", !!hadError));
+      }
+
       // --- public surface ---------------------------------------------------
 
       connect(...args) {
@@ -721,7 +732,17 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
     return Socket;
   }
 
-  return { build };
+  function makeConnect(SocketClass) {
+    return function connect(...args) {
+      const instance = new SocketClass();
+      if (instance && typeof instance.connect === "function") {
+        instance.connect(...args);
+      }
+      return instance;
+    };
+  }
+
+  return { build, makeConnect };
 })()"#;
 
 pub struct NetModule;
@@ -758,44 +779,14 @@ impl ModuleDef for NetModule {
             let handle_ctor = Function::new(ctx.clone(), Socket::handle_factory)?;
             let glue: Object = ctx.eval(NET_SOCKET_GLUE_JS)?;
             let build = glue.get::<_, Function>("build")?;
+            let make_connect = glue.get::<_, Function>("makeConnect")?;
             let socket_class: Function = build.call((handle_ctor,))?;
             default.set("Socket", socket_class.clone())?;
             // The server constructs accepted sockets through the same class.
             ctx.globals()
                 .set("__lexeNetSocketClass", socket_class.clone())?;
 
-            let connect = {
-                let socket_class = socket_class.clone();
-                Func::from(
-                    move |ctx: Ctx<'js>, args: Rest<Value<'js>>| -> Result<Value<'js>> {
-                        let ctor = socket_class.clone().into_value();
-                        let Some(ctor) = ctor.as_constructor() else {
-                            return Err(Exception::throw_message(
-                                &ctx,
-                                "net.Socket is not a constructor",
-                            ));
-                        };
-                        let instance: Value = ctor.construct(())?;
-                        let Some(obj) = instance.as_object() else {
-                            return Ok(instance);
-                        };
-                        if let Some(method) = obj
-                            .get::<_, Value>("connect")
-                            .ok()
-                            .and_then(|v| v.as_function().cloned())
-                        {
-                            let mut call = rquickjs::function::Args::new(ctx.clone(), args.0.len());
-                            call.this(obj.clone())?;
-                            for arg in args.0 {
-                                call.push_arg(arg)?;
-                            }
-                            method.call_arg::<Value>(call)?;
-                        }
-                        Ok(instance)
-                    },
-                )
-            }
-            .into_js(ctx)?;
+            let connect: Value = make_connect.call((socket_class,))?;
 
             default.set("createConnection", connect.clone())?;
             default.set("connect", connect)?;
