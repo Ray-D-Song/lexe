@@ -34,6 +34,17 @@ declare global {
     ref(): void;
     unref(): void;
   };
+  var __lexePortCreatePair: (() => [number, number]) | undefined;
+  var __lexePortPeer: ((id: number) => number | undefined) | undefined;
+  var __lexePortClose: ((id: number) => void) | undefined;
+  var __lexePortSend:
+    | ((id: number, data: unknown, transfer?: { transfer: unknown[] }) => void)
+    | undefined;
+  var __lexePortAttach:
+    | ((id: number, onMsg: (data: unknown) => void) => void)
+    | undefined;
+  var __lexePortEnsureLocalAttached: ((id: number) => void) | undefined;
+  var __lexePortRebuildFromId: ((id: number) => unknown) | undefined;
 }
 
 function readIsMainThread(): boolean {
@@ -54,9 +65,16 @@ export const isMainThread = readIsMainThread();
 export const threadId = readThreadId();
 
 /** Populated in worker child before the worker script is imported. */
-export const workerData: unknown = isMainThread
+export let workerData: unknown = isMainThread
   ? undefined
   : (globalThis as { workerData?: unknown }).workerData;
+
+(globalThis as { __lexeSetWorkerData?: (v: unknown) => void }).__lexeSetWorkerData = (
+  v: unknown
+) => {
+  workerData = v;
+  defaultExport.workerData = v;
+};
 
 type LoopRefController = ReturnType<typeof __lexeCreateLoopRefController>;
 
@@ -130,39 +148,129 @@ function toDataCloneError(err: unknown): DOMException {
 
 type MessageListener = (data: unknown) => void;
 
+const portIdSymbol = Symbol.for("lexe.internal.messagePortId");
+const portTransferSymbol = Symbol.for("lexe.internal.messagePortTransfer");
+const localPorts = new Map<number, MessagePort>();
+
 export class MessagePort {
-  onmessage: ((ev: { data: unknown }) => void) | null = null;
+  #onmessage: ((ev: { data: unknown }) => void) | null = null;
   onmessageerror: ((ev: unknown) => void) | null = null;
   #peer: MessagePort | null = null;
+  #portId = 0;
   #listeners = new Map<string, Set<MessageListener>>();
   #onceWrappers = new WeakMap<MessageListener, MessageListener>();
   #closed = false;
+  #detached = false;
+  #started = false;
+  #attachedToHub = false;
+  #explicitUnref = false;
   readonly #loopRef: LoopRefController;
 
-  constructor() {
+  constructor(portId = 0) {
     this.#loopRef =
       typeof globalThis.__lexeCreateLoopRefController === "function"
         ? globalThis.__lexeCreateLoopRefController()
         : { ref() {}, unref() {} };
+    if (portId > 0) {
+      this.#portId = portId;
+      localPorts.set(portId, this);
+      Object.defineProperty(this, portIdSymbol, {
+        value: portId,
+        enumerable: false,
+        configurable: true,
+        writable: false,
+      });
+      Object.defineProperty(this, portTransferSymbol, {
+        value: () => {
+          if (this.#detached) return true;
+          this.#detached = true;
+          this.#closed = true;
+          localPorts.delete(this.#portId);
+          this.#loopRef.unref();
+          return false;
+        },
+        enumerable: false,
+        configurable: true,
+        writable: false,
+      });
+    }
+  }
+
+  get onmessage(): ((ev: { data: unknown }) => void) | null {
+    return this.#onmessage;
+  }
+
+  set onmessage(handler: ((ev: { data: unknown }) => void) | null) {
+    this.#onmessage = typeof handler === "function" ? handler : null;
+    if (this.#onmessage) {
+      this.#started = true;
+      if (!this.#hasLocalPeer()) {
+        this._attachHub();
+      }
+    }
+  }
+
+  get isStarted(): boolean {
+    return this.#started;
+  }
+
+  #hasLocalPeer(): boolean {
+    if (this.#portId === 0 || typeof globalThis.__lexePortPeer !== "function") {
+      return false;
+    }
+    const peerId = globalThis.__lexePortPeer(this.#portId);
+    return peerId !== undefined && localPorts.has(peerId);
   }
 
   _setPeer(peer: MessagePort) {
     this.#peer = peer;
   }
 
-  start(): void {}
+  _attachHub(): void {
+    if (
+      this.#attachedToHub ||
+      this.#closed ||
+      this.#detached ||
+      this.#portId === 0 ||
+      typeof globalThis.__lexePortAttach !== "function"
+    ) {
+      return;
+    }
+    this.#attachedToHub = true;
+    if (!this.#explicitUnref) {
+      this.#loopRef.ref();
+    }
+    globalThis.__lexePortAttach(this.#portId, (data: unknown) => {
+      if (!this.#closed && !this.#detached) {
+        this.dispatchMessage(data);
+      }
+    });
+  }
+
+  start(): void {
+    this.#started = true;
+    if (!this.#hasLocalPeer()) {
+      this._attachHub();
+    }
+  }
 
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    if (this.#portId > 0) {
+      localPorts.delete(this.#portId);
+      if (typeof globalThis.__lexePortClose === "function") {
+        globalThis.__lexePortClose(this.#portId);
+      }
+    }
     this.#loopRef.unref();
     this.#dispatch("close", undefined);
   }
 
   postMessage(message: unknown, transfer?: unknown[]): void {
-    if (this.#closed) return;
+    if (this.#closed || this.#detached) return;
 
-    let transferOptions: { transfer: unknown[] } | undefined;
+    let transferOpts: { transfer: unknown[] } | undefined;
     if (transfer != null) {
       if (!Array.isArray(transfer)) {
         throw new TypeError(
@@ -170,14 +278,43 @@ export class MessagePort {
         );
       }
       if (transfer.length > 0) {
-        transferOptions = { transfer };
+        transferOpts = { transfer };
+      }
+    }
+
+    if (this.#portId > 0 && typeof globalThis.__lexePortPeer === "function") {
+      const peerId = globalThis.__lexePortPeer(this.#portId);
+      const localPeer = peerId !== undefined ? localPorts.get(peerId) : undefined;
+      if (localPeer) {
+        let cloned: unknown;
+        try {
+          cloned = transferOpts
+            ? structuredClone(message, transferOpts as object)
+            : structuredClone(message);
+        } catch (err) {
+          throw toDataCloneError(err);
+        }
+        if (localPeer.#closed || localPeer.#detached) return;
+        queueMicrotask(() => {
+          if (localPeer.#closed || localPeer.#detached) return;
+          localPeer.dispatchMessage(cloned);
+        });
+        return;
+      }
+      if (typeof globalThis.__lexePortSend === "function") {
+        try {
+          globalThis.__lexePortSend(this.#portId, message, transferOpts);
+        } catch (err) {
+          throw toDataCloneError(err);
+        }
+        return;
       }
     }
 
     let cloned: unknown;
     try {
-      cloned = transferOptions
-        ? structuredClone(message, transferOptions as object)
+      cloned = transferOpts
+        ? structuredClone(message, transferOpts as object)
         : structuredClone(message);
     } catch (err) {
       throw toDataCloneError(err);
@@ -196,7 +333,11 @@ export class MessagePort {
     this.#dispatch("message", data);
     if (typeof this.onmessage === "function") {
       try {
-        this.onmessage({ data });
+        const ev =
+          typeof MessageEvent === "function"
+            ? new MessageEvent("message", { data })
+            : { data };
+        this.onmessage(ev);
       } catch {
         // Node continues after onmessage throws; other listeners already ran.
       }
@@ -204,11 +345,13 @@ export class MessagePort {
   }
 
   ref(): this {
+    this.#explicitUnref = false;
     this.#loopRef.ref();
     return this;
   }
 
   unref(): this {
+    this.#explicitUnref = true;
     this.#loopRef.unref();
     return this;
   }
@@ -220,6 +363,12 @@ export class MessagePort {
       this.#listeners.set(type, set);
     }
     set.add(listener);
+    if (type === "message") {
+      this.#started = true;
+      if (!this.#hasLocalPeer()) {
+        this._attachHub();
+      }
+    }
   }
 
   removeEventListener(type: string, listener: MessageListener): void {
@@ -335,6 +484,8 @@ export class Worker extends EventEmitter {
     if (options.argv != null) spawnOptions.argv = options.argv;
     if (options.name != null) spawnOptions.name = options.name;
     if (options.eval) spawnOptions.eval = true;
+    const transferObj = transferOptions(options.transferList);
+    if (transferObj) spawnOptions.lexeWorkerDataTransfer = transferObj;
 
     const handle = globalThis.__lexeWorkerSpawn(path, spawnOptions, (event, arg) => {
       if (event === "exit") this.#exited = true;
@@ -375,16 +526,34 @@ export class Worker extends EventEmitter {
   }
 }
 
+globalThis.__lexePortEnsureLocalAttached = (peerId: number) => {
+  const peer = localPorts.get(peerId);
+  if (peer && peer.isStarted) peer._attachHub();
+};
+
+globalThis.__lexePortRebuildFromId = (portId: number) => {
+  return new MessagePort(portId);
+};
+
 export class MessageChannel {
   port1: MessagePort;
   port2: MessagePort;
   constructor() {
-    this.port1 = new MessagePort();
-    this.port2 = new MessagePort();
-    this.port1._setPeer(this.port2);
-    this.port2._setPeer(this.port1);
+    const [id1, id2] =
+      typeof globalThis.__lexePortCreatePair === "function"
+        ? globalThis.__lexePortCreatePair()
+        : [0, 0];
+    this.port1 = new MessagePort(id1);
+    this.port2 = new MessagePort(id2);
+    if (id1 === 0) {
+      this.port1._setPeer(this.port2);
+      this.port2._setPeer(this.port1);
+    }
   }
 }
+
+export const BroadcastChannel = (globalThis as { BroadcastChannel?: unknown })
+  .BroadcastChannel;
 
 export function getEnvironmentData(key: unknown): unknown {
   const store = readIsMainThread() ? environmentData : workerEnvironmentData;
@@ -426,7 +595,7 @@ export function receiveMessageOnPort(_port: unknown): undefined {
   return undefined;
 }
 
-export default {
+const defaultExport = {
   isMainThread,
   parentPort,
   workerData,
@@ -434,6 +603,7 @@ export default {
   Worker,
   MessagePort,
   MessageChannel,
+  BroadcastChannel,
   getEnvironmentData,
   setEnvironmentData,
   markAsUntransferable,
@@ -442,3 +612,5 @@ export default {
   moveMessagePortToContext,
   receiveMessageOnPort,
 };
+
+export default defaultExport;

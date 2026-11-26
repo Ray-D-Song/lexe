@@ -44,11 +44,13 @@ async fn run_worker_isolate_async(start: WorkerIsolateStart) -> Result<(), Strin
     .map_err(|e| e.to_string())?;
 
     let to_main = start.to_main.clone();
-    let from_main = start.from_main;
+    let to_main_init = to_main.clone();
+    let mut from_main = start.from_main;
 
-    let run_result: Result<(), String> = vm
+    let init_result: Result<bool, String> = vm
         .ctx
         .async_with(async move |ctx| {
+            let to_main = to_main_init;
             lexe_worker_threads::init(&ctx).map_err(|e| e.to_string())?;
 
             let worker_data = deserialize(&ctx, &start.worker_data).map_err(|e| e.to_string())?;
@@ -83,6 +85,9 @@ async fn run_worker_isolate_async(start: WorkerIsolateStart) -> Result<(), Strin
             let code = format!(
                 r#"
 globalThis.workerData = globalThis.__lexeWorkerBootstrapData;
+if (typeof globalThis.__lexeSetWorkerData === "function") {{
+  globalThis.__lexeSetWorkerData(globalThis.workerData);
+}}
 delete globalThis.__lexeWorkerBootstrapData;
 (function () {{
   const snap = globalThis.__lexeWorkerEnvironmentSnapshot;
@@ -121,48 +126,90 @@ delete globalThis.__lexeWorkerBootstrapData;
                     code: 0,
                     signal: None,
                 });
-                return Ok(());
+                return Ok(true);
             }
 
+            Ok(false)
+        })
+        .await;
+
+    let run_result = match init_result {
+        Ok(true) => Ok(()),
+        Ok(false) => {
+            let mut has_pending_tasks = true;
             loop {
-                match from_main.recv() {
-                    Ok(MainToWorker::Terminate) => {
-                        let _ = to_main.send(WorkerToMain::Exit {
-                            code: 0,
-                            signal: None,
-                        });
+                if has_pending_tasks {
+                    tokio::select! {
+                        _ = vm.idle() => {
+                            has_pending_tasks = false;
+                        }
+                        ev = from_main.recv() => {
+                            if handle_main_event(&vm, &to_main, ev).await {
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    let ev = from_main.recv().await;
+                    if handle_main_event(&vm, &to_main, ev).await {
                         break;
-                    },
-                    Ok(MainToWorker::Message(wire)) => {
-                        if let Ok(v) = deserialize(&ctx, &wire) {
-                            let _ = ctx
-                                .globals()
-                                .get::<_, Function>("__lexeWorkerDispatchParentMessage")
-                                .and_then(|f| f.call::<_, ()>((v,)));
-                        }
-                    },
-                    Ok(MainToWorker::EnvPatch { key, value }) => {
-                        if let (Ok(k), Ok(v)) = (deserialize(&ctx, &key), deserialize(&ctx, &value))
-                        {
-                            let _ = ctx
-                                .globals()
-                                .get::<_, Function>("__lexeWorkerApplyEnvPatch")
-                                .and_then(|f| f.call::<_, ()>((k, v)));
-                        }
-                    },
-                    Err(_) => break,
+                    }
+                    has_pending_tasks = true;
                 }
             }
             Ok(())
-        })
-        .await
-        .map_err(|e| e.to_string());
+        },
+        Err(e) => Err(e),
+    };
 
     if run_result.is_ok() {
         let _ = vm.idle().await;
     }
     vm.shutdown().await;
     run_result
+}
+
+async fn handle_main_event(
+    vm: &Vm,
+    to_main: &tokio::sync::mpsc::UnboundedSender<WorkerToMain>,
+    ev: Option<MainToWorker>,
+) -> bool {
+    match ev {
+        Some(MainToWorker::Terminate) => {
+            let _ = to_main.send(WorkerToMain::Exit {
+                code: 0,
+                signal: None,
+            });
+            true
+        },
+        Some(MainToWorker::Message(wire)) => {
+            vm.ctx
+                .with(|ctx| {
+                    if let Ok(v) = deserialize(&ctx, &wire) {
+                        let _ = ctx
+                            .globals()
+                            .get::<_, Function>("__lexeWorkerDispatchParentMessage")
+                            .and_then(|f| f.call::<_, ()>((v,)));
+                    }
+                })
+                .await;
+            false
+        },
+        Some(MainToWorker::EnvPatch { key, value }) => {
+            vm.ctx
+                .with(|ctx| {
+                    if let (Ok(k), Ok(v)) = (deserialize(&ctx, &key), deserialize(&ctx, &value)) {
+                        let _ = ctx
+                            .globals()
+                            .get::<_, Function>("__lexeWorkerApplyEnvPatch")
+                            .and_then(|f| f.call::<_, ()>((k, v)));
+                    }
+                })
+                .await;
+            false
+        },
+        None => true,
+    }
 }
 
 fn resolve_script(_ctx: &Ctx<'_>, script: &str) -> Result<String, String> {

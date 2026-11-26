@@ -32,8 +32,10 @@ use self::{custom_event::CustomEvent, event::Event, event_target::EventTarget};
 pub mod custom_event;
 pub mod event;
 pub mod event_target;
+pub mod message_event;
 pub mod progress_event;
 
+pub use message_event::MessageEvent;
 pub use progress_event::ProgressEvent;
 
 #[derive(Clone, Debug)]
@@ -1613,7 +1615,10 @@ impl From<EventsModule> for ModuleInfo<EventsModule> {
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let globals = ctx.globals();
 
-    if globals.contains_key("EventTarget")? && globals.contains_key("ProgressEvent")? {
+    if globals.contains_key("EventTarget")?
+        && globals.contains_key("ProgressEvent")?
+        && globals.contains_key("MessageEvent")?
+    {
         return Ok(());
     }
 
@@ -1621,6 +1626,7 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     Class::<CustomEvent>::define(&globals)?;
     Class::<Event>::define(&globals)?;
     Class::<ProgressEvent>::define(&globals)?;
+    Class::<MessageEvent>::define(&globals)?;
 
     if let (Some(event_proto), Some(event_ctor)) = (
         Class::<Event>::prototype(ctx)?,
@@ -1639,6 +1645,12 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         }
         if let Some(pe_ctor) = globals.get::<_, Option<Object>>("ProgressEvent")? {
             let _ = pe_ctor.set_prototype(Some(&event_ctor));
+        }
+        if let Some(me_proto) = Class::<MessageEvent>::prototype(ctx)? {
+            let _ = me_proto.set_prototype(Some(&event_proto));
+        }
+        if let Some(me_ctor) = globals.get::<_, Option<Object>>("MessageEvent")? {
+            let _ = me_ctor.set_prototype(Some(&event_ctor));
         }
     }
 

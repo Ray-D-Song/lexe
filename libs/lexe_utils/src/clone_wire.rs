@@ -6,7 +6,7 @@
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rquickjs::{
     atom::PredefinedAtom,
@@ -56,27 +56,93 @@ enum WireNode {
 
 #[derive(Clone, Copy)]
 pub struct NativeCloneCodec {
-    pub try_extract: for<'js> fn(&Ctx<'js>, &Value<'js>) -> Option<Arc<dyn Any + Send + Sync>>,
-    pub try_rebuild: for<'js> fn(&Ctx<'js>, &Arc<dyn Any + Send + Sync>) -> Result<Value<'js>>,
+    pub name: &'static str,
+    /// When true, `structuredClone` rejects this type unless it is in `transfer`.
+    pub transfer_only: bool,
+    pub try_extract:
+        for<'js> fn(&Ctx<'js>, &Value<'js>, bool) -> Result<Option<Arc<dyn Any + Send + Sync>>>,
+    pub try_rebuild:
+        for<'js> fn(&Ctx<'js>, &Arc<dyn Any + Send + Sync>) -> Result<Option<Value<'js>>>,
 }
 
-static NATIVE_CLONE_CODEC: OnceLock<NativeCloneCodec> = OnceLock::new();
+#[derive(Clone, Copy)]
+pub struct NativeTransferCodec {
+    pub name: &'static str,
+    pub try_transfer: for<'js> fn(&Ctx<'js>, &Value<'js>) -> Result<Option<Value<'js>>>,
+}
+
+static NATIVE_CLONE_CODECS: OnceLock<Mutex<Vec<NativeCloneCodec>>> = OnceLock::new();
+static NATIVE_TRANSFER_CODECS: OnceLock<Mutex<Vec<NativeTransferCodec>>> = OnceLock::new();
 
 pub fn register_native_codec(codec: NativeCloneCodec) {
-    let _ = NATIVE_CLONE_CODEC.set(codec);
+    let lock = NATIVE_CLONE_CODECS.get_or_init(|| Mutex::new(Vec::new()));
+    let mut codecs = lock.lock().unwrap();
+    if !codecs.iter().any(|c| c.name == codec.name) {
+        codecs.push(codec);
+    }
+}
+
+pub fn register_native_transfer_codec(codec: NativeTransferCodec) {
+    let lock = NATIVE_TRANSFER_CODECS.get_or_init(|| Mutex::new(Vec::new()));
+    let mut codecs = lock.lock().unwrap();
+    if !codecs.iter().any(|c| c.name == codec.name) {
+        codecs.push(codec);
+    }
+}
+
+fn clone_codecs_snapshot() -> Vec<NativeCloneCodec> {
+    NATIVE_CLONE_CODECS
+        .get()
+        .map(|lock| lock.lock().unwrap().clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn throw_data_clone_error<'js>(ctx: &Ctx<'js>, msg: &str) -> rquickjs::Error {
+    if let Ok(dom_ctor) = ctx
+        .globals()
+        .get::<_, rquickjs::function::Constructor>("DOMException")
+    {
+        if let Ok(obj) = dom_ctor.construct::<_, Object<'js>>((msg, "DataCloneError")) {
+            return ctx.throw(obj.into_value());
+        }
+    }
+    Exception::throw_type(ctx, msg)
 }
 
 pub(crate) fn try_clone_native<'js>(
     ctx: &Ctx<'js>,
     value: &Value<'js>,
 ) -> Result<Option<Value<'js>>> {
-    let Some(codec) = NATIVE_CLONE_CODEC.get() else {
-        return Ok(None);
-    };
-    let Some(handle) = (codec.try_extract)(ctx, value) else {
-        return Ok(None);
-    };
-    Ok(Some((codec.try_rebuild)(ctx, &handle)?))
+    for codec in clone_codecs_snapshot() {
+        if let Some(handle) = (codec.try_extract)(ctx, value, false)? {
+            if codec.transfer_only {
+                return Err(throw_data_clone_error(
+                    ctx,
+                    &format!("{} could not be cloned.", codec.name),
+                ));
+            }
+            if let Some(rebuilt) = (codec.try_rebuild)(ctx, &handle)? {
+                return Ok(Some(rebuilt));
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn try_transfer_native<'js>(
+    ctx: &Ctx<'js>,
+    value: &Value<'js>,
+) -> Result<Option<Value<'js>>> {
+    let codecs = NATIVE_TRANSFER_CODECS
+        .get()
+        .map(|lock| lock.lock().unwrap().clone())
+        .unwrap_or_default();
+    for codec in codecs {
+        if let Some(transferred) = (codec.try_transfer)(ctx, value)? {
+            return Ok(Some(transferred));
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Default, Clone)]
@@ -221,6 +287,13 @@ fn encode_node_inner<'js>(
                     flags: object.get("flags")?,
                 });
             }
+            for codec in clone_codecs_snapshot() {
+                if let Some(handle) = (codec.try_extract)(ctx, value, true)? {
+                    let id = handles.len() as u32;
+                    handles.push(handle);
+                    return Ok(WireNode::SharedHandle(id));
+                }
+            }
             if object.is_instance_of(&primordials.constructor_error) {
                 let message: String = object
                     .get(PredefinedAtom::Message)
@@ -286,13 +359,6 @@ fn encode_node_inner<'js>(
                 transfers.push(bytes.clone());
                 return Ok(WireNode::ArrayBufferCopy(bytes));
             }
-            if let Some(codec) = NATIVE_CLONE_CODEC.get() {
-                if let Some(handle) = (codec.try_extract)(ctx, value) {
-                    let id = handles.len() as u32;
-                    handles.push(handle);
-                    return Ok(WireNode::SharedHandle(id));
-                }
-            }
             let keys: Vec<String> = object.keys().collect::<Result<_>>()?;
             let mut props = Vec::with_capacity(keys.len());
             for key in keys {
@@ -301,7 +367,7 @@ fn encode_node_inner<'js>(
             }
             Ok(WireNode::Object(props))
         },
-        Type::Function | Type::Constructor | Type::Proxy => Err(Exception::throw_type(
+        Type::Function | Type::Constructor | Type::Proxy => Err(throw_data_clone_error(
             ctx,
             "The object could not be cloned.",
         )),
@@ -363,12 +429,7 @@ fn decode_at<'js>(
             obj.into_js(ctx)?
         },
         WireNode::ArrayBufferCopy(bytes) => {
-            let buf = if let Some(t) = transfers.first() {
-                t.clone()
-            } else {
-                bytes.clone()
-            };
-            ArrayBuffer::new_copy(ctx.clone(), &buf)?.into_js(ctx)?
+            ArrayBuffer::new_copy(ctx.clone(), bytes)?.into_js(ctx)?
         },
         WireNode::SharedArrayBuffer { id } => {
             shared_array_buffer::new_shared_array_buffer_value(ctx, *id)?
@@ -434,13 +495,19 @@ fn decode_at<'js>(
             obj.into_js(ctx)?
         },
         WireNode::SharedHandle(handle_idx) => {
-            let codec = NATIVE_CLONE_CODEC.get().ok_or_else(|| {
-                Exception::throw_type(ctx, "Native structured clone codec unavailable")
-            })?;
             let handle = handles.get(*handle_idx as usize).ok_or_else(|| {
                 Exception::throw_type(ctx, "Missing shared handle in structured-clone payload")
             })?;
-            (codec.try_rebuild)(ctx, handle)?
+            let mut rebuilt_val = None;
+            for codec in clone_codecs_snapshot() {
+                if let Some(val) = (codec.try_rebuild)(ctx, handle)? {
+                    rebuilt_val = Some(val);
+                    break;
+                }
+            }
+            rebuilt_val.ok_or_else(|| {
+                Exception::throw_type(ctx, "Native structured clone codec unavailable")
+            })?
         },
     };
     if cache[idx].is_none() {

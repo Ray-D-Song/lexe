@@ -71,22 +71,26 @@ fn install_class<'js, C: rquickjs::class::JsClass<'js> + 'js>(
 fn extract_wasm_module_handle(
     _ctx: &Ctx<'_>,
     value: &Value<'_>,
-) -> Option<Arc<dyn Any + Send + Sync>> {
-    let cls = Class::<WasmModule>::from_value(value).ok()?;
+    _for_wire: bool,
+) -> Result<Option<Arc<dyn Any + Send + Sync>>> {
+    let Ok(cls) = Class::<WasmModule>::from_value(value) else {
+        return Ok(None);
+    };
     let borrow = cls.borrow();
-    Some(Arc::new((
+    Ok(Some(Arc::new((
         Arc::clone(&borrow.inner),
         Arc::clone(&borrow.metadata),
-    )))
+    ))))
 }
 
 fn rebuild_wasm_module_value<'js>(
     ctx: &Ctx<'js>,
     handle: &Arc<dyn Any + Send + Sync>,
-) -> Result<Value<'js>> {
-    let pair = handle
-        .downcast_ref::<(Arc<wasmi::Module>, Arc<module::ModuleMetadata>)>()
-        .ok_or(rquickjs::Error::Unknown)?;
+) -> Result<Option<Value<'js>>> {
+    let Some(pair) = handle.downcast_ref::<(Arc<wasmi::Module>, Arc<module::ModuleMetadata>)>()
+    else {
+        return Ok(None);
+    };
     let instance = Class::instance(
         ctx.clone(),
         WasmModule {
@@ -94,11 +98,13 @@ fn rebuild_wasm_module_value<'js>(
             metadata: Arc::clone(&pair.1),
         },
     )?;
-    instance.into_js(ctx)
+    Ok(Some(instance.into_js(ctx)?))
 }
 
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     lexe_utils::clone_wire::register_native_codec(lexe_utils::clone_wire::NativeCloneCodec {
+        name: "WasmModule",
+        transfer_only: false,
         try_extract: extract_wasm_module_handle,
         try_rebuild: rebuild_wasm_module_value,
     });

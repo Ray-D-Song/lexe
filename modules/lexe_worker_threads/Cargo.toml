@@ -11,7 +11,9 @@ path = "src/lib.rs"
 
 [dependencies]
 lexe_context = { version = "0.1.8", path = "../../libs/lexe_context" }
+lexe_events = { version = "0.1.8", path = "../lexe_events" }
+lexe_exceptions = { version = "0.1.8", path = "../lexe_exceptions" }
 lexe_utils = { version = "0.1.8", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
-tokio = { version = "1", features = ["sync"], default-features = false }
+tokio = { version = "1", features = ["sync", "macros"], default-features = false }
 tracing = { version = "0.1", default-features = false }

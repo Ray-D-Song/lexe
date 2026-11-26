@@ -8,7 +8,7 @@ use rquickjs::{
     function::Constructor,
     module::{Declarations, Exports, ModuleDef},
     prelude::Func,
-    Class, Ctx, Function, IntoJs, Object, Result,
+    Class, Ctx, Function, IntoJs, Object, Result, Value,
 };
 
 pub use self::array_buffer_view::*;
@@ -102,7 +102,41 @@ impl From<BufferModule> for ModuleInfo<BufferModule> {
     }
 }
 
+fn extract_blob_handle(
+    _ctx: &Ctx<'_>,
+    value: &Value<'_>,
+    _for_wire: bool,
+) -> Result<Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>> {
+    if let Ok(cls) = Class::<File>::from_value(value) {
+        return Ok(Some(std::sync::Arc::new(cls.borrow().clone())));
+    }
+    if let Ok(cls) = Class::<Blob>::from_value(value) {
+        return Ok(Some(std::sync::Arc::new(cls.borrow().clone())));
+    }
+    Ok(None)
+}
+
+fn rebuild_blob_value<'js>(
+    ctx: &Ctx<'js>,
+    handle: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+) -> Result<Option<Value<'js>>> {
+    if let Some(file) = handle.downcast_ref::<File>() {
+        return Ok(Some(file.clone().into_js(ctx)?));
+    }
+    if let Some(blob) = handle.downcast_ref::<Blob>() {
+        return Ok(Some(blob.clone().into_js(ctx)?));
+    }
+    Ok(None)
+}
+
 pub fn init<'js>(ctx: &Ctx<'js>) -> Result<()> {
+    lexe_utils::clone_wire::register_native_codec(lexe_utils::clone_wire::NativeCloneCodec {
+        name: "BlobOrFile",
+        transfer_only: false,
+        try_extract: extract_blob_handle,
+        try_rebuild: rebuild_blob_value,
+    });
+
     let globals = ctx.globals();
     BasePrimordials::init(ctx)?;
 

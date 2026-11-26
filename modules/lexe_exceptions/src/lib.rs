@@ -331,7 +331,55 @@ const CALLSITE_POLYFILL_JS: &str = r#"(function () {
   }
 })()"#;
 
+#[derive(Clone)]
+struct ClonedDomException {
+    name: String,
+    message: String,
+    stack: String,
+    code: u8,
+}
+
+fn extract_dom_exception_handle(
+    _ctx: &Ctx<'_>,
+    value: &Value<'_>,
+    _for_wire: bool,
+) -> Result<Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>> {
+    let Ok(cls) = Class::<DOMException>::from_value(value) else {
+        return Ok(None);
+    };
+    let borrow = cls.borrow();
+    Ok(Some(std::sync::Arc::new(ClonedDomException {
+        name: borrow.name.clone(),
+        message: borrow.message.clone(),
+        stack: borrow.stack.clone(),
+        code: borrow.code,
+    })))
+}
+
+fn rebuild_dom_exception_value<'js>(
+    ctx: &Ctx<'js>,
+    handle: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+) -> Result<Option<Value<'js>>> {
+    let Some(cloned) = handle.downcast_ref::<ClonedDomException>() else {
+        return Ok(None);
+    };
+    let ex = DOMException {
+        name: cloned.name.clone(),
+        message: cloned.message.clone(),
+        stack: cloned.stack.clone(),
+        code: cloned.code,
+    };
+    Ok(Some(ex.into_js(ctx)?))
+}
+
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
+    lexe_utils::clone_wire::register_native_codec(lexe_utils::clone_wire::NativeCloneCodec {
+        name: "DOMException",
+        transfer_only: false,
+        try_extract: extract_dom_exception_handle,
+        try_rebuild: rebuild_dom_exception_value,
+    });
+
     let globals = ctx.globals();
     let init_marker = rquickjs::Symbol::new_global(ctx.clone(), "lexe.exceptions.initialized")?;
     if globals.contains_key(init_marker.clone())? {

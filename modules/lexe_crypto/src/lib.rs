@@ -270,7 +270,144 @@ fn is_native_class<'js, T: rquickjs::class::JsClass<'js>>(
     Class::<T>::from_js(&ctx, value).is_ok()
 }
 
+struct ClonedCryptoKey {
+    kind: subtle::KeyKind,
+    extractable: bool,
+    algorithm: ClonedKeyAlgorithm,
+    name: String,
+    usages: Vec<String>,
+    handle: std::sync::Arc<[u8]>,
+}
+
+enum ClonedKeyAlgorithm {
+    Aes {
+        length: u16,
+    },
+    Ec {
+        curve: subtle::EllipticCurve,
+        algorithm: subtle::key_algorithm::EcAlgorithm,
+    },
+    X25519,
+    Ed25519,
+    Hmac {
+        hash: HashAlgorithm,
+        length: u16,
+    },
+    Rsa {
+        modulus_length: u32,
+        public_exponent: Vec<u8>,
+        hash: HashAlgorithm,
+    },
+    Derive(subtle::key_algorithm::KeyDerivation),
+    HkdfImport,
+    Pbkdf2Import,
+}
+
+impl ClonedKeyAlgorithm {
+    fn from_alg(alg: &subtle::key_algorithm::KeyAlgorithm) -> Self {
+        use subtle::key_algorithm::KeyAlgorithm;
+        match alg {
+            KeyAlgorithm::Aes { length } => Self::Aes { length: *length },
+            KeyAlgorithm::Ec { curve, algorithm } => Self::Ec {
+                curve: *curve,
+                algorithm: algorithm.clone(),
+            },
+            KeyAlgorithm::X25519 => Self::X25519,
+            KeyAlgorithm::Ed25519 => Self::Ed25519,
+            KeyAlgorithm::Hmac { hash, length } => Self::Hmac {
+                hash: *hash,
+                length: *length,
+            },
+            KeyAlgorithm::Rsa {
+                modulus_length,
+                public_exponent,
+                hash,
+            } => Self::Rsa {
+                modulus_length: *modulus_length,
+                public_exponent: public_exponent.to_vec(),
+                hash: *hash,
+            },
+            KeyAlgorithm::Derive(d) => Self::Derive(d.clone()),
+            KeyAlgorithm::HkdfImport => Self::HkdfImport,
+            KeyAlgorithm::Pbkdf2Import => Self::Pbkdf2Import,
+        }
+    }
+
+    fn to_alg(&self) -> subtle::key_algorithm::KeyAlgorithm {
+        use subtle::key_algorithm::KeyAlgorithm;
+        match self {
+            Self::Aes { length } => KeyAlgorithm::Aes { length: *length },
+            Self::Ec { curve, algorithm } => KeyAlgorithm::Ec {
+                curve: *curve,
+                algorithm: algorithm.clone(),
+            },
+            Self::X25519 => KeyAlgorithm::X25519,
+            Self::Ed25519 => KeyAlgorithm::Ed25519,
+            Self::Hmac { hash, length } => KeyAlgorithm::Hmac {
+                hash: *hash,
+                length: *length,
+            },
+            Self::Rsa {
+                modulus_length,
+                public_exponent,
+                hash,
+            } => KeyAlgorithm::Rsa {
+                modulus_length: *modulus_length,
+                public_exponent: std::rc::Rc::new(public_exponent.clone().into_boxed_slice()),
+                hash: *hash,
+            },
+            Self::Derive(d) => KeyAlgorithm::Derive(d.clone()),
+            Self::HkdfImport => KeyAlgorithm::HkdfImport,
+            Self::Pbkdf2Import => KeyAlgorithm::Pbkdf2Import,
+        }
+    }
+}
+
+fn extract_crypto_key_handle(
+    _ctx: &Ctx<'_>,
+    value: &Value<'_>,
+    _for_wire: bool,
+) -> Result<Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>> {
+    let Ok(cls) = Class::<CryptoKey>::from_value(value) else {
+        return Ok(None);
+    };
+    let borrow = cls.borrow();
+    Ok(Some(std::sync::Arc::new(ClonedCryptoKey {
+        kind: borrow.kind,
+        extractable: borrow.extractable,
+        algorithm: ClonedKeyAlgorithm::from_alg(&borrow.algorithm),
+        name: borrow.name.to_string(),
+        usages: borrow.usages.clone(),
+        handle: std::sync::Arc::from(borrow.handle.as_ref()),
+    })))
+}
+
+fn rebuild_crypto_key_value<'js>(
+    ctx: &Ctx<'js>,
+    handle: &std::sync::Arc<dyn std::any::Any + Send + Sync>,
+) -> Result<Option<Value<'js>>> {
+    let Some(cloned) = handle.downcast_ref::<ClonedCryptoKey>() else {
+        return Ok(None);
+    };
+    let key = CryptoKey::new(
+        cloned.kind,
+        cloned.name.clone(),
+        cloned.extractable,
+        cloned.algorithm.to_alg(),
+        cloned.usages.clone(),
+        cloned.handle.to_vec(),
+    );
+    Ok(Some(Class::instance(ctx.clone(), key)?.into_value()))
+}
+
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
+    lexe_utils::clone_wire::register_native_codec(lexe_utils::clone_wire::NativeCloneCodec {
+        name: "CryptoKey",
+        transfer_only: false,
+        try_extract: extract_crypto_key_handle,
+        try_rebuild: rebuild_crypto_key_value,
+    });
+
     let globals = ctx.globals();
 
     Class::<Crypto>::define(&globals)?;

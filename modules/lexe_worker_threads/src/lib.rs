@@ -1,9 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod broadcast_channel;
 mod messages;
+mod port_hub;
 mod thread_state;
 
+pub use broadcast_channel::BroadcastChannel;
 pub use messages::{MainToWorker, WorkerToMain};
 pub use thread_state::set_worker_thread_id;
 
@@ -13,7 +16,7 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
-        mpsc, Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
     },
     thread,
 };
@@ -29,7 +32,7 @@ use rquickjs::{
     function::Opt,
     module::{Declarations, Exports, ModuleDef},
     prelude::Func,
-    Array, Ctx, Exception, Function, IntoJs, Null, Object, Result, Undefined, Value,
+    Class, Ctx, Exception, Function, IntoJs, Null, Object, Result, Undefined, Value,
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
@@ -49,7 +52,7 @@ pub struct WorkerIsolateStart {
     pub worker_data: CloneWirePayload,
     pub env_snapshot: CloneWirePayload,
     pub to_main: UnboundedSender<WorkerToMain>,
-    pub from_main: mpsc::Receiver<MainToWorker>,
+    pub from_main: UnboundedReceiver<MainToWorker>,
 }
 
 pub type WorkerIsolateRunner = fn(WorkerIsolateStart);
@@ -65,7 +68,7 @@ struct WorkerRegistry {
 }
 
 struct WorkerHandleInner {
-    to_worker: mpsc::Sender<MainToWorker>,
+    to_worker: UnboundedSender<MainToWorker>,
     registry_id: u64,
 }
 
@@ -78,8 +81,8 @@ fn registry() -> &'static WorkerRegistry {
 }
 
 struct WorkerState {
-    to_worker: mpsc::Sender<MainToWorker>,
-    loop_ref: Arc<EventLoopRef>,
+    to_worker: UnboundedSender<MainToWorker>,
+    _loop_ref: Arc<EventLoopRef>,
     registry_id: u64,
 }
 
@@ -110,23 +113,6 @@ fn transfer_options<'js>(transfer: Opt<Value<'js>>) -> Opt<Object<'js>> {
             }
         },
     }
-}
-
-fn emit_worker_exit<'js>(
-    ctx: &Ctx<'js>,
-    on_event: &Function<'js>,
-    code: i32,
-    signal: Option<&str>,
-) -> Result<()> {
-    let exit_obj = Object::new(ctx.clone())?;
-    exit_obj.set("code", code)?;
-    let signal_val: Value = match signal {
-        Some(s) => s.into_js(ctx)?,
-        None => Null.into_value(ctx.clone()),
-    };
-    exit_obj.set("signal", signal_val)?;
-    let _ = on_event.call::<_, ()>(("exit", exit_obj));
-    Ok(())
 }
 
 thread_local! {
@@ -182,14 +168,15 @@ fn spawn_worker<'js>(
         Ok(v) => v,
         Err(_) => Object::new(ctx.clone())?.into_value(),
     };
+    let worker_transfer = options.get::<_, Object>("lexeWorkerDataTransfer").ok();
 
-    let worker_wire = serialize(&ctx, worker_data, Opt(None))?;
+    let worker_wire = serialize(&ctx, worker_data, Opt(worker_transfer))?;
     let env_wire = serialize(&ctx, env_snapshot, Opt(None))?;
 
     let thread_id = NEXT_THREAD_ID.fetch_add(1, Ordering::Relaxed);
     register_event_sink(&ctx, thread_id, on_event.clone());
     let (to_main_tx, mut to_main_rx) = unbounded_channel::<WorkerToMain>();
-    let (to_worker_tx, to_worker_rx) = mpsc::channel::<MainToWorker>();
+    let (to_worker_tx, to_worker_rx) = unbounded_channel::<MainToWorker>();
 
     let registry_id = thread_id;
     registry().workers.lock().unwrap().push(WorkerHandleInner {
@@ -204,7 +191,7 @@ fn spawn_worker<'js>(
 
     let state = Arc::new(WorkerState {
         to_worker: to_worker_tx,
-        loop_ref: loop_ref.clone(),
+        _loop_ref: loop_ref.clone(),
         registry_id,
     });
 
@@ -440,7 +427,28 @@ pub fn worker_thread_id_ctx(_ctx: Ctx<'_>) -> u64 {
 }
 
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
+    lexe_events::init(ctx)?;
+    lexe_exceptions::init(ctx)?;
+    port_hub::register_codecs();
+
     let globals = ctx.globals();
+    if !globals.contains_key("BroadcastChannel")? {
+        Class::<BroadcastChannel>::define(&globals)?;
+        BroadcastChannel::install_prototype(ctx, &globals)?;
+    }
+
+    globals.set("__lexePortCreatePair", Func::from(port_hub::create_pair))?;
+    globals.set(
+        "__lexePortPeer",
+        Func::from(|id: f64| port_hub::peer_id(id as u64).map(|p| p as f64)),
+    )?;
+    globals.set(
+        "__lexePortClose",
+        Func::from(|id: f64| port_hub::close_port(id as u64)),
+    )?;
+    globals.set("__lexePortSend", Func::from(port_hub::send_to_peer_js))?;
+    globals.set("__lexePortAttach", Func::from(port_hub::attach_port_js))?;
+
     globals.set(
         "__lexeWorkerIsMainThread",
         Func::from(worker_is_main_thread_ctx),

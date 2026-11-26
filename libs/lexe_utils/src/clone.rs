@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use rquickjs::{
     atom::PredefinedAtom,
     function::{Constructor, Opt, This},
-    Array, ArrayBuffer, Ctx, Exception, Function, IntoJs, Null, Object, Result, Type, Value,
+    Array, ArrayBuffer, Ctx, Function, IntoJs, Null, Object, Result, Type, Value,
 };
 
 use super::{
@@ -73,21 +73,28 @@ pub fn structured_clone<'js>(
             StackItem::Value(parent, value, mut object_key, array_index) => {
                 if let Some(set) = &transfer_set {
                     if let Some(value) = set.get(&value) {
-                        append_transfer_value(&mut tape, value, parent, object_key, array_index)?;
+                        append_transfer_value(
+                            ctx,
+                            &mut tape,
+                            value,
+                            parent,
+                            object_key,
+                            array_index,
+                        )?;
                         index += 1;
                         continue;
                     }
                 }
                 match value.type_of() {
                     Type::Proxy => {
-                        return Err(Exception::throw_type(
+                        return Err(crate::clone_wire::throw_data_clone_error(
                             ctx,
                             "A Proxy value could not be cloned",
                         ));
                     },
                     // Structured clone cannot transfer callable objects by reference.
                     Type::Function | Type::Constructor => {
-                        return Err(Exception::throw_type(
+                        return Err(crate::clone_wire::throw_data_clone_error(
                             ctx,
                             "The object could not be cloned.",
                         ));
@@ -386,6 +393,7 @@ fn check_circular(
 #[inline(always)]
 #[cold]
 fn append_transfer_value<'js>(
+    ctx: &Ctx<'js>,
     tape: &mut Vec<TapeItem<'js>>,
     value: &Value<'js>,
     parent: usize,
@@ -394,6 +402,8 @@ fn append_transfer_value<'js>(
 ) -> Result<()> {
     let value = if let Some(ab) = ArrayBuffer::from_value(value.clone()) {
         ab.get::<_, Function>("transfer")?.call((This(ab),))?
+    } else if let Some(transferred) = crate::clone_wire::try_transfer_native(ctx, value)? {
+        transferred
     } else {
         value.clone()
     };

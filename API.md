@@ -1388,13 +1388,29 @@ export function print(value: any): void;
 
 [atob](https://developer.mozilla.org/en-US/docs/Web/API/atob)
 
+[BroadcastChannel](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel)
+
 [btoa](https://developer.mozilla.org/en-US/docs/Web/API/btoa)
 
 [clearInterval](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearInterval)
 
 [clearTimeout](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearTimeout)
 
+[hardwareConcurrency](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/hardwareConcurrency)
+
+[language](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language)
+
+[languages](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/languages)
+
+[MessageChannel](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel)
+
+[MessageEvent](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent)
+
+[MessagePort](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort)
+
 [navigator](https://developer.mozilla.org/en-US/docs/Web/API/Window/navigator)
+
+[platform](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/platform)
 
 [queueMicrotask](https://developer.mozilla.org/en-US/docs/Web/API/Window/queueMicrotask)
 

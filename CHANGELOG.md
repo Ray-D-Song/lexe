@@ -4,6 +4,11 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Completed `HTML` compatibility (`HTML` now `✔︎` in `docs/compatibility.md`):
+  - Added `navigator.hardwareConcurrency`, `navigator.language`, `navigator.languages`, and `navigator.platform` alongside `navigator[Symbol.toStringTag]`.
+  - Extended `structuredClone()` and transfer serialization (`clone_wire`) to support `DOMException`, `Blob`, `File`, `CryptoKey`, and transferable `MessagePort` (including across `Worker` threads and `workerData` `transferList`), throwing `DOMException("DataCloneError")` for non-transferable `MessagePort` and uncloneable values.
+  - Implemented global `MessageEvent` (inheriting from `Event`), global/worker `BroadcastChannel` (inheriting from `EventTarget` with cross-isolate delivery and `InvalidStateError` on closed sends), and global `MessageChannel`/`MessagePort` getters linked to `node:worker_threads`.
+  - Switched worker isolate main-channel event loop (`worker_isolate`) to non-blocking async `tokio::select!` with `Vm::idle()` so worker `MessagePort`, `BroadcastChannel`, and background async tasks execute alongside parent IPC.
 - Completed full `FILEAPI` parity (`FILEAPI` now `✔︎` in `docs/compatibility.md`):
   - Added `FileReader`, `FileReaderSync`, `FileList`, and `ProgressEvent` (inheriting from `EventTarget` / `Event`), with `File` prototype inheritance from `Blob`.
   - Added `Blob.prototype.stream()` / `File.prototype.stream()` byte streams (with default and BYOB readers), fixed `Blob.prototype.slice()` bounds/defaults, `USVString` lone-surrogate replacement, UTF-8 BOM stripping in `Blob.prototype.text()`, `endings: "native"` line-ending conversion, and `File::from_bytes`.

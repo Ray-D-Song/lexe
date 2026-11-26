@@ -2735,6 +2735,8 @@ name = "lexe_worker_threads"
 version = "0.1.8"
 dependencies = [
  "lexe_context",
+ "lexe_events",
+ "lexe_exceptions",
  "lexe_utils",
  "rquickjs",
  "tokio",

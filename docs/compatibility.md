@@ -52,7 +52,7 @@
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✘ | Not implemented |
-| node:worker_threads | ✔︎ | ✔︎⚠️ | `moveMessagePortToContext` throws; missing `BroadcastChannel`, `SHARE_ENV`, `resourceLimits`, `getHeapSnapshot`, `postMessageToThread`, and piped worker stdio ([details](#nodeworker_threads)) |
+| node:worker_threads | ✔︎ | ✔︎⚠️ | `moveMessagePortToContext` throws; missing `SHARE_ENV`, `resourceLimits`, `getHeapSnapshot`, `postMessageToThread`, and piped worker stdio ([details](#nodeworker_threads)) |
 | node:zlib | ✔︎ | ✔︎ | — |
 
 | [lexe API](https://github.com/Ray-D-Song/lexe/blob/main/API.md) | Node.js | lexe |
@@ -72,7 +72,7 @@
 | FETCH | ✔︎⚠️ | No `file:` URL fetch; omits browser policy controls (`credentials`, `referrer`, `integrity`, `caches`, CORS); WPT edge cases ([details](#fetch)) |
 | FILEAPI | ✔︎ | — |
 | HR-TIME | ✔︎ | — |
-| HTML | ✔︎⚠️ | `navigator` only exposes `userAgent`; `structuredClone` omits `DOMException`/`Blob`/`File`/`MessagePort`/`CryptoKey`; no `BroadcastChannel` ([details](#html)) |
+| HTML | ✔︎ | — |
 | STREAMS | ✔︎ | — |
 | URL | ✔︎ | — |
 | URLPATTERN | ✔︎ | — |
@@ -178,7 +178,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Uses **OS-thread worker isolates** (QuickJS per thread) with structured-clone `postMessage`, in-process `MessageChannel`, environment data sync, and **SharedArrayBuffer** hooks for shared memory within the process.
 - `moveMessagePortToContext()` throws (not implemented).
-- Missing `BroadcastChannel`, `SHARE_ENV`, `resourceLimits`, `Worker.prototype.getHeapSnapshot()`, `postMessageToThread()`, and piped worker stdio (`stdin: true`, `stdout: true`, `stderr: true`).
+- Missing `SHARE_ENV`, `resourceLimits`, `Worker.prototype.getHeapSnapshot()`, `postMessageToThread()`, and piped worker stdio (`stdin: true`, `stdout: true`, `stderr: true`).
 
 ### Web Platform APIs
 
@@ -204,12 +204,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `file:` scheme throws `TypeError("Unsupported scheme")` (`blob:` URLs from `URL.createObjectURL()` support `GET`/`HEAD`).
 - Browser-centric options and policies (`credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, HTTP `cache` / `caches` API, CORS preflight, forbidden-header enforcement) are omitted or non-enforcing.
 - Some WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming) do not yet pass.
-
-#### `HTML`
-
-- `navigator` exposes only `userAgent` (missing `hardwareConcurrency`, `language`/`languages`, `platform`).
-- `structuredClone()` does not clone `DOMException`, `Blob`, `File`, `MessagePort`, or `CryptoKey`.
-- `BroadcastChannel` is not implemented (and there are no browser `Window` or DOM globals).
 
 #### `WASM-JS-API-2`
 

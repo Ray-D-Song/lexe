@@ -12,14 +12,14 @@ mod generate_key;
 #[cfg(feature = "_subtle-full")]
 mod import_key;
 #[cfg(feature = "_subtle-full")]
-mod key_algorithm;
+pub(crate) mod key_algorithm;
 mod sign;
 mod sign_algorithm;
 mod verify;
 #[cfg(feature = "_subtle-full")]
 mod wrapping;
 
-pub use crypto_key::CryptoKey;
+pub use crypto_key::{CryptoKey, KeyKind};
 pub use derive::subtle_derive_bits;
 pub use derive::subtle_derive_key;
 pub use digest::subtle_digest;
