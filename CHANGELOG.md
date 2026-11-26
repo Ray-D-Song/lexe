@@ -2,7 +2,7 @@
 
 All notable changes to Lexe are documented in this file.
 
-## [Unreleased]
+## [0.1.9] - 2026-11-27
 
 - Improved `node:v8` compatibility (`docs/compatibility.md`):
   - Added `serialize()`, `deserialize()`, `Serializer`, `Deserializer`, `DefaultSerializer`, `DefaultDeserializer` (including `writeHeader`/`readHeader`, `getWireFormatVersion`, `writeUint32`/`readUint32`, `writeUint64`/`readUint64`, `writeDouble`/`readDouble`, `writeRawBytes`/`readRawBytes`/`_readRawBytes`, `transferArrayBuffer`, and custom `_writeHostObject`/`_readHostObject`), and `cachedDataVersionTag()`.

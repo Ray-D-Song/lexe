@@ -1,7 +1,7 @@
 [package]
 name = "lexe_constants"
 description = "lexe Module constants (legacy Node constants)"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -11,9 +11,9 @@ name = "lexe_constants"
 path = "src/lib.rs"
 
 [dependencies]
-lexe_fs = { version = "0.1.8", path = "../lexe_fs" }
-lexe_os = { version = "0.1.8", path = "../lexe_os" }
-lexe_utils = { version = "0.1.8", path = "../../libs/lexe_utils", default-features = false }
+lexe_fs = { version = "0.1.9", path = "../lexe_fs" }
+lexe_os = { version = "0.1.9", path = "../lexe_os" }
+lexe_utils = { version = "0.1.9", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
 
 [dev-dependencies]

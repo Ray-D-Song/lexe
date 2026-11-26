@@ -1,7 +1,7 @@
 [package]
 name = "lexe_ffi"
 description = "lexe Module node:ffi"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -11,7 +11,7 @@ name = "lexe_ffi"
 path = "src/lib.rs"
 
 [dependencies]
-lexe_utils = { version = "0.1.8", path = "../../libs/lexe_utils", default-features = false }
+lexe_utils = { version = "0.1.9", path = "../../libs/lexe_utils", default-features = false }
 libffi = "5.2"
 libloading = { version = "0.8", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }

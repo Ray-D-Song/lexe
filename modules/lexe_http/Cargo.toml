@@ -1,7 +1,7 @@
 [package]
 name = "lexe_http"
 description = "lexe Module http & https"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -73,16 +73,16 @@ hyper-openssl = { version = "0.10", features = [
   "client-legacy",
 ], optional = true }
 openssl = { version = "0.10", optional = true }
-lexe_async_hooks = { version = "0.1.8", path = "../lexe_async_hooks" }
-lexe_dns_cache = { version = "0.1.8", path = "../../libs/lexe_dns_cache" }
-lexe_encoding = { version = "0.1.8", path = "../../libs/lexe_encoding" }
-lexe_tls = { version = "0.1.8", default-features = false, path = "../lexe_tls" }
-lexe_timers = { version = "0.1.8", path = "../lexe_timers" }
-lexe_utils = { version = "0.1.8", path = "../../libs/lexe_utils", default-features = false }
-lexe_context = { version = "0.1.8", path = "../../libs/lexe_context" }
-lexe_events = { version = "0.1.8", path = "../lexe_events" }
-lexe_buffer = { version = "0.1.8", path = "../lexe_buffer" }
-lexe_net = { version = "0.1.8", path = "../lexe_net" }
+lexe_async_hooks = { version = "0.1.9", path = "../lexe_async_hooks" }
+lexe_dns_cache = { version = "0.1.9", path = "../../libs/lexe_dns_cache" }
+lexe_encoding = { version = "0.1.9", path = "../../libs/lexe_encoding" }
+lexe_tls = { version = "0.1.9", default-features = false, path = "../lexe_tls" }
+lexe_timers = { version = "0.1.9", path = "../lexe_timers" }
+lexe_utils = { version = "0.1.9", path = "../../libs/lexe_utils", default-features = false }
+lexe_context = { version = "0.1.9", path = "../../libs/lexe_context" }
+lexe_events = { version = "0.1.9", path = "../lexe_events" }
+lexe_buffer = { version = "0.1.9", path = "../lexe_buffer" }
+lexe_net = { version = "0.1.9", path = "../lexe_net" }
 once_cell = { version = "1", features = ["std"], default-features = false }
 rquickjs = { version = "=0.12.1", features = [
   "either",

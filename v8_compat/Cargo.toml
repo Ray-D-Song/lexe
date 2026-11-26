@@ -1,7 +1,7 @@
 [package]
 name = "v8_compat"
 description = "QuickJS-backed V8/Node C++ ABI shim for lexe"
-version = "0.1.8"
+version = "0.1.9"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
