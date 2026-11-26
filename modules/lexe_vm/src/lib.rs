@@ -73,6 +73,10 @@ impl ModuleDef for VmModule {
                 "runInThisContext",
                 Func::from(script::run_in_this_context_js),
             )?;
+            ctx.globals().set(
+                "__lexeVmMovePort",
+                Func::from(context::move_port_to_context_js),
+            )?;
             Ok(())
         })
     }

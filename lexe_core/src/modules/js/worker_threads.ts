@@ -45,6 +45,14 @@ declare global {
     | undefined;
   var __lexePortEnsureLocalAttached: ((id: number) => void) | undefined;
   var __lexePortRebuildFromId: ((id: number) => unknown) | undefined;
+  var __lexePortDetachSink: ((id: number) => void) | undefined;
+  var __lexeVmMovePort:
+    | ((sandbox: unknown, script: string, bridge: unknown) => unknown)
+    | undefined;
+  var __lexeWorkerPostToThread:
+    | ((threadId: number, value: unknown, transfer?: { transfer: unknown[] }) => void)
+    | undefined;
+  var __lexeWorkerResourceLimits: Record<string, number> | undefined;
 }
 
 function readIsMainThread(): boolean {
@@ -123,12 +131,43 @@ function transferOptions(transfer?: unknown[]): { transfer: unknown[] } | undefi
   return { transfer };
 }
 
+export interface ResourceLimits {
+  maxYoungGenerationSizeMb?: number;
+  maxOldGenerationSizeMb?: number;
+  codeRangeSizeMb?: number;
+  stackSizeMb?: number;
+}
+
 export interface WorkerOptions {
   workerData?: unknown;
-  env?: Record<string, string>;
+  env?: Record<string, string> | typeof SHARE_ENV;
   argv?: string[];
   name?: string;
+  eval?: boolean;
+  stdin?: boolean;
+  stdout?: boolean;
+  stderr?: boolean;
+  transferList?: unknown[];
+  resourceLimits?: ResourceLimits;
 }
+
+export const SHARE_ENV = Symbol.for("nodejs.worker_threads.SHARE_ENV");
+
+function normalizeResourceLimits(limits?: ResourceLimits): Required<ResourceLimits> {
+  const rec = limits && typeof limits === "object" ? limits : {};
+  const pick = (v: unknown, def: number) =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : def;
+  return {
+    maxYoungGenerationSizeMb: pick(rec.maxYoungGenerationSizeMb, 16),
+    maxOldGenerationSizeMb: pick(rec.maxOldGenerationSizeMb, 2048),
+    codeRangeSizeMb: pick(rec.codeRangeSizeMb, 0),
+    stackSizeMb: pick(rec.stackSizeMb, 4),
+  };
+}
+
+export const resourceLimits: ResourceLimits = isMainThread
+  ? {}
+  : globalThis.__lexeWorkerResourceLimits ?? {};
 
 function toDataCloneError(err: unknown): DOMException {
   if (
@@ -462,13 +501,23 @@ export const parentPort: WorkerParentPort | null = isMainThread
 
 export class Worker extends EventEmitter {
   readonly threadId: number;
+  readonly stdin: unknown;
+  readonly stdout: unknown;
+  readonly stderr: unknown;
   #exited = false;
+  #resourceLimits: Required<ResourceLimits>;
   #handle: {
     postMessage: (data: unknown, transfer?: { transfer?: unknown[] }) => void;
     terminate: () => void;
+    writeStdin: (chunk: unknown) => void;
+    endStdin: () => void;
     ref: () => void;
     unref: () => void;
   };
+
+  get resourceLimits(): ResourceLimits {
+    return this.#exited ? {} : { ...this.#resourceLimits };
+  }
 
   constructor(filename: string | URL, options: WorkerOptions = {}) {
     super();
@@ -476,19 +525,76 @@ export class Worker extends EventEmitter {
       throw new Error("worker_threads.Worker is unavailable in this build");
     }
     const path = filename instanceof URL ? filename.href : String(filename);
+    const resolvedLimits = normalizeResourceLimits(options.resourceLimits);
+    this.#resourceLimits = resolvedLimits;
+
     const spawnOptions: Record<string, unknown> = {
       workerData: options.workerData ?? null,
       lexeEnvironmentSnapshot: environmentSnapshotForSpawn(),
+      lexeResourceLimits: resolvedLimits,
     };
-    if (options.env != null) spawnOptions.env = options.env;
+    if (options.env === SHARE_ENV) {
+      spawnOptions.lexeEnvShare = true;
+    } else if (options.env != null && typeof options.env === "object") {
+      const envCopy: Record<string, string> = {};
+      for (const [k, v] of Object.entries(options.env)) {
+        envCopy[k] = String(v);
+      }
+      spawnOptions.lexeEnvMap = envCopy;
+    }
     if (options.argv != null) spawnOptions.argv = options.argv;
     if (options.name != null) spawnOptions.name = options.name;
     if (options.eval) spawnOptions.eval = true;
+    if (options.stdin) spawnOptions.stdin = true;
+    if (options.stdout) spawnOptions.stdout = true;
+    if (options.stderr) spawnOptions.stderr = true;
     const transferObj = transferOptions(options.transferList);
     if (transferObj) spawnOptions.lexeWorkerDataTransfer = transferObj;
 
+    let stdoutStream: { push(chunk: unknown): void } | null = null;
+    let stderrStream: { push(chunk: unknown): void } | null = null;
+    let stdinStream: unknown = null;
+    if (options.stdin || options.stdout || options.stderr) {
+      const streamMod = require("node:stream") as {
+        PassThrough: new () => { push(chunk: unknown): void };
+        Writable: new (opts: {
+          write(chunk: unknown, enc: unknown, cb: () => void): void;
+          final?(cb: () => void): void;
+        }) => unknown;
+      };
+      if (options.stdout) stdoutStream = new streamMod.PassThrough();
+      if (options.stderr) stderrStream = new streamMod.PassThrough();
+      if (options.stdin) {
+        stdinStream = new streamMod.Writable({
+          write(chunk, _enc, cb) {
+            handle.writeStdin(chunk);
+            cb();
+          },
+          final(cb) {
+            handle.endStdin();
+            cb();
+          },
+        });
+      }
+    }
+    this.stdin = stdinStream;
+    this.stdout = stdoutStream;
+    this.stderr = stderrStream;
+
     const handle = globalThis.__lexeWorkerSpawn(path, spawnOptions, (event, arg) => {
-      if (event === "exit") this.#exited = true;
+      if (event === "stdout") {
+        stdoutStream?.push(arg);
+        return;
+      }
+      if (event === "stderr") {
+        stderrStream?.push(arg);
+        return;
+      }
+      if (event === "exit") {
+        this.#exited = true;
+        stdoutStream?.push(null);
+        stderrStream?.push(null);
+      }
       if (event === "exit" && arg != null && typeof arg === "object") {
         const rec = arg as { code?: unknown; signal?: unknown };
         this.emit("exit", rec.code ?? 0, rec.signal ?? null);
@@ -582,13 +688,216 @@ export function isMarkedAsUntransferable(_object: unknown): boolean {
   return false;
 }
 
+const vmPortFactoryScript = `(function(bridge) {
+  const { portId, portIdSym, portTransferSym, postMessage, attach, close, loopRef, toCloneErr } = bridge;
+  class MessagePort {
+    constructor() {
+      this._onmessage = null;
+      this.onmessageerror = null;
+      this._listeners = new Map();
+      this._onceWrappers = new WeakMap();
+      this._closed = false;
+      this._detached = false;
+      this._started = false;
+      this._attached = false;
+      this._explicitUnref = false;
+      this._loopRef = loopRef();
+      Object.defineProperty(this, portIdSym, {
+        value: portId,
+        enumerable: false,
+        configurable: true,
+        writable: false,
+      });
+      Object.defineProperty(this, portTransferSym, {
+        value: () => {
+          if (this._detached) return true;
+          this._detached = true;
+          this._closed = true;
+          this._loopRef.unref();
+          return false;
+        },
+        enumerable: false,
+        configurable: true,
+        writable: false,
+      });
+    }
+    get onmessage() { return this._onmessage; }
+    set onmessage(h) {
+      this._onmessage = typeof h === "function" ? h : null;
+      if (this._onmessage) { this._started = true; this._attach(); }
+    }
+    _attach() {
+      if (this._attached || this._closed || this._detached) return;
+      this._attached = true;
+      if (!this._explicitUnref) this._loopRef.ref();
+      attach(portId, (data) => {
+        if (this._closed || this._detached) return;
+        this._dispatch(data);
+      });
+    }
+    _dispatch(data) {
+      if (this._closed || this._detached) return;
+      if (typeof this._onmessage === "function") {
+        try { this._onmessage({ data }); } catch {}
+      }
+      const set = this._listeners.get("message");
+      if (set) {
+        for (const fn of [...set]) {
+          try { fn(data); } catch {}
+        }
+      }
+      const evSet = this._listeners.get("__event__message");
+      if (evSet) {
+        for (const fn of [...evSet]) {
+          try { fn({ type: "message", data, target: this, currentTarget: this }); } catch {}
+        }
+      }
+    }
+    postMessage(value, transfer) {
+      if (this._closed || this._detached) return;
+      try {
+        postMessage(portId, value, transfer);
+      } catch (err) {
+        throw toCloneErr(err);
+      }
+    }
+    start() { this._started = true; this._attach(); }
+    close() {
+      if (this._closed) return;
+      this._closed = true;
+      this._loopRef.unref();
+      close(portId);
+      const set = this._listeners.get("close");
+      if (set) {
+        for (const fn of [...set]) {
+          try { fn(); } catch {}
+        }
+      }
+    }
+    on(ev, fn) {
+      let set = this._listeners.get(ev);
+      if (!set) { set = new Set(); this._listeners.set(ev, set); }
+      set.add(fn);
+      if (ev === "message") { this._started = true; this._attach(); }
+      return this;
+    }
+    addListener(ev, fn) { return this.on(ev, fn); }
+    once(ev, fn) {
+      const w = (...args) => { this.off(ev, w); fn(...args); };
+      this._onceWrappers.set(fn, w);
+      return this.on(ev, w);
+    }
+    off(ev, fn) {
+      const set = this._listeners.get(ev);
+      if (set) {
+        set.delete(fn);
+        const w = this._onceWrappers.get(fn);
+        if (w) { set.delete(w); this._onceWrappers.delete(fn); }
+      }
+      return this;
+    }
+    removeListener(ev, fn) { return this.off(ev, fn); }
+    addEventListener(ev, fn) { return this.on("__event__" + ev, fn); }
+    removeEventListener(ev, fn) { return this.off("__event__" + ev, fn); }
+    ref() { this._explicitUnref = false; if (!this._closed && !this._detached) this._loopRef.ref(); return this; }
+    unref() { this._explicitUnref = true; this._loopRef.unref(); return this; }
+  }
+  return new MessagePort();
+})`;
+
 export function moveMessagePortToContext(
-  _port: unknown,
-  _context: unknown
-): never {
-  throw new Error(
-    "worker_threads.moveMessagePortToContext is not implemented"
-  );
+  port: unknown,
+  contextifiedSandbox: unknown
+): unknown {
+  if (
+    !port ||
+    typeof port !== "object" ||
+    !(portIdSymbol in port) ||
+    !(portTransferSymbol in port)
+  ) {
+    const err = new TypeError('The "port" argument must be an instance of MessagePort.');
+    (err as { code?: string }).code = "ERR_INVALID_ARG_TYPE";
+    throw err;
+  }
+  if (typeof globalThis.__lexeVmMovePort !== "function") {
+    require("node:vm");
+  }
+  if (typeof globalThis.__lexeVmMovePort !== "function") {
+    throw new Error("node:vm is unavailable for moveMessagePortToContext");
+  }
+  const portObj = port as Record<symbol, unknown>;
+  const portId = portObj[portIdSymbol] as number;
+  const detachFn = portObj[portTransferSymbol] as () => boolean;
+  const alreadyDetached = detachFn.call(port);
+  if (alreadyDetached) {
+    throw new DOMException("MessagePort has already been detached", "DataCloneError");
+  }
+  globalThis.__lexePortDetachSink?.(portId);
+  const peerId = globalThis.__lexePortPeer?.(portId);
+  if (peerId !== undefined) {
+    globalThis.__lexePortEnsureLocalAttached?.(peerId);
+  }
+  return globalThis.__lexeVmMovePort(contextifiedSandbox, vmPortFactoryScript, {
+    portId,
+    portIdSym: portIdSymbol,
+    portTransferSym: portTransferSymbol,
+    postMessage: (id: number, value: unknown, transfer?: unknown[]) =>
+      globalThis.__lexePortSend?.(id, value, transferOptions(transfer)),
+    attach: (id: number, cb: (data: unknown) => void) => globalThis.__lexePortAttach?.(id, cb),
+    close: (id: number) => globalThis.__lexePortClose?.(id),
+    loopRef: () =>
+      typeof globalThis.__lexeCreateLoopRefController === "function"
+        ? globalThis.__lexeCreateLoopRefController()
+        : { ref() {}, unref() {} },
+    toCloneErr: toDataCloneError,
+  });
+}
+
+export async function postMessageToThread(
+  targetThreadId: number,
+  value: unknown,
+  transferList?: unknown[],
+  timeout?: number
+): Promise<void> {
+  if (typeof targetThreadId !== "number" || !Number.isInteger(targetThreadId) || targetThreadId < 0) {
+    const err = new TypeError('The "threadId" argument must be a non-negative integer.');
+    (err as { code?: string }).code = "ERR_INVALID_ARG_TYPE";
+    throw err;
+  }
+  if (timeout !== undefined) {
+    if (typeof timeout !== "number") {
+      const err = new TypeError('The "timeout" argument must be of type number.');
+      (err as { code?: string }).code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
+    if (Number.isNaN(timeout) || timeout < 0) {
+      const err = new RangeError('The "timeout" argument must be >= 0.');
+      (err as { code?: string }).code = "ERR_OUT_OF_RANGE";
+      throw err;
+    }
+  }
+  if (typeof globalThis.__lexeWorkerPostToThread !== "function") {
+    const err = new Error("Worker messaging is unavailable");
+    (err as { code?: string }).code = "ERR_WORKER_MESSAGING_FAILED";
+    throw err;
+  }
+  try {
+    globalThis.__lexeWorkerPostToThread(
+      targetThreadId,
+      value,
+      transferOptions(transferList)
+    );
+  } catch (err) {
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: string }).code === "ERR_WORKER_MESSAGING_FAILED"
+    ) {
+      throw err;
+    }
+    throw toDataCloneError(err);
+  }
 }
 
 export function receiveMessageOnPort(_port: unknown): undefined {
@@ -600,6 +909,8 @@ const defaultExport = {
   parentPort,
   workerData,
   threadId,
+  SHARE_ENV,
+  resourceLimits,
   Worker,
   MessagePort,
   MessageChannel,
@@ -610,6 +921,7 @@ const defaultExport = {
   markAsUncloneable,
   isMarkedAsUntransferable,
   moveMessagePortToContext,
+  postMessageToThread,
   receiveMessageOnPort,
 };
 

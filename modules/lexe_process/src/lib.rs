@@ -1,13 +1,14 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
+use std::env;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::UNIX_EPOCH;
-use std::{collections::HashMap, env};
 
 use std::sync::OnceLock;
 
 use lexe_events::{Emitter, EventEmitter};
 use lexe_hooking::{allocate_hook_resource_id, invoke_async_hook, HookType};
+use lexe_utils::env_store::env_store_handle;
 use lexe_utils::provider::ProviderType;
 use lexe_utils::signals;
 
@@ -15,7 +16,6 @@ use lexe_utils::primordials::{BasePrimordials, Primordial};
 pub use lexe_utils::sysinfo;
 use lexe_utils::{
     module::ModuleInfo,
-    object::Proxy,
     result::ResultExt,
     sysinfo::{ARCH, PLATFORM},
     time, VERSION,
@@ -29,7 +29,7 @@ use rquickjs::{
     module::{Declarations, Exports, ModuleDef},
     object::{Accessor, Property},
     prelude::{Func, Opt, Rest},
-    Array, BigInt, Class, Ctx, Error, Function, IntoJs, Object, Result, Value,
+    Array, BigInt, Class, Ctx, Error, Function, Object, Result, Value,
 };
 
 pub static EXIT_CODE: AtomicU8 = AtomicU8::new(0);
@@ -380,13 +380,61 @@ pub fn try_invoke_uncaught_exception_capture<'js>(ctx: &Ctx<'js>, error: Value<'
     checker.call::<_, bool>((process, error)).unwrap_or(false)
 }
 
-fn env_proxy_setter<'js>(
-    target: Object<'js>,
-    prop: Value<'js>,
-    value: Coerced<String>,
-) -> Result<bool> {
-    target.set(prop, value.to_string())?;
-    Ok(true)
+fn build_env_proxy<'js>(ctx: &Ctx<'js>) -> Result<Value<'js>> {
+    let h_get = env_store_handle(ctx);
+    let h_set = env_store_handle(ctx);
+    let h_has = env_store_handle(ctx);
+    let h_del = env_store_handle(ctx);
+    let h_keys = env_store_handle(ctx);
+
+    let env_get = Function::new(ctx.clone(), move |key: String| {
+        let map = h_get.0.read().unwrap().clone();
+        let guard = map.read().unwrap();
+        Ok::<Option<String>, Error>(guard.get(&key).cloned())
+    })?;
+    let env_set = Function::new(ctx.clone(), move |key: String, val: String| {
+        let map = h_set.0.read().unwrap().clone();
+        map.write().unwrap().insert(key, val);
+        Ok::<(), Error>(())
+    })?;
+    let env_has = Function::new(ctx.clone(), move |key: String| {
+        let map = h_has.0.read().unwrap().clone();
+        let guard = map.read().unwrap();
+        Ok::<bool, Error>(guard.contains_key(&key))
+    })?;
+    let env_del = Function::new(ctx.clone(), move |key: String| {
+        let map = h_del.0.read().unwrap().clone();
+        map.write().unwrap().remove(&key);
+        Ok::<(), Error>(())
+    })?;
+    let env_keys = Function::new(ctx.clone(), move || {
+        let map = h_keys.0.read().unwrap().clone();
+        let guard = map.read().unwrap();
+        Ok::<Vec<String>, Error>(guard.keys().cloned().collect())
+    })?;
+
+    let factory: Function = ctx.eval(
+        r#"(function(getFn, setFn, hasFn, delFn, keysFn) {
+          return new Proxy({}, {
+            get(t, p) { return typeof p === "string" ? getFn(p) : Reflect.get(t, p); },
+            set(_t, p, v) { if (typeof p === "string") setFn(p, String(v)); return true; },
+            has(t, p) { return typeof p === "string" ? hasFn(p) : Reflect.has(t, p); },
+            deleteProperty(t, p) { if (typeof p === "string") delFn(p); else return Reflect.deleteProperty(t, p); return true; },
+            ownKeys() { return keysFn(); },
+            getOwnPropertyDescriptor(t, p) {
+              if (typeof p !== "string") return Reflect.getOwnPropertyDescriptor(t, p);
+              const v = getFn(p);
+              return v === undefined ? undefined : { value: v, writable: true, enumerable: true, configurable: true };
+            },
+            defineProperty(t, p, desc) {
+              if (typeof p !== "string") return Reflect.defineProperty(t, p, desc);
+              if ("value" in desc) setFn(p, String(desc.value));
+              return true;
+            },
+          });
+        })"#,
+    )?;
+    factory.call((env_get, env_set, env_has, env_del, env_keys))
 }
 
 #[cfg(unix)]
@@ -454,7 +502,6 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let release = Object::new(ctx.clone())?;
     release.prop("name", Property::from("lexe").enumerable())?;
 
-    let env_map: HashMap<String, String> = env::vars().collect();
     let mut args: Vec<String> = argv();
 
     if let Some(arg) = args.get(1) {
@@ -464,10 +511,7 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         }
     }
 
-    let env_obj = env_map.into_js(ctx)?;
-
-    let env_proxy = Proxy::with_target(ctx.clone(), env_obj)?;
-    env_proxy.setter(Func::from(env_proxy_setter))?;
+    let env_proxy = build_env_proxy(ctx)?;
 
     let initial_argv0 = args.first().cloned().unwrap_or_default();
     stats::init_title(initial_argv0.clone());

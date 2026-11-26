@@ -17,7 +17,7 @@ use rquickjs::{
     atom::PredefinedAtom,
     function::{Opt, This},
     object::Property,
-    qjs, Ctx, Error, Function, IntoJs, Object, Result, Value,
+    qjs, Ctx, Error, Exception, Function, IntoJs, Object, Result, Value,
 };
 
 use crate::{
@@ -406,6 +406,44 @@ pub fn is_context_impl<'js>(ctx: Ctx<'js>, sandbox: Value<'js>) -> Result<bool> 
         ));
     }
     Ok(lookup_context_id(&ctx, &sandbox)?.is_some())
+}
+
+pub fn move_port_to_context_js<'js>(
+    ctx: Ctx<'js>,
+    sandbox: Value<'js>,
+    factory_script: String,
+    bridge: Value<'js>,
+) -> Result<Value<'js>> {
+    if !is_non_function_object(&sandbox) {
+        return Err(throw_invalid_arg_type(
+            &ctx,
+            "contextifiedSandbox",
+            "must be an object",
+            &sandbox,
+        ));
+    }
+    let Some(meta) = lookup_context_meta(&ctx, &sandbox)? else {
+        return Err(throw_invalid_arg_type(
+            &ctx,
+            "contextifiedSandbox",
+            "must be a vm.Context",
+            &sandbox,
+        ));
+    };
+    if !meta.alive.load(Ordering::Acquire) {
+        return Err(Exception::throw_type(&ctx, "VM context has been disposed"));
+    }
+    let target_ctx = unsafe { Ctx::from_raw(NonNull::new_unchecked(meta.raw_ctx)) };
+    let factory: Function = target_ctx
+        .eval(factory_script)
+        .map_err(|_| unsafe { transfer_exception(meta.raw_ctx, &ctx) })?;
+    let bridge_raw = into_raw_value(bridge);
+    let bridge_in_target: Value = unsafe { Value::from_raw(target_ctx.clone(), bridge_raw) };
+    let port_val: Value = factory
+        .call((bridge_in_target,))
+        .map_err(|_| unsafe { transfer_exception(meta.raw_ctx, &ctx) })?;
+    let port_raw = into_raw_value(port_val);
+    Ok(unsafe { Value::from_raw(ctx, port_raw) })
 }
 
 #[derive(Default)]

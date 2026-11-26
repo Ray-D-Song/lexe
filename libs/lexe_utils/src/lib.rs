@@ -10,6 +10,7 @@ pub mod clone_wire;
 pub mod ctx;
 pub mod diagnostics;
 pub mod driver_poll;
+pub mod env_store;
 pub mod error;
 pub mod error_messages;
 pub mod event_loop;

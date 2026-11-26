@@ -91,6 +91,10 @@ pub fn detach_sink(port_id: u64) {
     }
 }
 
+pub fn detach_sink_js(id_f: f64) {
+    detach_sink(id_f as u64);
+}
+
 pub fn send_to_peer_js<'js>(
     ctx: Ctx<'js>,
     id_f: f64,

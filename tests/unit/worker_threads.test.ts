@@ -377,4 +377,237 @@ describe("worker_threads Worker spawn", () => {
     const err = await new Promise<unknown>((resolve) => w2.once("error", resolve));
     expect(String((err as { message?: string })?.message ?? err)).toContain("boom-worker");
   });
+
+  it("supports SHARE_ENV and isolated env snapshots", async () => {
+    const { Worker, SHARE_ENV } = await import("node:worker_threads");
+    expect(typeof SHARE_ENV).toBe("symbol");
+
+    process.env.LEXE_WT_SHARED_TEST = "from-main";
+    const sharedCode = `
+      import { parentPort } from "node:worker_threads";
+      const seen = process.env.LEXE_WT_SHARED_TEST;
+      process.env.LEXE_WT_SHARED_REPLY = "from-worker";
+      parentPort.postMessage(seen);
+    `;
+    const wShared = new Worker(sharedCode, { eval: true, env: SHARE_ENV });
+    const sharedExited = new Promise<void>((resolve) => wShared.once("exit", () => resolve()));
+    const sharedSeen = await new Promise<unknown>((resolve, reject) => {
+      wShared.once("message", resolve);
+      wShared.once("error", reject);
+    });
+    expect(sharedSeen).toBe("from-main");
+    await sharedExited;
+    expect(process.env.LEXE_WT_SHARED_REPLY).toBe("from-worker");
+    delete process.env.LEXE_WT_SHARED_TEST;
+    delete process.env.LEXE_WT_SHARED_REPLY;
+
+    process.env.LEXE_WT_ISO_TEST = "orig";
+    const isoCode = `
+      import { parentPort } from "node:worker_threads";
+      const before = process.env.LEXE_WT_ISO_TEST;
+      process.env.LEXE_WT_ISO_TEST = "mutated-in-worker";
+      parentPort.postMessage({ before, custom: process.env.CUSTOM_K, after: process.env.LEXE_WT_ISO_TEST });
+    `;
+    const wIso = new Worker(isoCode, {
+      eval: true,
+      env: { ...process.env, CUSTOM_K: "custom-v" },
+    });
+    const isoExited = new Promise<void>((resolve) => wIso.once("exit", () => resolve()));
+    const isoMsg = await new Promise<unknown>((resolve, reject) => {
+      wIso.once("message", resolve);
+      wIso.once("error", reject);
+    });
+    expect(isoMsg).toEqual({
+      before: "orig",
+      custom: "custom-v",
+      after: "mutated-in-worker",
+    });
+    expect(process.env.LEXE_WT_ISO_TEST).toBe("orig");
+    await isoExited;
+    delete process.env.LEXE_WT_ISO_TEST;
+  });
+
+  it("supports postMessageToThread and process 'workerMessage' events", async () => {
+    const { Worker, postMessageToThread, threadId: callerThreadId } = await import(
+      "node:worker_threads"
+    );
+
+    const seenOnMain: Array<{ value: unknown; source: number }> = [];
+    const mainListener = (value: unknown, source: number) => {
+      seenOnMain.push({ value, source });
+    };
+    process.on("workerMessage", mainListener);
+
+    const code = `
+      import { parentPort, postMessageToThread, threadId, workerData } from "node:worker_threads";
+      process.on("workerMessage", (value, source) => {
+        postMessageToThread(workerData.replyTo, { echoed: value, from: source, me: threadId });
+      });
+      parentPort.postMessage("ready");
+    `;
+    const w = new Worker(code, { eval: true, workerData: { replyTo: callerThreadId } });
+    try {
+      const ready = await new Promise<unknown>((resolve, reject) => {
+        w.once("message", resolve);
+        w.once("error", reject);
+      });
+      expect(ready).toBe("ready");
+
+      await postMessageToThread(w.threadId, { ping: 42 });
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (seenOnMain.length > 0) return resolve();
+          setTimeout(check, 5);
+        };
+        check();
+      });
+      expect(seenOnMain).toEqual([
+        {
+          value: { echoed: { ping: 42 }, from: callerThreadId, me: w.threadId },
+          source: w.threadId,
+        },
+      ]);
+    } finally {
+      process.off("workerMessage", mainListener);
+      await w.terminate();
+    }
+    await expect(postMessageToThread(w.threadId, "gone")).rejects.toThrow();
+  });
+
+  it("supports piped worker stdio (stdin, stdout, stderr) and null default stdio", async () => {
+    const { Worker } = await import("node:worker_threads");
+
+    const wNull = new Worker(`export {}`, { eval: true });
+    const wNullExited = new Promise<void>((resolve) => wNull.once("exit", () => resolve()));
+    expect(wNull.stdin).toBeNull();
+    expect(wNull.stdout).toBeNull();
+    expect(wNull.stderr).toBeNull();
+    await wNullExited;
+
+    const code = `
+      import { parentPort } from "node:worker_threads";
+      let buf = "";
+      process.stdin.on("data", (chunk) => {
+        buf += Buffer.from(chunk).toString("utf8");
+      });
+      process.stdin.on("end", () => {
+        console.log("OUT:" + buf.trim());
+        console.error("ERR:" + buf.trim());
+        parentPort.postMessage("done");
+      });
+    `;
+    const w = new Worker(code, {
+      eval: true,
+      stdin: true,
+      stdout: true,
+      stderr: true,
+    });
+    const wExited = new Promise<void>((resolve) => w.once("exit", () => resolve()));
+    const wOnline = new Promise<void>((resolve) => w.once("online", () => resolve()));
+    expect(w.stdin).not.toBeNull();
+    expect(w.stdout).not.toBeNull();
+    expect(w.stderr).not.toBeNull();
+
+    let out = "";
+    let err = "";
+    w.stdout!.on("data", (c: Uint8Array) => {
+      out += Buffer.from(c).toString("utf8");
+    });
+    w.stderr!.on("data", (c: Uint8Array) => {
+      err += Buffer.from(c).toString("utf8");
+    });
+
+    await wOnline;
+    w.stdin!.write("hello-");
+    w.stdin!.end("piped");
+
+    const done = await new Promise<unknown>((resolve, reject) => {
+      w.once("message", resolve);
+      w.once("error", reject);
+    });
+    expect(done).toBe("done");
+    await wExited;
+    expect(out.trim()).toBe("OUT:hello-piped");
+    expect(err.trim()).toBe("ERR:hello-piped");
+  });
+
+  it("supports moveMessagePortToContext across vm contexts", async () => {
+    const { MessageChannel, MessagePort, moveMessagePortToContext } = await import(
+      "node:worker_threads"
+    );
+    const vm = await import("node:vm");
+
+    const ctx = vm.createContext({
+      received: null as unknown,
+      replyFromVm(port: MessagePort) {
+        port.on("message", (msg: unknown) => {
+          (this as { received: unknown }).received = msg;
+          port.postMessage({ ack: msg });
+        });
+        port.start?.();
+      },
+    });
+
+    const { port1, port2 } = new MessageChannel();
+    const moved = moveMessagePortToContext(port1, ctx) as MessagePort;
+    try {
+      const isVmObject = (vm.runInContext("p => p instanceof Object", ctx) as (p: unknown) => boolean)(
+        moved
+      );
+      expect(isVmObject).toBe(true);
+      expect(moved instanceof MessagePort).toBe(false);
+      expect(Object.getPrototypeOf(moved)?.constructor?.name).toBe("MessagePort");
+
+      // Original port in host context is neutered/detached: moving again fails, and postMessage is a no-op.
+      expect(() => moveMessagePortToContext(port1, ctx)).toThrow();
+      port1.postMessage("ignored-after-move");
+
+      (ctx as { replyFromVm: (p: unknown) => void }).replyFromVm(moved);
+      const reply = new Promise<unknown>((resolve) => {
+        port2.once("message", resolve);
+      });
+      port2.postMessage({ hello: "vm" });
+      expect(await reply).toEqual({ ack: { hello: "vm" } });
+      expect((ctx as { received: unknown }).received).toEqual({ hello: "vm" });
+    } finally {
+      port2.close();
+      moved.close();
+    }
+  });
+
+  it("exposes resourceLimits on main, worker, and Worker instance", async () => {
+    const { Worker, resourceLimits } = await import("node:worker_threads");
+    expect(resourceLimits).toEqual({});
+
+    const code = `
+      import { parentPort, resourceLimits } from "node:worker_threads";
+      parentPort.postMessage(resourceLimits);
+    `;
+    const w = new Worker(code, {
+      eval: true,
+      resourceLimits: {
+        maxOldGenerationSizeMb: 64,
+        stackSizeMb: 2,
+      },
+    });
+    const wExited = new Promise<void>((resolve) => w.once("exit", () => resolve()));
+    expect(w.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: 16,
+      maxOldGenerationSizeMb: 64,
+      codeRangeSizeMb: 0,
+      stackSizeMb: 2,
+    });
+    const innerLimits = await new Promise<unknown>((resolve, reject) => {
+      w.once("message", resolve);
+      w.once("error", reject);
+    });
+    expect(innerLimits).toEqual({
+      maxYoungGenerationSizeMb: 16,
+      maxOldGenerationSizeMb: 64,
+      codeRangeSizeMb: 0,
+      stackSizeMb: 2,
+    });
+    await wExited;
+    expect(w.resourceLimits).toEqual({});
+  });
 });

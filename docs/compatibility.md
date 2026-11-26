@@ -52,7 +52,7 @@
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✘ | Not implemented |
-| node:worker_threads | ✔︎ | ✔︎⚠️ | `moveMessagePortToContext` throws; missing `SHARE_ENV`, `resourceLimits`, `getHeapSnapshot`, `postMessageToThread`, and piped worker stdio ([details](#nodeworker_threads)) |
+| node:worker_threads | ✔︎ | ✔︎⚠️ | Missing V8 `Worker.prototype.getHeapSnapshot()` ([details](#nodeworker_threads)) |
 | node:zlib | ✔︎ | ✔︎ | — |
 
 | [lexe API](https://github.com/Ray-D-Song/lexe/blob/main/API.md) | Node.js | lexe |
@@ -172,9 +172,8 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `node:worker_threads`
 
-- Uses **OS-thread worker isolates** (QuickJS per thread) with structured-clone `postMessage`, in-process `MessageChannel`, environment data sync, and **SharedArrayBuffer** hooks for shared memory within the process.
-- `moveMessagePortToContext()` throws (not implemented).
-- Missing `SHARE_ENV`, `resourceLimits`, `Worker.prototype.getHeapSnapshot()`, `postMessageToThread()`, and piped worker stdio (`stdin: true`, `stdout: true`, `stderr: true`).
+- Uses **OS-thread worker isolates** (QuickJS per thread) with structured-clone `postMessage`, in-process `MessageChannel`, environment data sync, `SHARE_ENV`, `postMessageToThread()`, `moveMessagePortToContext()`, piped worker stdio (`stdin`, `stdout`, `stderr`), QuickJS-backed `resourceLimits` (`stackSizeMb` via QuickJS max stack size, `maxOldGenerationSizeMb` via `JS_SetMemoryLimit`), and **SharedArrayBuffer** hooks for shared memory within the process.
+- Missing `Worker.prototype.getHeapSnapshot()` (V8 engine-specific).
 
 ### Web Platform APIs
 

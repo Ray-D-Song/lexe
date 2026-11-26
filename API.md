@@ -1089,13 +1089,14 @@ Startup probe only — Lexe does **not** implement the Node Inspector debugging 
 
 Workers run on **OS threads** with a **separate QuickJS `AsyncRuntime` isolate** per worker (same process). Cross-thread `postMessage` uses **structured-clone** encoding (`clone_wire` + in-memory channels), not child-process IPC.
 
-- `isMainThread`, `parentPort`, `workerData`, `threadId`, nested `Worker`
-- `Worker` options/events: `workerData`, `env` / `argv` / `name`, `online` / `message` / `error` / `exit`
-- `transferList` for detached `ArrayBuffer` (structured clone); **`SharedArrayBuffer`** via process-wide QuickJS SAB hooks (shared backing store; Atomics when views share memory)
-- In-process `MessageChannel` / `MessagePort` (structured clone + microtasks)
+- `isMainThread`, `parentPort`, `workerData`, `threadId`, nested `Worker`, `SHARE_ENV`
+- `Worker` options/events: `workerData`, `env` (`SHARE_ENV` or isolated map) / `argv` / `name` / `eval` / `stdin` / `stdout` / `stderr` / `resourceLimits`, `online` / `message` / `error` / `exit`, piped `worker.stdin` / `worker.stdout` / `worker.stderr`
+- `transferList` for detached `ArrayBuffer` / `MessagePort` / `AbortSignal` (structured clone); **`SharedArrayBuffer`** via process-wide QuickJS SAB hooks (shared backing store; Atomics when views share memory)
+- In-process `MessageChannel` / `MessagePort` (structured clone + microtasks), `moveMessagePortToContext()` across `node:vm` contexts
 - `getEnvironmentData` / `setEnvironmentData` with worker sync
+- `postMessageToThread()` / `process` `"workerMessage"` cross-thread messaging, `resourceLimits`
 
-`moveMessagePortToContext()` still throws. `MessagePort.ref()` / `unref()` tie into the event-loop ref model.
+`Worker.prototype.getHeapSnapshot()` is unimplemented (V8-specific). `MessagePort.ref()` / `unref()` tie into the event-loop ref model.
 
 ## zlib
 

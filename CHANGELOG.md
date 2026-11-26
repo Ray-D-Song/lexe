@@ -4,6 +4,13 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Improved `node:worker_threads` compatibility (`docs/compatibility.md`):
+  - Added shared `EnvStoreHandle` (`lexe_utils::env_store`) backing `process.env` so `SHARE_ENV` synchronizes live mutations across main and worker threads while keeping isolated snapshots and default worker environments scoped per isolate.
+  - Added `postMessageToThread()` and `process` `"workerMessage"` cross-thread messaging (`THREAD_HUB`) with `ERR_WORKER_MESSAGING_FAILED` on exited/unknown targets.
+  - Added piped worker stdio (`stdin: true`, `stdout: true`, `stderr: true`) with `Writable`/`PassThrough` streams, worker `console` redirection, and `EOF` delivery on exit.
+  - Added `moveMessagePortToContext()` for moving `MessagePort` instances into `node:vm` contexts while detaching the original host port.
+  - Added `resourceLimits` and `worker.resourceLimits` enforcement (`stackSizeMb` via QuickJS `max_stack_size`, `maxOldGenerationSizeMb` via `JS_SetMemoryLimit`) and ESM detection in `{ eval: true }` workers.
+
 - Improved `node:util` compatibility (`docs/compatibility.md`):
   - Added `util.transferableAbortController()` and `util.transferableAbortSignal()` backed by native structured-clone/transfer codecs for `AbortSignal` with cross-isolate abort propagation (`ABORT_HUB`) and `DataCloneError` enforcement for detached/non-transferable signals.
   - Added `util.inspect()` and `util.formatWithOptions()` support for `showProxy`, `getters` (`true`, `"get"`, `"set"`), `numericSeparator`, and `breakLength` line wrapping.
