@@ -70,7 +70,8 @@ jobs:
             arch: arm64
             libc: musl
             zig: true
-          - runner: macos-15-intel
+          # Cross-compiled on the arm64 runner: Intel macOS runners queue far longer.
+          - runner: macos-15
             target: x86_64-apple-darwin
             asset: lexe-macos-x64
             platform: darwin
@@ -179,6 +180,9 @@ jobs:
           else
             docker run --rm -v "$PWD/$bin:/lexe:ro" alpine:3.20 /lexe --version
           fi
+      - name: Install Rosetta 2 for x86_64 smoke test
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: softwareupdate --install-rosetta --agree-to-license
       - name: Verify binary and stage release asset
         shell: bash
         run: |
