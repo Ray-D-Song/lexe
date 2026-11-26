@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf, MAIN_SEPARATOR, MAIN_SEPARATOR_STR},
 };
 
-use lexe_utils::module::{export_default, ModuleInfo};
+use lexe_utils::module::ModuleInfo;
 use rquickjs::{
     function::Opt,
     module::{Declarations, Exports, ModuleDef},
@@ -981,37 +981,36 @@ impl ModuleDef for PathModule {
 
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         let (posix, win32) = build_posix_and_win32(ctx)?;
-        export_default(ctx, exports, |default| {
-            #[cfg(windows)]
-            let (default_ns, default_glob) = (
-                Func::from(to_namespaced_path_win32).into_js(ctx)?,
-                Func::from(matches_glob_win32).into_js(ctx)?,
-            );
-            #[cfg(not(windows))]
-            let (default_ns, default_glob) = (
-                Func::from(to_namespaced_path_posix).into_js(ctx)?,
-                Func::from(matches_glob_posix).into_js(ctx)?,
-            );
+        let default = Object::new(ctx.clone())?;
+        #[cfg(windows)]
+        let (default_ns, default_glob) = (
+            Func::from(to_namespaced_path_win32).into_js(ctx)?,
+            Func::from(matches_glob_win32).into_js(ctx)?,
+        );
+        #[cfg(not(windows))]
+        let (default_ns, default_glob) = (
+            Func::from(to_namespaced_path_posix).into_js(ctx)?,
+            Func::from(matches_glob_posix).into_js(ctx)?,
+        );
 
-            default.set("dirname", Func::from(dirname::<String>))?;
-            default.set("basename", Func::from(basename))?;
-            default.set("extname", Func::from(extname))?;
-            default.set("format", Func::from(format))?;
-            default.set("parse", Func::from(parse))?;
-            default.set("join", Func::from(join))?;
-            default.set("relative", Func::from(relative::<String, String>))?;
-            default.set("resolve", Func::from(resolve))?;
-            default.set("normalize", Func::from(normalize::<String>))?;
-            default.set("isAbsolute", Func::from(|s: String| is_absolute(&s)))?;
-            default.set("toNamespacedPath", default_ns.clone())?;
-            default.set("_makeLong", default_ns)?;
-            default.set("matchesGlob", default_glob)?;
-            default.prop("delimiter", DELIMITER.to_string())?;
-            default.prop("sep", MAIN_SEPARATOR.to_string())?;
-            default.set("posix", posix)?;
-            default.set("win32", win32)?;
-            Ok(())
-        })
+        default.set("dirname", Func::from(dirname::<String>))?;
+        default.set("basename", Func::from(basename))?;
+        default.set("extname", Func::from(extname))?;
+        default.set("format", Func::from(format))?;
+        default.set("parse", Func::from(parse))?;
+        default.set("join", Func::from(join))?;
+        default.set("relative", Func::from(relative::<String, String>))?;
+        default.set("resolve", Func::from(resolve))?;
+        default.set("normalize", Func::from(normalize::<String>))?;
+        default.set("isAbsolute", Func::from(|s: String| is_absolute(&s)))?;
+        default.set("toNamespacedPath", default_ns.clone())?;
+        default.set("_makeLong", default_ns)?;
+        default.set("matchesGlob", default_glob)?;
+        default.prop("delimiter", DELIMITER.to_string())?;
+        default.prop("sep", MAIN_SEPARATOR.to_string())?;
+        default.set("posix", posix)?;
+        default.set("win32", win32)?;
+        export_path_object(exports, default)
     }
 }
 
