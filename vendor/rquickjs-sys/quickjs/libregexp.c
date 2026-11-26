@@ -570,14 +570,18 @@ static bool is_unicode_char(int c)
             (c == '_'));
 }
 
-static int parse_unicode_property(REParseState *s, CharRange *cr,
-                                  const uint8_t **pp, bool is_inv)
+static int parse_unicode_property_ext(REParseState *s, CharRange *cr,
+                                      uint8_t *pmask, const uint8_t **pp,
+                                      bool is_inv)
 {
     const uint8_t *p;
     char name[64], value[64];
     char *q;
     bool script_ext;
     int ret;
+
+    if (pmask)
+        *pmask = 0;
 
     p = *pp;
     if (*p != '{')
@@ -632,6 +636,23 @@ static int parse_unicode_property(REParseState *s, CharRange *cr,
         }
     } else if (value[0] == '\0') {
         cr_init(cr, s->opaque, lre_realloc);
+        if (pmask && s->unicode_sets) {
+            uint8_t mask = 0;
+            ret = unicode_string_prop(cr, &mask, name);
+            if (ret == -1) {
+                cr_free(cr);
+                goto out_of_memory;
+            }
+            if (ret == 0) {
+                if (is_inv) {
+                    cr_free(cr);
+                    return re_parse_error(s, "cannot negate unicode property of strings");
+                }
+                *pmask = mask;
+                *pp = p;
+                return 0;
+            }
+        }
         ret = unicode_general_category(cr, name);
         if (ret == -1) {
             cr_free(cr);
@@ -662,6 +683,12 @@ static int parse_unicode_property(REParseState *s, CharRange *cr,
     return 0;
  out_of_memory:
     return re_parse_out_of_memory(s);
+}
+
+static int parse_unicode_property(REParseState *s, CharRange *cr,
+                                  const uint8_t **pp, bool is_inv)
+{
+    return parse_unicode_property_ext(s, cr, NULL, pp, is_inv);
 }
 
 /* return -1 if error otherwise the character or a class range
@@ -742,7 +769,9 @@ static int get_class_atom(REParseState *s, CharRange *cr,
                     goto normal_char;
                 } else if (s->is_unicode) {
                     // special case: allowed inside [] but not outside
-                    if (ret == -2 && *p == '-' && inclass)
+                    if (ret == -2 && inclass &&
+                        (*p == '-' ||
+                         (s->unicode_sets && strchr("&!#%*,:;<=>@`~", *p))))
                         goto normal_char;
                 invalid_escape:
                     return re_parse_error(s, "invalid escape sequence in regular expression");
@@ -819,6 +848,763 @@ static int re_emit_range(REParseState *s, const CharRange *cr)
     return 0;
 }
 
+typedef struct {
+    uint32_t *cps;
+    int len;
+} REStrItem;
+
+typedef struct {
+    REStrItem *items;
+    int count;
+    int size;
+    uint8_t prop_mask;
+    bool may_contain_strings;
+    void *opaque;
+} REStrSet;
+
+static void ss_init(REStrSet *ss, void *opaque)
+{
+    memset(ss, 0, sizeof(*ss));
+    ss->opaque = opaque;
+}
+
+static void ss_free(REStrSet *ss)
+{
+    int i;
+    for (i = 0; i < ss->count; i++) {
+        if (ss->items[i].cps)
+            lre_realloc(ss->opaque, ss->items[i].cps, 0);
+    }
+    if (ss->items)
+        lre_realloc(ss->opaque, ss->items, 0);
+    ss->items = NULL;
+    ss->count = 0;
+    ss->size = 0;
+}
+
+static int ss_cmp_lex(const uint32_t *a, int alen, const uint32_t *b, int blen)
+{
+    int i, m = alen < blen ? alen : blen;
+    for (i = 0; i < m; i++) {
+        if (a[i] != b[i])
+            return a[i] < b[i] ? -1 : 1;
+    }
+    if (alen != blen)
+        return alen < blen ? -1 : 1;
+    return 0;
+}
+
+static int ss_find_pos(const REStrSet *ss, const uint32_t *cps, int len, bool *pfound)
+{
+    int lo = 0, hi = ss->count;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        int c = ss_cmp_lex(ss->items[mid].cps, ss->items[mid].len, cps, len);
+        if (c < 0)
+            lo = mid + 1;
+        else if (c > 0)
+            hi = mid;
+        else {
+            *pfound = true;
+            return mid;
+        }
+    }
+    *pfound = false;
+    return lo;
+}
+
+static int ss_add(REStrSet *ss, const uint32_t *cps, int len)
+{
+    bool found = false;
+    int pos = ss_find_pos(ss, cps, len, &found);
+    uint32_t *copy = NULL;
+
+    if (found)
+        return 0;
+    if (len > 0) {
+        copy = lre_realloc(ss->opaque, NULL, (size_t)len * sizeof(uint32_t));
+        if (!copy)
+            return -1;
+        memcpy(copy, cps, (size_t)len * sizeof(uint32_t));
+    }
+    if (ss->count >= ss->size) {
+        int new_size = ss->size ? ss->size * 2 : 8;
+        REStrItem *ni = lre_realloc(ss->opaque, ss->items,
+                                    (size_t)new_size * sizeof(REStrItem));
+        if (!ni) {
+            if (copy)
+                lre_realloc(ss->opaque, copy, 0);
+            return -1;
+        }
+        ss->items = ni;
+        ss->size = new_size;
+    }
+    if (pos < ss->count) {
+        memmove(&ss->items[pos + 1], &ss->items[pos],
+                (size_t)(ss->count - pos) * sizeof(REStrItem));
+    }
+    ss->items[pos].cps = copy;
+    ss->items[pos].len = len;
+    ss->count++;
+    return 0;
+}
+
+static int ss_materialize(REStrSet *ss)
+{
+    int i, total;
+    if (ss->prop_mask == 0)
+        return 0;
+    total = unicode_emoji_seq_count();
+    for (i = 0; i < total; i++) {
+        int slen = 0;
+        uint8_t smask = 0;
+        const uint32_t *seq = unicode_emoji_seq_get(i, &slen, &smask);
+        if ((smask & ss->prop_mask) != 0) {
+            if (ss_add(ss, seq, slen))
+                return -1;
+        }
+    }
+    ss->prop_mask = 0;
+    return 0;
+}
+
+static int ss_union(REStrSet *dst, REStrSet *src)
+{
+    int i;
+    if (src->may_contain_strings)
+        dst->may_contain_strings = true;
+    dst->prop_mask |= src->prop_mask;
+    for (i = 0; i < src->count; i++) {
+        if (ss_add(dst, src->items[i].cps, src->items[i].len))
+            return -1;
+    }
+    return 0;
+}
+
+static int ss_inter(REStrSet *dst, REStrSet *src)
+{
+    REStrSet out;
+    int i = 0, j = 0;
+
+    dst->may_contain_strings = dst->may_contain_strings && src->may_contain_strings;
+    if (dst->count == 0 && src->count == 0) {
+        dst->prop_mask &= src->prop_mask;
+        return 0;
+    }
+    if (ss_materialize(dst) || ss_materialize(src))
+        return -1;
+    ss_init(&out, dst->opaque);
+    out.may_contain_strings = dst->may_contain_strings;
+    while (i < dst->count && j < src->count) {
+        int c = ss_cmp_lex(dst->items[i].cps, dst->items[i].len,
+                           src->items[j].cps, src->items[j].len);
+        if (c < 0) {
+            i++;
+        } else if (c > 0) {
+            j++;
+        } else {
+            if (ss_add(&out, dst->items[i].cps, dst->items[i].len)) {
+                ss_free(&out);
+                return -1;
+            }
+            i++;
+            j++;
+        }
+    }
+    ss_free(dst);
+    *dst = out;
+    return 0;
+}
+
+static int ss_sub(REStrSet *dst, REStrSet *src)
+{
+    REStrSet out;
+    int i = 0, j = 0;
+
+    if (dst->count == 0 && dst->prop_mask == 0)
+        return 0;
+    if (dst->count == 0 && src->count == 0) {
+        dst->prop_mask &= (uint8_t)~src->prop_mask;
+        return 0;
+    }
+    if (ss_materialize(dst) || ss_materialize(src))
+        return -1;
+    ss_init(&out, dst->opaque);
+    out.may_contain_strings = dst->may_contain_strings;
+    while (i < dst->count) {
+        if (j >= src->count) {
+            if (ss_add(&out, dst->items[i].cps, dst->items[i].len)) {
+                ss_free(&out);
+                return -1;
+            }
+            i++;
+        } else {
+            int c = ss_cmp_lex(dst->items[i].cps, dst->items[i].len,
+                               src->items[j].cps, src->items[j].len);
+            if (c < 0) {
+                if (ss_add(&out, dst->items[i].cps, dst->items[i].len)) {
+                    ss_free(&out);
+                    return -1;
+                }
+                i++;
+            } else if (c > 0) {
+                j++;
+            } else {
+                i++;
+                j++;
+            }
+        }
+    }
+    ss_free(dst);
+    *dst = out;
+    return 0;
+}
+
+static int str_item_utf16_len(const REStrItem *it)
+{
+    int i, n = 0;
+    for (i = 0; i < it->len; i++)
+        n += (it->cps[i] > 0xffff) ? 2 : 1;
+    return n;
+}
+
+static int cmp_str_item_emit(const void *pa, const void *pb)
+{
+    const REStrItem *a = (const REStrItem *)pa;
+    const REStrItem *b = (const REStrItem *)pb;
+    int la = str_item_utf16_len(a);
+    int lb = str_item_utf16_len(b);
+    if (la != lb)
+        return (lb > la) ? 1 : -1;
+    return ss_cmp_lex(a->cps, a->len, b->cps, b->len);
+}
+
+static int re_emit_char_cp(REParseState *s, uint32_t c)
+{
+    if (s->ignore_case)
+        c = lre_canonicalize(c, s->is_unicode);
+    if (c <= 0x7f)
+        re_emit_op_u8(s, REOP_char8, c);
+    else if (c <= 0xffff)
+        re_emit_op_u16(s, REOP_char16, c);
+    else
+        re_emit_op_u32(s, REOP_char32, c);
+    return 0;
+}
+
+static int re_emit_str_item(REParseState *s, const REStrItem *it, bool is_backward_dir)
+{
+    int i;
+    if (is_backward_dir) {
+        for (i = it->len - 1; i >= 0; i--) {
+            re_emit_op(s, REOP_prev);
+            re_emit_char_cp(s, it->cps[i]);
+            re_emit_op(s, REOP_prev);
+        }
+    } else {
+        for (i = 0; i < it->len; i++)
+            re_emit_char_cp(s, it->cps[i]);
+    }
+    return 0;
+}
+
+static int re_emit_class_set(REParseState *s, const CharRange *cr,
+                             REStrSet *ss, bool is_backward_dir)
+{
+    int i, n_nonempty = 0, n_alts, cur_alt = 0;
+    bool has_emoji_prop, has_cr, has_empty = false;
+    int *goto_positions = NULL;
+
+    if (ss->prop_mask == 0 && ss->count == 0) {
+        if (is_backward_dir)
+            re_emit_op(s, REOP_prev);
+        if (re_emit_range(s, cr))
+            return -1;
+        if (is_backward_dir)
+            re_emit_op(s, REOP_prev);
+        return 0;
+    }
+
+    if (ss->prop_mask != 0 && ss->count > 0) {
+        if (ss_materialize(ss))
+            return re_parse_out_of_memory(s);
+    }
+
+    if (ss->count > 1)
+        qsort(ss->items, (size_t)ss->count, sizeof(REStrItem), cmp_str_item_emit);
+
+    for (i = 0; i < ss->count; i++) {
+        if (ss->items[i].len > 0)
+            n_nonempty++;
+        else
+            has_empty = true;
+    }
+    has_emoji_prop = (ss->prop_mask != 0);
+    has_cr = (cr->len > 0);
+    n_alts = n_nonempty + (has_emoji_prop ? 1 : 0) + (has_cr ? 1 : 0) + (has_empty ? 1 : 0);
+
+    if (n_alts == 0)
+        return re_emit_range(s, cr);
+
+    if (n_alts > 1) {
+        goto_positions = lre_realloc(s->opaque, NULL, (size_t)(n_alts - 1) * sizeof(int));
+        if (!goto_positions)
+            return re_parse_out_of_memory(s);
+    }
+
+    for (i = 0; i < n_nonempty; i++) {
+        int split_pos = -1;
+        if (cur_alt + 1 < n_alts)
+            split_pos = re_emit_op_u32(s, REOP_split_next_first, 0);
+        re_emit_str_item(s, &ss->items[i], is_backward_dir);
+        if (cur_alt + 1 < n_alts) {
+            goto_positions[cur_alt] = re_emit_op_u32(s, REOP_goto, 0);
+            put_u32(s->byte_code.buf + split_pos, s->byte_code.size - (split_pos + 4));
+        }
+        cur_alt++;
+    }
+
+    if (has_emoji_prop) {
+        int split_pos = -1;
+        if (cur_alt + 1 < n_alts)
+            split_pos = re_emit_op_u32(s, REOP_split_next_first, 0);
+        re_emit_op_u8(s, REOP_emoji_seq, ss->prop_mask | (is_backward_dir ? 0x80 : 0));
+        if (cur_alt + 1 < n_alts) {
+            goto_positions[cur_alt] = re_emit_op_u32(s, REOP_goto, 0);
+            put_u32(s->byte_code.buf + split_pos, s->byte_code.size - (split_pos + 4));
+        }
+        cur_alt++;
+    }
+
+    if (has_cr) {
+        int split_pos = -1;
+        if (cur_alt + 1 < n_alts)
+            split_pos = re_emit_op_u32(s, REOP_split_next_first, 0);
+        if (is_backward_dir)
+            re_emit_op(s, REOP_prev);
+        if (re_emit_range(s, cr)) {
+            if (goto_positions)
+                lre_realloc(s->opaque, goto_positions, 0);
+            return -1;
+        }
+        if (is_backward_dir)
+            re_emit_op(s, REOP_prev);
+        if (cur_alt + 1 < n_alts) {
+            goto_positions[cur_alt] = re_emit_op_u32(s, REOP_goto, 0);
+            put_u32(s->byte_code.buf + split_pos, s->byte_code.size - (split_pos + 4));
+        }
+        cur_alt++;
+    }
+
+    if (has_empty) {
+        /* Empty string alternative matches 0 characters at the end. */
+        cur_alt++;
+    }
+
+    if (goto_positions) {
+        for (i = 0; i < n_alts - 1; i++) {
+            put_u32(s->byte_code.buf + goto_positions[i],
+                    s->byte_code.size - (goto_positions[i] + 4));
+        }
+        lre_realloc(s->opaque, goto_positions, 0);
+    }
+    return 0;
+}
+
+static bool is_v_syntax_char(uint8_t c)
+{
+    return c == '(' || c == ')' || c == '[' || c == ']' ||
+           c == '{' || c == '}' || c == '/' || c == '-' ||
+           c == '\\' || c == '|';
+}
+
+static bool is_v_double_punctuator(const uint8_t *p)
+{
+    uint8_t c = p[0];
+    if (c == '\0' || p[1] != c)
+        return false;
+    return strchr("!#$%&*+,.:;<=>?@^`~", c) != NULL;
+}
+
+/* Parse a single ClassSetCharacter (escaped or unescaped) for /v.
+   Inside \q{...} (in_str == true), double punctuators like "!!" are valid. */
+static int parse_v_class_char(REParseState *s, const uint8_t **pp, bool in_str)
+{
+    const uint8_t *p = *pp;
+    uint8_t ch = *p;
+    CharRange dummy;
+
+    if (p >= s->buf_end)
+        return re_parse_error(s, "unexpected end");
+    if (ch == '\\') {
+        if (p + 1 < s->buf_end &&
+            (p[1] == 'd' || p[1] == 'D' || p[1] == 's' || p[1] == 'S' ||
+             p[1] == 'w' || p[1] == 'W' || p[1] == 'p' || p[1] == 'P' ||
+             p[1] == 'q')) {
+            return re_parse_error(s, "invalid escape in class string");
+        }
+        int c = get_class_atom(s, &dummy, pp, true);
+        if (c >= CLASS_RANGE_BASE) {
+            cr_free(&dummy);
+            return re_parse_error(s, "invalid character in class string");
+        }
+        return c;
+    }
+    if (is_v_syntax_char(ch))
+        return re_parse_error(s, "invalid syntax character in character class");
+    if (!in_str && is_v_double_punctuator(p))
+        return re_parse_error(s, "invalid double punctuator in character class");
+    return get_class_atom(s, &dummy, pp, true);
+}
+
+static int cr_inter_inplace(CharRange *cr, const uint32_t *b_pt, int b_len)
+{
+    CharRange a = *cr;
+    int ret;
+    cr->len = 0;
+    cr->size = 0;
+    cr->points = NULL;
+    ret = cr_op(cr, a.points, a.len, b_pt, b_len, CR_OP_INTER);
+    cr_free(&a);
+    return ret;
+}
+
+static int parse_v_class_set(REParseState *s, const uint8_t **pp,
+                             CharRange *out_cr, REStrSet *out_ss);
+
+/* Parse one ClassSetOperand in /v. Sets *pis_char = true and *pchar = cp when
+   the operand is a single ClassSetCharacter (eligible to start a ClassSetRange). */
+static int parse_v_class_operand(REParseState *s, const uint8_t **pp,
+                                 CharRange *op_cr, REStrSet *op_ss,
+                                 bool *pis_char, uint32_t *pchar)
+{
+    const uint8_t *p = *pp;
+    int c;
+
+    cr_init(op_cr, s->opaque, lre_realloc);
+    ss_init(op_ss, s->opaque);
+    *pis_char = false;
+    *pchar = 0;
+
+    if (p >= s->buf_end)
+        return re_parse_error(s, "unexpected end");
+
+    if (*p == '[') {
+        return parse_v_class_set(s, pp, op_cr, op_ss);
+    }
+
+    if (*p == '\\') {
+        if (p + 1 >= s->buf_end)
+            return re_parse_error(s, "unexpected end");
+        if (p[1] == 'p' || p[1] == 'P') {
+            uint8_t mask = 0;
+            bool is_inv = (p[1] == 'P');
+            p += 2;
+            if (parse_unicode_property_ext(s, op_cr, &mask, &p, is_inv))
+                goto fail;
+            op_ss->prop_mask = mask;
+            op_ss->may_contain_strings = (mask != 0);
+            if (s->ignore_case && cr_regexp_canonicalize(op_cr, true))
+                goto memory_error;
+            *pp = p;
+            return 0;
+        }
+        if (p[1] == 'q') {
+            uint32_t *buf = NULL;
+            int buf_len = 0, buf_cap = 0;
+            p += 2;
+            if (*p != '{')
+                return re_parse_error(s, "expecting '{' after \\q");
+            p++;
+            op_ss->may_contain_strings = true;
+            for (;;) {
+                if (p >= s->buf_end) {
+                    if (buf)
+                        lre_realloc(s->opaque, buf, 0);
+                    re_parse_error(s, "unexpected end");
+                    goto fail;
+                }
+                if (*p == '|' || *p == '}') {
+                    if (buf_len == 1) {
+                        uint32_t single = buf[0];
+                        if (s->ignore_case)
+                            single = lre_canonicalize(single, true);
+                        if (cr_union_interval(op_cr, single, single)) {
+                            if (buf)
+                                lre_realloc(s->opaque, buf, 0);
+                            goto memory_error;
+                        }
+                    } else {
+                        if (s->ignore_case) {
+                            int k;
+                            for (k = 0; k < buf_len; k++)
+                                buf[k] = lre_canonicalize(buf[k], true);
+                        }
+                        if (ss_add(op_ss, buf, buf_len)) {
+                            if (buf)
+                                lre_realloc(s->opaque, buf, 0);
+                            goto memory_error;
+                        }
+                    }
+                    buf_len = 0;
+                    if (*p == '}') {
+                        p++;
+                        break;
+                    }
+                    p++; /* skip '|' */
+                    continue;
+                }
+                c = parse_v_class_char(s, &p, true);
+                if (c < 0) {
+                    if (buf)
+                        lre_realloc(s->opaque, buf, 0);
+                    goto fail;
+                }
+                if (buf_len >= buf_cap) {
+                    int new_cap = buf_cap ? buf_cap * 2 : 8;
+                    uint32_t *nb = lre_realloc(s->opaque, buf,
+                                               (size_t)new_cap * sizeof(uint32_t));
+                    if (!nb) {
+                        if (buf)
+                            lre_realloc(s->opaque, buf, 0);
+                        goto memory_error;
+                    }
+                    buf = nb;
+                    buf_cap = new_cap;
+                }
+                buf[buf_len++] = (uint32_t)c;
+            }
+            if (buf)
+                lre_realloc(s->opaque, buf, 0);
+            if (s->ignore_case && op_cr->len > 0 && cr_regexp_canonicalize(op_cr, true))
+                goto memory_error;
+            *pp = p;
+            return 0;
+        }
+    } else {
+        if (is_v_syntax_char(*p))
+            return re_parse_error(s, "invalid syntax character in character class");
+        if (is_v_double_punctuator(p))
+            return re_parse_error(s, "invalid double punctuator in character class");
+    }
+
+    c = get_class_atom(s, op_cr, &p, true);
+    if (c < 0)
+        goto fail;
+    if ((uint32_t)c >= CLASS_RANGE_BASE) {
+        if (s->ignore_case && cr_regexp_canonicalize(op_cr, true))
+            goto memory_error;
+        *pp = p;
+        return 0;
+    }
+    *pis_char = true;
+    *pchar = (uint32_t)c;
+    uint32_t canon = s->ignore_case ? lre_canonicalize((uint32_t)c, true) : (uint32_t)c;
+    if (cr_union_interval(op_cr, canon, canon))
+        goto memory_error;
+    if (s->ignore_case && cr_regexp_canonicalize(op_cr, true))
+        goto memory_error;
+    *pp = p;
+    return 0;
+ memory_error:
+    re_parse_out_of_memory(s);
+ fail:
+    cr_free(op_cr);
+    ss_free(op_ss);
+    return -1;
+}
+
+static int parse_v_class_set(REParseState *s, const uint8_t **pp,
+                             CharRange *out_cr, REStrSet *out_ss)
+{
+    const uint8_t *p = *pp;
+    bool invert = false;
+    enum { V_MODE_INIT, V_MODE_UNION, V_MODE_INTER, V_MODE_SUB } mode = V_MODE_INIT;
+
+    cr_init(out_cr, s->opaque, lre_realloc);
+    ss_init(out_ss, s->opaque);
+
+    if (*p != '[')
+        return re_parse_error(s, "expecting '['");
+    p++;
+    if (*p == '^') {
+        p++;
+        invert = true;
+    }
+
+    for (;;) {
+        CharRange op_cr;
+        REStrSet op_ss;
+        bool is_char = false;
+        uint32_t c1 = 0;
+
+        if (p >= s->buf_end) {
+            re_parse_error(s, "unexpected end");
+            goto fail;
+        }
+        if (*p == ']') {
+            p++;
+            break;
+        }
+        if (mode == V_MODE_UNION &&
+            ((*p == '&' && p[1] == '&') || (*p == '-' && p[1] == '-'))) {
+            re_parse_error(s, "invalid set operation in character class");
+            goto fail;
+        }
+
+        if (parse_v_class_operand(s, &p, &op_cr, &op_ss, &is_char, &c1))
+            goto fail;
+
+        if (*p == '-' && p[1] != '-') {
+            uint32_t c2;
+            if (!is_char || p[1] == ']') {
+                cr_free(&op_cr);
+                ss_free(&op_ss);
+                re_parse_error(s, "invalid class range");
+                goto fail;
+            }
+            p++; /* skip '-' */
+            c2 = (uint32_t)parse_v_class_char(s, &p, false);
+            if ((int)c2 < 0 || c2 < c1) {
+                cr_free(&op_cr);
+                ss_free(&op_ss);
+                if ((int)c2 >= 0)
+                    re_parse_error(s, "invalid class range");
+                goto fail;
+            }
+            cr_free(&op_cr);
+            cr_init(&op_cr, s->opaque, lre_realloc);
+            if (cr_union_interval(&op_cr, c1, c2)) {
+                cr_free(&op_cr);
+                ss_free(&op_ss);
+                goto memory_error;
+            }
+            if (s->ignore_case && cr_regexp_canonicalize(&op_cr, true)) {
+                cr_free(&op_cr);
+                ss_free(&op_ss);
+                goto memory_error;
+            }
+            mode = V_MODE_UNION;
+            if (cr_union1(out_cr, op_cr.points, op_cr.len) ||
+                ss_union(out_ss, &op_ss)) {
+                cr_free(&op_cr);
+                ss_free(&op_ss);
+                goto memory_error;
+            }
+            cr_free(&op_cr);
+            ss_free(&op_ss);
+            continue;
+        }
+
+        if (mode == V_MODE_INIT && *p == '&' && p[1] == '&') {
+            mode = V_MODE_INTER;
+            *out_cr = op_cr;
+            *out_ss = op_ss;
+            while (*p == '&' && p[1] == '&') {
+                CharRange op2_cr;
+                REStrSet op2_ss;
+                bool is_char2 = false;
+                uint32_t c2_dummy = 0;
+                p += 2;
+                if (*p == ']') {
+                    re_parse_error(s, "invalid set operation in character class");
+                    goto fail;
+                }
+                if (parse_v_class_operand(s, &p, &op2_cr, &op2_ss, &is_char2, &c2_dummy))
+                    goto fail;
+                if (*p == '-' && p[1] != '-') {
+                    cr_free(&op2_cr);
+                    ss_free(&op2_ss);
+                    re_parse_error(s, "invalid set operation in character class");
+                    goto fail;
+                }
+                if (cr_inter_inplace(out_cr, op2_cr.points, op2_cr.len) ||
+                    ss_inter(out_ss, &op2_ss)) {
+                    cr_free(&op2_cr);
+                    ss_free(&op2_ss);
+                    goto memory_error;
+                }
+                cr_free(&op2_cr);
+                ss_free(&op2_ss);
+            }
+            if (*p != ']') {
+                re_parse_error(s, "invalid set operation in character class");
+                goto fail;
+            }
+            p++;
+            break;
+        }
+
+        if (mode == V_MODE_INIT && *p == '-' && p[1] == '-') {
+            mode = V_MODE_SUB;
+            *out_cr = op_cr;
+            *out_ss = op_ss;
+            while (*p == '-' && p[1] == '-') {
+                CharRange op2_cr;
+                REStrSet op2_ss;
+                bool is_char2 = false;
+                uint32_t c2_dummy = 0;
+                p += 2;
+                if (*p == ']') {
+                    re_parse_error(s, "invalid set operation in character class");
+                    goto fail;
+                }
+                if (parse_v_class_operand(s, &p, &op2_cr, &op2_ss, &is_char2, &c2_dummy))
+                    goto fail;
+                if (*p == '-' && p[1] != '-') {
+                    cr_free(&op2_cr);
+                    ss_free(&op2_ss);
+                    re_parse_error(s, "invalid set operation in character class");
+                    goto fail;
+                }
+                if (cr_invert(&op2_cr) ||
+                    cr_inter_inplace(out_cr, op2_cr.points, op2_cr.len) ||
+                    ss_sub(out_ss, &op2_ss)) {
+                    cr_free(&op2_cr);
+                    ss_free(&op2_ss);
+                    goto memory_error;
+                }
+                cr_free(&op2_cr);
+                ss_free(&op2_ss);
+            }
+            if (*p != ']') {
+                re_parse_error(s, "invalid set operation in character class");
+                goto fail;
+            }
+            p++;
+            break;
+        }
+
+        mode = V_MODE_UNION;
+        if (cr_union1(out_cr, op_cr.points, op_cr.len) ||
+            ss_union(out_ss, &op_ss)) {
+            cr_free(&op_cr);
+            ss_free(&op_ss);
+            goto memory_error;
+        }
+        cr_free(&op_cr);
+        ss_free(&op_ss);
+    }
+
+    if (invert) {
+        if (out_ss->may_contain_strings) {
+            re_parse_error(s, "negated character class may contain strings");
+            goto fail;
+        }
+        if (cr_invert(out_cr))
+            goto memory_error;
+    }
+
+    *pp = p;
+    return 0;
+ memory_error:
+    re_parse_out_of_memory(s);
+ fail:
+    cr_free(out_cr);
+    ss_free(out_ss);
+    return -1;
+}
+
 // s->unicode turns patterns like []] into syntax errors
 // s->unicode_sets turns more patterns into errors, like [a-] or [[]
 static int re_parse_char_class(REParseState *s, const uint8_t **pp)
@@ -829,30 +1615,22 @@ static int re_parse_char_class(REParseState *s, const uint8_t **pp)
     CharRange cr1_s, *cr1 = &cr1_s;
     bool invert;
 
+    if (s->unicode_sets) {
+        REStrSet ss;
+        int ret;
+        cr_init(cr, s->opaque, lre_realloc);
+        ss_init(&ss, s->opaque);
+        if (parse_v_class_set(s, pp, cr, &ss))
+            return -1;
+        ret = re_emit_class_set(s, cr, &ss, false);
+        cr_free(cr);
+        ss_free(&ss);
+        return ret;
+    }
+
     cr_init(cr, s->opaque, lre_realloc);
     p = *pp;
     p++;    /* skip '[' */
-
-    if (s->unicode_sets) {
-        static const char verboten[] =
-            "()[{}/-|"                              "\0"
-            "&&!!##$$%%**++,,..::;;<<==>>??@@``~~"  "\0"
-            "^^^_^^";
-        const char *s = verboten;
-        int n = 1;
-        do {
-            // not memcmp because some implementations compare word instead
-            // of byte at a time and will happily read past end of input
-            if (!strncmp(s, (const char *)p, n))
-                if (p[n] == ']')
-                    goto invalid_class_range;
-            s += n;
-            if (!*s) {
-                s++;
-                n++;
-            }
-        } while (n < 4);
-    }
 
     invert = false;
     if (*p == '^') {
@@ -866,11 +1644,6 @@ static int re_parse_char_class(REParseState *s, const uint8_t **pp)
         c1 = get_class_atom(s, cr1, &p, true);
         if ((int)c1 < 0)
             goto fail;
-        if (*p == '-' && p[1] == ']' && s->unicode_sets) {
-            if (c1 >= CLASS_RANGE_BASE)
-                cr_free(cr1);
-            goto invalid_class_range;
-        }
         if (*p == '-' && p[1] != ']') {
             const uint8_t *p0 = p + 1;
             if (c1 >= CLASS_RANGE_BASE) {
@@ -965,6 +1738,7 @@ static bool re_need_check_advance(const uint8_t *bc_buf, int bc_buf_len)
         case REOP_char8:
         case REOP_dot:
         case REOP_any:
+        case REOP_emoji_seq:
         simple_char:
             ret = false;
             break;
@@ -1019,6 +1793,7 @@ static int re_is_simple_quantifier(const uint8_t *bc_buf, int bc_buf_len)
         case REOP_char8:
         case REOP_dot:
         case REOP_any:
+        case REOP_emoji_seq:
         simple_char:
             count++;
             break;
@@ -1129,9 +1904,26 @@ static int re_parse_captures(REParseState *s, int *phas_named_captures,
             p++;
             break;
         case '[':
-            for (p += 1 + (*p == ']'); p < s->buf_end && *p != ']'; p++) {
-                if (*p == '\\')
-                    p++;
+            if (s->unicode_sets) {
+                int depth = 1;
+                p++;
+                while (p < s->buf_end && depth > 0) {
+                    if (*p == '\\') {
+                        p += 2;
+                        continue;
+                    }
+                    if (*p == '[')
+                        depth++;
+                    else if (*p == ']')
+                        depth--;
+                    if (depth > 0)
+                        p++;
+                }
+            } else {
+                for (p += 1 + (*p == ']'); p < s->buf_end && *p != ']'; p++) {
+                    if (*p == '\\')
+                        p++;
+                }
             }
             break;
         }
@@ -1429,6 +2221,22 @@ static int re_parse_term(REParseState *s, bool is_backward_dir)
     case '[':
         last_atom_start = s->byte_code.size;
         last_capture_count = s->capture_count;
+        if (s->unicode_sets) {
+            CharRange cr_v;
+            REStrSet ss_v;
+            cr_init(&cr_v, s->opaque, lre_realloc);
+            ss_init(&ss_v, s->opaque);
+            if (parse_v_class_set(s, &p, &cr_v, &ss_v))
+                return -1;
+            if (re_emit_class_set(s, &cr_v, &ss_v, is_backward_dir)) {
+                cr_free(&cr_v);
+                ss_free(&ss_v);
+                return -1;
+            }
+            cr_free(&cr_v);
+            ss_free(&ss_v);
+            break;
+        }
         if (is_backward_dir)
             re_emit_op(s, REOP_prev);
         if (re_parse_char_class(s, &p))
@@ -1443,6 +2251,28 @@ static int re_parse_term(REParseState *s, bool is_backward_dir)
         goto parse_class_atom;
     default:
     parse_class_atom:
+        if (s->unicode_sets && p[0] == '\\' && (p[1] == 'p' || p[1] == 'P')) {
+            CharRange cr_p;
+            REStrSet ss_p;
+            uint8_t pmask = 0;
+            bool is_inv = (p[1] == 'P');
+            p += 2;
+            cr_init(&cr_p, s->opaque, lre_realloc);
+            ss_init(&ss_p, s->opaque);
+            if (parse_unicode_property_ext(s, &cr_p, &pmask, &p, is_inv))
+                return -1;
+            ss_p.prop_mask = pmask;
+            last_atom_start = s->byte_code.size;
+            last_capture_count = s->capture_count;
+            if (re_emit_class_set(s, &cr_p, &ss_p, is_backward_dir)) {
+                cr_free(&cr_p);
+                ss_free(&ss_p);
+                return -1;
+            }
+            cr_free(&cr_p);
+            ss_free(&ss_p);
+            break;
+        }
         c = get_class_atom(s, cr, &p, false);
         if ((int)c < 0)
             return -1;
@@ -1810,7 +2640,7 @@ uint8_t *lre_compile(int *plen, char *error_msg, int error_msg_size,
     s->buf_end = s->buf_ptr + buf_len;
     s->buf_start = s->buf_ptr;
     s->re_flags = re_flags;
-    s->is_unicode = ((re_flags & LRE_FLAG_UNICODE) != 0);
+    s->is_unicode = ((re_flags & (LRE_FLAG_UNICODE | LRE_FLAG_UNICODE_SETS)) != 0);
     is_sticky = ((re_flags & LRE_FLAG_STICKY) != 0);
     s->ignore_case = ((re_flags & LRE_FLAG_IGNORECASE) != 0);
     s->dotall = ((re_flags & LRE_FLAG_DOTALL) != 0);
@@ -1992,6 +2822,7 @@ typedef enum {
     RE_EXEC_STATE_LOOKAHEAD,
     RE_EXEC_STATE_NEGATIVE_LOOKAHEAD,
     RE_EXEC_STATE_GREEDY_QUANT,
+    RE_EXEC_STATE_EMOJI_SEQ,
 } REExecStateEnum;
 
 typedef struct REExecState {
@@ -2070,6 +2901,76 @@ static int lre_poll_timeout(REExecContext *s)
     return 0;
 }
 
+static int lre_step_emoji_seq(REExecContext *s, const uint8_t **ppc,
+                              const uint8_t **pcptr, int limit,
+                              int *pnext_max_len)
+{
+    uint8_t arg = *(*ppc)++;
+    uint8_t mask = arg & 0x7fu;
+    bool is_back = (arg & 0x80u) != 0;
+    const uint8_t *cbuf_end = s->cbuf_end;
+    int cbuf_type = s->cbuf_type;
+    uint32_t q[UNICODE_EMOJI_SEQ_MAX_LEN];
+    const uint8_t *q_next[UNICODE_EMOJI_SEQ_MAX_LEN + 1];
+    const uint8_t *scan = *pcptr;
+    int avail = 0, matched;
+
+    if (limit > UNICODE_EMOJI_SEQ_MAX_LEN)
+        limit = UNICODE_EMOJI_SEQ_MAX_LEN;
+    *pnext_max_len = 0;
+    if (is_back) {
+        const uint8_t *ptrs[UNICODE_EMOJI_SEQ_MAX_LEN + 1];
+        uint32_t rev[UNICODE_EMOJI_SEQ_MAX_LEN];
+        int i;
+        ptrs[0] = scan;
+        while (avail < limit && scan > s->cbuf) {
+            uint32_t cp;
+            GET_PREV_CHAR(cp, scan, s->cbuf, cbuf_type);
+            rev[avail] = cp;
+            avail++;
+            ptrs[avail] = scan;
+        }
+        if (avail < 2)
+            return 0;
+        /* Match longest suffix among lengths 2..avail */
+        for (i = avail; i >= 2; i--) {
+            int k, next_dummy = 0;
+            for (k = 0; k < i; k++)
+                q[k] = rev[i - 1 - k];
+            if (unicode_emoji_seq_find_longest(q, i, mask, &next_dummy) == i) {
+                int j, found_shorter = 0;
+                for (j = i - 1; j >= 2; j--) {
+                    int m, nd = 0;
+                    for (m = 0; m < j; m++)
+                        q[m] = rev[j - 1 - m];
+                    if (unicode_emoji_seq_find_longest(q, j, mask, &nd) == j) {
+                        found_shorter = j;
+                        break;
+                    }
+                }
+                *pnext_max_len = found_shorter;
+                *pcptr = ptrs[i];
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    q_next[0] = scan;
+    while (avail < limit && scan < cbuf_end) {
+        uint32_t cp;
+        GET_CHAR(cp, scan, cbuf_end, cbuf_type);
+        q[avail] = cp;
+        avail++;
+        q_next[avail] = scan;
+    }
+    matched = unicode_emoji_seq_find_longest(q, avail, mask, pnext_max_len);
+    if (matched <= 0)
+        return 0;
+    *pcptr = q_next[matched];
+    return matched;
+}
+
 /* return 1 if match, 0 if not match or < 0 if error. */
 static intptr_t lre_exec_backtrack(REExecContext *s, uint8_t **capture,
                                    StackInt *stack, int stack_len,
@@ -2144,6 +3045,34 @@ static intptr_t lre_exec_backtrack(REExecContext *s, uint8_t **capture,
                             }
                             break;
                         }
+                    } else if (rs->type == RE_EXEC_STATE_EMOJI_SEQ) {
+                        if (!ret) {
+                            const uint8_t *arg_pc = rs->pc;
+                            const uint8_t *orig_cptr = rs->cptr;
+                            int limit = (int)rs->count;
+                            int next_max_len = 0;
+                            int matched;
+                            memcpy(capture, rs->buf,
+                                   sizeof(capture[0]) * 2 * s->capture_count);
+                            stack_len = rs->stack_len;
+                            memcpy(stack, rs->buf + 2 * s->capture_count,
+                                   stack_len * sizeof(stack[0]));
+                            s->state_stack_len--;
+                            pc = arg_pc;
+                            cptr = orig_cptr;
+                            matched = lre_step_emoji_seq(s, &pc, &cptr, limit, &next_max_len);
+                            if (matched > 0) {
+                                if (next_max_len >= 2) {
+                                    if (push_state(s, capture, stack, stack_len,
+                                                   arg_pc, orig_cptr,
+                                                   RE_EXEC_STATE_EMOJI_SEQ,
+                                                   (size_t)next_max_len) < 0)
+                                        return LRE_RET_MEMORY_ERROR;
+                                }
+                                break;
+                            }
+                            continue;
+                        }
                     } else {
                         ret = ((rs->type == RE_EXEC_STATE_LOOKAHEAD && ret) ||
                                (rs->type == RE_EXEC_STATE_NEGATIVE_LOOKAHEAD && !ret));
@@ -2156,6 +3085,24 @@ static intptr_t lre_exec_backtrack(REExecContext *s, uint8_t **capture,
                         }
                     }
                     s->state_stack_len--;
+                }
+            }
+            break;
+        case REOP_emoji_seq:
+            {
+                const uint8_t *arg_pc = pc;
+                const uint8_t *orig_cptr = cptr;
+                int next_max_len = 0;
+                int matched = lre_step_emoji_seq(s, &pc, &cptr,
+                                                 UNICODE_EMOJI_SEQ_MAX_LEN,
+                                                 &next_max_len);
+                if (matched <= 0)
+                    goto no_match;
+                if (next_max_len >= 2) {
+                    if (push_state(s, capture, stack, stack_len,
+                                   arg_pc, orig_cptr, RE_EXEC_STATE_EMOJI_SEQ,
+                                   (size_t)next_max_len) < 0)
+                        return LRE_RET_MEMORY_ERROR;
                 }
             }
             break;
@@ -2505,7 +3452,7 @@ int lre_exec(uint8_t **capture,
     re_flags = lre_get_flags(bc_buf);
     s->multi_line = (re_flags & LRE_FLAG_MULTILINE) != 0;
     s->ignore_case = (re_flags & LRE_FLAG_IGNORECASE) != 0;
-    s->is_unicode = (re_flags & LRE_FLAG_UNICODE) != 0;
+    s->is_unicode = (re_flags & (LRE_FLAG_UNICODE | LRE_FLAG_UNICODE_SETS)) != 0;
     s->capture_count = bc_buf[RE_HEADER_CAPTURE_COUNT];
     s->stack_size_max = bc_buf[RE_HEADER_STACK_SIZE];
     s->cbuf = cbuf;

@@ -119,6 +119,21 @@ int unicode_script(CharRange *cr,
 int unicode_general_category(CharRange *cr, const char *gc_name);
 int unicode_prop(CharRange *cr, const char *prop_name);
 
+#define UNICODE_EMOJI_PROP_BASIC    (1u << 0)
+#define UNICODE_EMOJI_PROP_KEYCAP   (1u << 1)
+#define UNICODE_EMOJI_PROP_FLAG     (1u << 2)
+#define UNICODE_EMOJI_PROP_TAG      (1u << 3)
+#define UNICODE_EMOJI_PROP_MODIFIER (1u << 4)
+#define UNICODE_EMOJI_PROP_ZWJ      (1u << 5)
+#define UNICODE_EMOJI_PROP_RGI      0x3Fu
+#define UNICODE_EMOJI_SEQ_MAX_LEN   10
+
+int unicode_string_prop(CharRange *cr, uint8_t *pmask, const char *prop_name);
+int unicode_emoji_seq_count(void);
+const uint32_t *unicode_emoji_seq_get(int idx, int *plen, uint8_t *pmask);
+int unicode_emoji_seq_find_longest(const uint32_t *q, int max_len,
+                                   uint8_t mask, int *pnext_max_len);
+
 #ifdef __cplusplus
 } /* extern "C" { */
 #endif

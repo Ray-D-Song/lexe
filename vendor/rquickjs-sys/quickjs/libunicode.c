@@ -30,6 +30,7 @@
 #include "cutils.h"
 #include "libunicode.h"
 #include "libunicode-table.h"
+#include "libunicode-emoji-table.h"
 
 // note: stored as 4 bit tag, not much room left
 enum {
@@ -1743,4 +1744,139 @@ int unicode_prop(CharRange *cr, const char *prop_name)
         break;
     }
     return ret;
+}
+
+int unicode_string_prop(CharRange *cr, uint8_t *pmask, const char *prop_name)
+{
+    uint8_t mask = 0;
+    bool has_single = false;
+
+    if (!strcmp(prop_name, "Basic_Emoji")) {
+        mask = UNICODE_EMOJI_PROP_BASIC;
+        has_single = true;
+    } else if (!strcmp(prop_name, "Emoji_Keycap_Sequence")) {
+        mask = UNICODE_EMOJI_PROP_KEYCAP;
+    } else if (!strcmp(prop_name, "RGI_Emoji_Flag_Sequence")) {
+        mask = UNICODE_EMOJI_PROP_FLAG;
+    } else if (!strcmp(prop_name, "RGI_Emoji_Tag_Sequence")) {
+        mask = UNICODE_EMOJI_PROP_TAG;
+    } else if (!strcmp(prop_name, "RGI_Emoji_Modifier_Sequence")) {
+        mask = UNICODE_EMOJI_PROP_MODIFIER;
+    } else if (!strcmp(prop_name, "RGI_Emoji_ZWJ_Sequence")) {
+        mask = UNICODE_EMOJI_PROP_ZWJ;
+    } else if (!strcmp(prop_name, "RGI_Emoji")) {
+        mask = UNICODE_EMOJI_PROP_RGI;
+        has_single = true;
+    } else {
+        return -2;
+    }
+
+    if (has_single) {
+        if (cr_union1(cr, unicode_basic_emoji_cr, countof(unicode_basic_emoji_cr)))
+            return -1;
+    }
+    *pmask = mask;
+    return 0;
+}
+
+int unicode_emoji_seq_count(void)
+{
+    return countof(unicode_emoji_seq_entries);
+}
+
+const uint32_t *unicode_emoji_seq_get(int idx, int *plen, uint8_t *pmask)
+{
+    const UnicodeEmojiSeqEntry *e = &unicode_emoji_seq_entries[idx];
+    *plen = e->len;
+    *pmask = e->mask;
+    return unicode_emoji_seq_pool + e->offset;
+}
+
+static int cmp_seq_entry(const UnicodeEmojiSeqEntry *e, const uint32_t *q, int qlen)
+{
+    const uint32_t *ecps = unicode_emoji_seq_pool + e->offset;
+    int elen = e->len;
+    int m = elen < qlen ? elen : qlen;
+    int i;
+    for (i = 0; i < m; i++) {
+        if (ecps[i] != q[i])
+            return ecps[i] < q[i] ? -1 : 1;
+    }
+    if (elen != qlen)
+        return elen < qlen ? -1 : 1;
+    return 0;
+}
+
+static bool unicode_emoji_seq_has(int lo, int hi, const uint32_t *q, int qlen, uint8_t mask)
+{
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        const UnicodeEmojiSeqEntry *e = &unicode_emoji_seq_entries[mid];
+        int c = cmp_seq_entry(e, q, qlen);
+        if (c < 0)
+            lo = mid + 1;
+        else if (c > 0)
+            hi = mid;
+        else
+            return (e->mask & mask) != 0;
+    }
+    return false;
+}
+
+int unicode_emoji_seq_find_longest(const uint32_t *q, int max_len,
+                                   uint8_t mask, int *pnext_max_len)
+{
+    int count = countof(unicode_emoji_seq_entries);
+    int lo = 0, hi = count;
+    int first_q0, end_q0, len;
+    uint32_t q0;
+
+    if (max_len < 2 || mask == 0)
+        return 0;
+    if (max_len > UNICODE_EMOJI_SEQ_MAX_LEN)
+        max_len = UNICODE_EMOJI_SEQ_MAX_LEN;
+
+    q0 = q[0];
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        uint32_t c0 = unicode_emoji_seq_pool[unicode_emoji_seq_entries[mid].offset];
+        if (c0 < q0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    first_q0 = lo;
+    if (first_q0 >= count ||
+        unicode_emoji_seq_pool[unicode_emoji_seq_entries[first_q0].offset] != q0) {
+        return 0;
+    }
+
+    lo = first_q0;
+    hi = count;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        uint32_t c0 = unicode_emoji_seq_pool[unicode_emoji_seq_entries[mid].offset];
+        if (c0 <= q0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    end_q0 = lo;
+
+    for (len = max_len; len >= 2; len--) {
+        if (unicode_emoji_seq_has(first_q0, end_q0, q, len, mask)) {
+            if (pnext_max_len) {
+                int slen, found_shorter = 0;
+                for (slen = len - 1; slen >= 2; slen--) {
+                    if (unicode_emoji_seq_has(first_q0, end_q0, q, slen, mask)) {
+                        found_shorter = slen;
+                        break;
+                    }
+                }
+                *pnext_max_len = found_shorter;
+            }
+            return len;
+        }
+    }
+    return 0;
 }

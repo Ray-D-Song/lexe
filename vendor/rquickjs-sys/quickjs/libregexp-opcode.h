@@ -54,5 +54,6 @@ DEF(push_char_pos, 1) /* push the character position on the stack */
 DEF(check_advance, 1) /* pop one stack element and check that it is different from the character position */
 DEF(prev, 1) /* go to the previous char */
 DEF(simple_greedy_quant, 17)
+DEF(emoji_seq, 2) /* uint8_t mask */
 
 #endif /* DEF */
