@@ -5,7 +5,10 @@ repo=Ray-D-Song/lexe
 case "$(uname -m)" in
   x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;; esac
 install_dir=${LEXE_INSTALL_DIR:-"$HOME/.local/bin"}
-asset="lexe-linux-$arch"
+# glibc build by default (supports native .node addons). Set LEXE_LIBC=musl for the static build.
+libc=${LEXE_LIBC:-gnu}
+case "$libc" in gnu|musl) ;; *) echo "LEXE_LIBC must be gnu or musl" >&2; exit 1 ;; esac
+asset="lexe-linux-$arch-$libc"
 base="https://github.com/$repo/releases/latest/download"
 target="$install_dir/lexe"
 

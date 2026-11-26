@@ -41,16 +41,34 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-            asset: lexe-linux-x64
+            target: x86_64-unknown-linux-gnu
+            asset: lexe-linux-x64-gnu
             platform: linux
             arch: x64
+            libc: gnu
+            zig: true
+            rustflags: "-Ctarget-cpu=haswell -Cpanic=abort"
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            asset: lexe-linux-arm64-gnu
+            platform: linux
+            arch: arm64
+            libc: gnu
+            zig: true
+            rustflags: "-Ctarget-cpu=neoverse-n1 -Cpanic=abort"
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: lexe-linux-x64-musl
+            platform: linux
+            arch: x64
+            libc: musl
             zig: true
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-            asset: lexe-linux-arm64
+            asset: lexe-linux-arm64-musl
             platform: linux
             arch: arm64
+            libc: musl
             zig: true
           - runner: macos-15-intel
             target: x86_64-apple-darwin
@@ -98,8 +116,13 @@ jobs:
         if: matrix.zig
         with:
           version: 0.16.0
+      - name: Install cargo-zigbuild
+        if: matrix.libc == 'gnu'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
       - name: Configure Linux musl linkers
-        if: matrix.zig
+        if: matrix.zig && matrix.libc == 'musl'
         shell: bash
         run: |
           echo "CC_aarch64_unknown_linux_musl=$GITHUB_WORKSPACE/linker/cc-aarch64-linux-musl" >> "$GITHUB_ENV"
@@ -109,8 +132,53 @@ jobs:
           echo "CXX_x86_64_unknown_linux_musl=$GITHUB_WORKSPACE/linker/cxx-x86_64-linux-musl" >> "$GITHUB_ENV"
           echo "AR_x86_64_unknown_linux_musl=$GITHUB_WORKSPACE/linker/ar" >> "$GITHUB_ENV"
       - run: make js
-      - name: Build release binary
+      - name: Build release binary (glibc 2.28 baseline)
+        if: matrix.libc == 'gnu'
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo zigbuild --locked --release -p lexe --target ${{ matrix.target }}.2.28
+      - name: Build release binary (static musl)
+        if: matrix.libc == 'musl'
         run: cargo build --locked --release -p lexe --target ${{ matrix.target }}
+      - name: Build release binary (macOS and Windows)
+        if: matrix.libc == ''
+        run: cargo build --locked --release -p lexe --target ${{ matrix.target }}
+      - name: Verify libc linkage and glibc baseline
+        if: matrix.libc == 'gnu'
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/lexe"
+          test -s "$bin"
+          # glibc baseline: no symbol version above 2.28 may be required.
+          max=$(readelf -W --dyn-syms "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+          echo "highest required glibc symbol version: $max"
+          top=$(printf '%s\n' "$max" "GLIBC_2.28" | sort -V | tail -1)
+          test "$top" = "GLIBC_2.28" || { echo "glibc baseline exceeded: $max" >&2; exit 1; }
+          # Native addons resolve napi_* from the executable, so they must be exported dynamically.
+          nm -D --defined-only "$bin" | grep -q ' T napi_create_string_utf8' || {
+            echo "napi_create_string_utf8 is not exported" >&2; exit 1; }
+          # Dynamically linked: must depend on glibc, not be static.
+          readelf -d "$bin" | grep -q 'NEEDED.*libc.so.6' || { echo "expected dynamic glibc linkage" >&2; exit 1; }
+      - name: Verify musl binary is static
+        if: matrix.libc == 'musl'
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/lexe"
+          test -s "$bin"
+          if readelf -d "$bin" 2>/dev/null | grep -q NEEDED; then
+            echo "musl build unexpectedly has dynamic dependencies" >&2; exit 1
+          fi
+      - name: Smoke test on baseline distro (glibc 2.28 / musl)
+        if: matrix.libc != ''
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/lexe"
+          if [ "${{ matrix.libc }}" = "gnu" ]; then
+            # Debian buster ships glibc 2.28: the binary must run there.
+            docker run --rm -v "$PWD/$bin:/lexe:ro" debian:buster /lexe --version
+          else
+            docker run --rm -v "$PWD/$bin:/lexe:ro" alpine:3.20 /lexe --version
+          fi
       - name: Verify binary and stage release asset
         shell: bash
         run: |
@@ -177,6 +245,11 @@ jobs:
         with:
           node-version: 24.3.0
           registry-url: "https://registry.npmjs.org"
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          pattern: lexe-linux-*
+          merge-multiple: true
       - name: Stage and validate npm packages
         shell: bash
         run: |
@@ -185,6 +258,7 @@ jobs:
           (cd types && npm pkg set version="$RELEASE_VERSION")
           cp LICENSE npm/LICENSE
           cp LICENSE types/LICENSE
+          node npm/scripts/stage-linux-packages.mjs release "$RELEASE_VERSION"
           node npm/scripts/pack-check.mjs
           node --test npm/test/npm-cli.test.mjs
           node types/scripts/pack-check.mjs
@@ -230,7 +304,8 @@ jobs:
             fi
             tag_args=(--tag "$dist_tag")
           fi
-          for dir in npm types; do
+          # Subpackages first: the main lexe package's optionalDependencies must resolve on install.
+          for dir in npm/packages/linux-x64-gnu npm/packages/linux-arm64-gnu npm/packages/linux-x64-musl npm/packages/linux-arm64-musl npm types; do
             pkg=$(node -p "require('./$dir/package.json').name")
             published=$(npm view "${pkg}@${RELEASE_VERSION}" version 2>/dev/null || true)
             if [ "$published" = "$RELEASE_VERSION" ]; then

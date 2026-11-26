@@ -1,7 +1,7 @@
 [package]
 name = "lexe_querystring"
 description = "lexe Module querystring"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -11,5 +11,5 @@ name = "lexe_querystring"
 path = "src/lib.rs"
 
 [dependencies]
-lexe_utils = { version = "0.1.4", path = "../../libs/lexe_utils", default-features = false }
+lexe_utils = { version = "0.1.5", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }

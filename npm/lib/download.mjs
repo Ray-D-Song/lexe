@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,26 +15,97 @@ const PKG_ROOT = path.resolve(
 );
 
 const PLATFORM_ASSETS = new Map([
-  ["linux:x64", "lexe-linux-x64"],
-  ["linux:arm64", "lexe-linux-arm64"],
   ["darwin:x64", "lexe-macos-x64"],
   ["darwin:arm64", "lexe-macos-arm64"],
   ["win32:x64", "lexe-windows-x64.exe"],
   ["win32:arm64", "lexe-windows-arm64.exe"],
 ]);
 
-/** Resolve the GitHub Release asset name for a given Node `platform` and `arch`. */
+/** Linux release assets, keyed by `arch` then `libc` (`gnu` | `musl`). */
+const LINUX_ASSETS = new Map([
+  ["x64:gnu", "lexe-linux-x64-gnu"],
+  ["arm64:gnu", "lexe-linux-arm64-gnu"],
+  ["x64:musl", "lexe-linux-x64-musl"],
+  ["arm64:musl", "lexe-linux-arm64-musl"],
+]);
+
+/**
+ * Detect the libc flavour of a Linux host.
+ * Returns `"gnu"` for glibc and `"musl"` for musl. Defaults to `"gnu"` when unknown,
+ * because glibc is the common case and the gnu build is the only one that supports N-API addons.
+ */
+export function detectLinuxLibc(env = process.env, fsExists = existsSync) {
+  const forced = env.LEXE_LIBC?.trim().toLowerCase();
+  if (forced === "gnu" || forced === "musl") {
+    return forced;
+  }
+  try {
+    const report = process.report?.getReport?.();
+    const header = typeof report === "string" ? JSON.parse(report).header : report?.header;
+    if (header && header.glibcVersionRuntime) {
+      return "gnu";
+    }
+    if (header && !header.glibcVersionRuntime) {
+      return "musl";
+    }
+  } catch {
+    // Fall through to filesystem probing.
+  }
+  const muslLoaders = ["/lib/ld-musl-x86_64.so.1", "/lib/ld-musl-aarch64.so.1"];
+  return muslLoaders.some((loader) => fsExists(loader)) ? "musl" : "gnu";
+}
+
+/** Return the npm subpackage name that carries the Linux binary for `arch` and `libc`. */
+export function getLinuxSubpackageName(arch, libc) {
+  return `@lexe/linux-${arch}-${libc}`;
+}
+
+/** Resolve the GitHub Release asset name for a given Node `platform`, `arch` and (Linux only) `libc`. */
 export function resolvePlatformAsset(
   platform = process.platform,
-  arch = process.arch
+  arch = process.arch,
+  libc = platform === "linux" ? detectLinuxLibc() : undefined
 ) {
+  if (platform === "linux") {
+    const asset = LINUX_ASSETS.get(`${arch}:${libc}`);
+    if (!asset) {
+      throw new Error(
+        `Unsupported platform/architecture: ${platform}-${arch}-${libc}. Supported Linux targets: linux-x64-gnu, linux-arm64-gnu, linux-x64-musl, linux-arm64-musl.`
+      );
+    }
+    return asset;
+  }
   const asset = PLATFORM_ASSETS.get(`${platform}:${arch}`);
   if (!asset) {
     throw new Error(
-      `Unsupported platform/architecture: ${platform}-${arch}. Supported targets: linux-x64, linux-arm64, darwin-x64, darwin-arm64, win32-x64, win32-arm64.`
+      `Unsupported platform/architecture: ${platform}-${arch}. Supported targets: linux-x64-gnu, linux-arm64-gnu, linux-x64-musl, linux-arm64-musl, darwin-x64, darwin-arm64, win32-x64, win32-arm64.`
     );
   }
   return asset;
+}
+
+/**
+ * Locate the binary shipped in the matching `@lexe/linux-<arch>-<libc>` subpackage.
+ * Returns `undefined` when the subpackage is not installed (e.g. `--omit=optional`).
+ */
+export function resolveSubpackageBinary(
+  platform = process.platform,
+  arch = process.arch,
+  libc = platform === "linux" ? detectLinuxLibc() : undefined
+) {
+  if (platform !== "linux") {
+    return undefined;
+  }
+  const requireFromHere = createRequire(import.meta.url);
+  try {
+    const pkgJson = requireFromHere.resolve(
+      `${getLinuxSubpackageName(arch, libc)}/package.json`
+    );
+    const bin = path.join(path.dirname(pkgJson), "bin", "lexe");
+    return isRegularFile(bin) ? bin : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Read the package version from `npm/package.json`. */
@@ -163,9 +235,10 @@ async function atomicWriteBinary(targetPath, bytes, platform) {
  * Locate or download and SHA256-verify the Lexe native binary for the host platform.
  * Precedence:
  * 1. `LEXE_BINARY_PATH` (explicit file path, must exist)
- * 2. Package-local `<pkgRoot>/vendor/<asset>`
- * 3. User cache `<cacheDir>/v<version>/<asset>`
- * 4. Download `<asset>` + `SHA256SUMS` from GitHub Releases and verify SHA256
+ * 2. Linux only: the `@lexe/linux-<arch>-<libc>` subpackage installed by npm
+ * 3. Package-local `<pkgRoot>/vendor/<asset>`
+ * 4. User cache `<cacheDir>/v<version>/<asset>`
+ * 5. Download `<asset>` + `SHA256SUMS` from GitHub Releases and verify SHA256
  */
 export async function ensureBinary(options = {}) {
   const pkgRoot = options.pkgRoot ?? PKG_ROOT;
@@ -186,7 +259,16 @@ export async function ensureBinary(options = {}) {
     return resolved;
   }
 
-  const assetName = resolvePlatformAsset(platform, arch);
+  const libc = platform === "linux" ? (options.libc ?? detectLinuxLibc(env)) : undefined;
+  const assetName = resolvePlatformAsset(platform, arch, libc);
+
+  const subpackageBinary = options.resolveSubpackage === false
+    ? undefined
+    : resolveSubpackageBinary(platform, arch, libc);
+  if (subpackageBinary) {
+    return subpackageBinary;
+  }
+
   const vendorPath = getVendorBinaryPath(assetName, pkgRoot);
   if (isRegularFile(vendorPath)) {
     return vendorPath;

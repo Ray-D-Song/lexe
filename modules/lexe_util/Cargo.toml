@@ -1,7 +1,7 @@
 [package]
 name = "lexe_util"
 description = "lexe Module util"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -12,10 +12,10 @@ name = "lexe_util"
 path = "src/lib.rs"
 
 [dependencies]
-lexe_context = { version = "0.1.4", path = "../../libs/lexe_context" }
-lexe_encoding = { version = "0.1.4", path = "../../libs/lexe_encoding" }
-lexe_logging = { version = "0.1.4", path = "../../libs/lexe_logging" }
-lexe_utils = { version = "0.1.4", path = "../../libs/lexe_utils", default-features = false }
+lexe_context = { version = "0.1.5", path = "../../libs/lexe_context" }
+lexe_encoding = { version = "0.1.5", path = "../../libs/lexe_encoding" }
+lexe_logging = { version = "0.1.5", path = "../../libs/lexe_logging" }
+lexe_utils = { version = "0.1.5", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
 
 [dev-dependencies]

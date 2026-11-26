@@ -14,7 +14,7 @@ macro_rules! define_extension {
     };
 }
 
-define_extension!(BYTECODE_EXT, BYTECODE_FILE_EXT, "lrt");
+define_extension!(BYTECODE_EXT, BYTECODE_FILE_EXT, "lbt");
 pub const SIGNATURE_LENGTH: usize = BYTECODE_VERSION.len() + 1;
 
 #[allow(dead_code)]

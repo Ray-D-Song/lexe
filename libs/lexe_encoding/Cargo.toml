@@ -1,7 +1,7 @@
 [package]
 name = "lexe_encoding"
 description = "lexe encoding helpers"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -15,4 +15,4 @@ phf = { version = "0.13", features = ["macros"], default-features = false }
 memchr = { version = "2", default-features = false }
 
 [build-dependencies]
-lexe_build = { version = "0.1.4", path = "../lexe_build" }
+lexe_build = { version = "0.1.5", path = "../lexe_build" }

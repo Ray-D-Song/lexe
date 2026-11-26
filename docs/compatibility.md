@@ -267,4 +267,5 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 ### Native addons
 
 - **N-API** native addon (`.node`) loading is supported when Lexe is built with `--features napi` on a dynamically linked target.
+- Linux release binaries come in two flavours. The `-gnu` builds are dynamically linked against glibc (baseline 2.28) and support native addons. The `-musl` builds are fully static and do not load `.node` files, because `dlopen` is unavailable in a static musl binary. npm selects the right one automatically. Packages that ship native addons such as `node-pty` need the `-gnu` build.
 - **V8 C++ ABI** addons targeting Node 24 (e.g. `better-sqlite3`) are supported with `--features v8-compat` through a limited QuickJS-backed V8 shim.

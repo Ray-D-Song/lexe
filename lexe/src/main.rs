@@ -470,9 +470,9 @@ Options:
                     behavior. Multiple --import options may be provided and are
                     executed in order.
 
-  compile           Compile JS to bytecode (.lrt) or a standalone executable:
-                      if [output] is omitted in bytecode mode, <input>.lrt is used.
-                      lrt file is expected to be executed by the lexe version
+  compile           Compile JS to bytecode (.lbt) or a standalone executable:
+                      if [output] is omitted in bytecode mode, <input>.lbt is used.
+                      lbt file is expected to be executed by the lexe version
                       that created it.
                       --executable           Create a self-contained executable
                       --sea                  Enable node:sea asset/argv mode for executable
@@ -482,7 +482,8 @@ Options:
                       -o, --output <name>    Output path or base filename
                       -d, --outdir <dir>     Output directory (default: ./dist with -p)
                       -p, --platform <list>  Comma-separated target platforms:
-                                             linux-x64,linux-arm64,darwin-x64,darwin-arm64,
+                                             linux-x64,linux-arm64,linux-x64-musl,linux-arm64-musl,
+                                             darwin-x64,darwin-arm64,
                                              windows-x64,windows-arm64
                       --runtime-dir <dir>    Directory containing prebuilt lexe binaries
                                              (or set LEXE_BIN_DIR)
@@ -612,7 +613,7 @@ async fn start_cli(vm: &Vm, embedded_bytecode: Option<Vec<u8>>) {
                             PathBuf::from(out)
                         } else {
                             let mut buf = PathBuf::from(filename);
-                            buf.set_extension("lrt");
+                            buf.set_extension("lbt");
                             buf
                         };
                         if let Err(error) =

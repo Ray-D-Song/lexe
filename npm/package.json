@@ -1,6 +1,6 @@
 {
   "name": "lexe",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Lightweight JavaScript runtime built on QuickJS with Node.js compatibility and single-executable compilation.",
   "license": "Apache-2.0",
   "author": "Ray-D-Song",
@@ -38,5 +38,11 @@
     "postinstall": "node ./scripts/postinstall.mjs",
     "pack:check": "node ./scripts/pack-check.mjs",
     "test": "node --test ./test/npm-cli.test.mjs"
+  },
+  "optionalDependencies": {
+    "@lexe/linux-x64-gnu": "0.1.5",
+    "@lexe/linux-arm64-gnu": "0.1.5",
+    "@lexe/linux-x64-musl": "0.1.5",
+    "@lexe/linux-arm64-musl": "0.1.5"
   }
 }

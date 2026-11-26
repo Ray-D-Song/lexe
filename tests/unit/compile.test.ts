@@ -33,7 +33,7 @@ describe("lexe compile", async () => {
   const tmpDir = await fs.mkdtemp(`${tmpdir()}/lexe-test-compile`);
 
   it("can compile and run empty", async () => {
-    const tmpOutput = `${tmpDir}/empty.lrt`;
+    const tmpOutput = `${tmpDir}/empty.lbt`;
 
     const compileResult = await compile("fixtures/empty.js", tmpOutput);
 
@@ -48,7 +48,7 @@ describe("lexe compile", async () => {
   });
 
   it("can compile and run console.log", async () => {
-    const tmpOutput = `${tmpDir}/console.log.lrt`;
+    const tmpOutput = `${tmpDir}/console.log.lbt`;
 
     const compileResult = await compile("fixtures/hello.js", tmpOutput);
 
@@ -63,7 +63,7 @@ describe("lexe compile", async () => {
   });
 
   it("can compile and run throws", async () => {
-    const tmpOutput = `${tmpDir}/throws.lrt`;
+    const tmpOutput = `${tmpDir}/throws.lbt`;
 
     const compileResult = await compile("fixtures/throw.js", tmpOutput);
 

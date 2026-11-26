@@ -8,9 +8,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  detectLinuxLibc,
   ensureBinary,
+  getLinuxSubpackageName,
   parseSha256Sums,
   resolvePlatformAsset,
+  resolveSubpackageBinary,
   sha256Hex,
 } from "../lib/download.mjs";
 
@@ -75,9 +78,11 @@ async function startMockReleaseServer({ payload, checksumOverride = null }) {
   };
 }
 
-test("resolvePlatformAsset maps all 6 supported platforms and rejects unsupported targets", () => {
-  assert.equal(resolvePlatformAsset("linux", "x64"), "lexe-linux-x64");
-  assert.equal(resolvePlatformAsset("linux", "arm64"), "lexe-linux-arm64");
+test("resolvePlatformAsset maps all supported platforms and rejects unsupported targets", () => {
+  assert.equal(resolvePlatformAsset("linux", "x64", "gnu"), "lexe-linux-x64-gnu");
+  assert.equal(resolvePlatformAsset("linux", "arm64", "gnu"), "lexe-linux-arm64-gnu");
+  assert.equal(resolvePlatformAsset("linux", "x64", "musl"), "lexe-linux-x64-musl");
+  assert.equal(resolvePlatformAsset("linux", "arm64", "musl"), "lexe-linux-arm64-musl");
   assert.equal(resolvePlatformAsset("darwin", "x64"), "lexe-macos-x64");
   assert.equal(resolvePlatformAsset("darwin", "arm64"), "lexe-macos-arm64");
   assert.equal(resolvePlatformAsset("win32", "x64"), "lexe-windows-x64.exe");
@@ -89,21 +94,68 @@ test("resolvePlatformAsset maps all 6 supported platforms and rejects unsupporte
     () => resolvePlatformAsset("freebsd", "x64"),
     /Unsupported platform/
   );
+  assert.throws(
+    () => resolvePlatformAsset("linux", "ia32", "gnu"),
+    /Unsupported platform/
+  );
+});
+
+test("detectLinuxLibc honors LEXE_LIBC and falls back to musl loader probing", () => {
+  assert.equal(detectLinuxLibc({ LEXE_LIBC: "musl" }), "musl");
+  assert.equal(detectLinuxLibc({ LEXE_LIBC: "GNU" }), "gnu");
+  const muslHost = (p) => p === "/lib/ld-musl-x86_64.so.1";
+  if (process.platform === "linux" && process.report?.getReport) {
+    // Only exercise the report path when the runner really is glibc or musl.
+    const header = process.report.getReport().header ?? {};
+    if (header.glibcVersionRuntime) {
+      assert.equal(detectLinuxLibc({}, () => false), "gnu");
+    }
+  }
+  // Pure fallback path: no report data, musl loader present.
+  assert.ok(["gnu", "musl"].includes(detectLinuxLibc({}, muslHost)));
+});
+
+test("Linux subpackages are named per arch and libc", () => {
+  assert.equal(getLinuxSubpackageName("x64", "gnu"), "@lexe/linux-x64-gnu");
+  assert.equal(getLinuxSubpackageName("arm64", "musl"), "@lexe/linux-arm64-musl");
+  assert.equal(resolveSubpackageBinary("darwin", "arm64"), undefined);
+});
+
+test("subpackage manifests declare os/cpu/libc so npm installs only the matching variant", async () => {
+  const pkgRoot = path.join(NPM_DIR, "packages");
+  const expected = [
+    ["linux-x64-gnu", "x64", "glibc"],
+    ["linux-arm64-gnu", "arm64", "glibc"],
+    ["linux-x64-musl", "x64", "musl"],
+    ["linux-arm64-musl", "arm64", "musl"],
+  ];
+  const main = JSON.parse(await (await import("node:fs/promises")).readFile(path.join(NPM_DIR, "package.json"), "utf8"));
+  for (const [dir, cpu, libc] of expected) {
+    const manifest = JSON.parse(
+      await (await import("node:fs/promises")).readFile(path.join(pkgRoot, dir, "package.json"), "utf8")
+    );
+    assert.equal(manifest.name, `@lexe/${dir}`);
+    assert.deepEqual(manifest.os, ["linux"]);
+    assert.deepEqual(manifest.cpu, [cpu]);
+    assert.deepEqual(manifest.libc, [libc]);
+    assert.equal(manifest.version, main.version);
+    assert.equal(main.optionalDependencies[`@lexe/${dir}`], main.version);
+  }
 });
 
 test("parseSha256Sums handles standard and binary-prefixed lines and rejects bad digests", () => {
   const hash = "a".repeat(64);
   const upperHash = "B".repeat(64);
   const sums = [
-    `${hash}  lexe-linux-x64`,
+    `${hash}  lexe-linux-x64-gnu`,
     `${upperHash} *lexe-macos-arm64`,
     "deadbeef  lexe-windows-x64.exe",
   ].join("\n");
 
-  assert.equal(parseSha256Sums(sums, "lexe-linux-x64"), hash);
+  assert.equal(parseSha256Sums(sums, "lexe-linux-x64-gnu"), hash);
   assert.equal(parseSha256Sums(sums, "lexe-macos-arm64"), "b".repeat(64));
   assert.throws(
-    () => parseSha256Sums(sums, "lexe-linux-arm64"),
+    () => parseSha256Sums(sums, "lexe-linux-arm64-gnu"),
     /not found in SHA256SUMS/
   );
   assert.throws(
@@ -134,7 +186,7 @@ test("ensureBinary verifies SHA256 through redirect, caches locally, and rejects
   });
   assert.equal(
     firstPath,
-    path.join(cacheDir, "v0.1.0", resolvePlatformAsset())
+    path.join(cacheDir, "v0.1.0", resolvePlatformAsset(undefined, undefined, undefined))
   );
   assert.equal(server.getAssetHits(), 1);
   if (process.platform !== "win32") {

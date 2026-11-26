@@ -1,22 +1,22 @@
 # Compiling to Standalone Executables
 
-Lexe can compile JavaScript modules to compressed QuickJS bytecode (`.lrt`) or package them directly into self-contained native executables with no external runtime dependencies.
+Lexe can compile JavaScript modules to compressed QuickJS bytecode (`.lbt`) or package them directly into self-contained native executables with no external runtime dependencies.
 
-## Bytecode Compilation (`.lrt`)
+## Bytecode Compilation (`.lbt`)
 
 Compile a JavaScript entry file to zstd-compressed QuickJS bytecode:
 
 ```shell
 lexe compile app.js
-# produces app.lrt
+# produces app.lbt
 
-lexe compile app.js build/app.lrt
+lexe compile app.js build/app.lbt
 ```
 
-The resulting `.lrt` file can be run directly by the matching `lexe` version:
+The resulting `.lbt` file can be run directly by the matching `lexe` version:
 
 ```shell
-lexe app.lrt
+lexe app.lbt
 ```
 
 ## Single-Executable Compilation (`--executable`)
@@ -34,10 +34,12 @@ All command-line arguments (including `--version` and `--help`) are forwarded st
 
 ### Cross-Platform Compilation (`-p` / `--platform`)
 
-Lexe supports packaging standalone executables for 6 target platforms:
+Lexe supports packaging standalone executables for 8 target platforms:
 
-- `linux-x64`
-- `linux-arm64`
+- `linux-x64` (glibc, dynamically linked; alias: `linux-x64-gnu`)
+- `linux-arm64` (glibc, dynamically linked; alias: `linux-arm64-gnu`)
+- `linux-x64-musl` (static musl; no native addon support)
+- `linux-arm64-musl` (static musl; no native addon support)
 - `darwin-x64` (alias: `macos-x64`)
 - `darwin-arm64` (alias: `macos-arm64`)
 - `windows-x64`
@@ -57,7 +59,7 @@ This produces:
 
 ### Options
 
-- `--executable`: Embed compiled bytecode into a standalone executable instead of emitting `.lrt`.
+- `--executable`: Embed compiled bytecode into a standalone executable instead of emitting `.lbt`.
 - `-o, --output <name>`: Output file path (single-platform) or base filename (multi-platform).
 - `-d, --outdir <dir>`: Output directory (defaults to `./dist` when `-p` is used).
 - `-p, --platform <list>`: Comma-separated list of target platforms.

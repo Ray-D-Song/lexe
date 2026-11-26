@@ -10,7 +10,7 @@ macro_rules! define_extension {
     };
 }
 
-define_extension!(BYTECODE_EXT, BYTECODE_FILE_EXT, "lrt");
+define_extension!(BYTECODE_EXT, BYTECODE_FILE_EXT, "lbt");
 
 macro_rules! define_supported_extensions {
     // Accepts a list of supported extensions and a single additional constant extension

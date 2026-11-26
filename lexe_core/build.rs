@@ -63,7 +63,7 @@ fn generate_bytecode_cache(out_dir: &str) -> StdResult<(), Box<dyn Error>> {
     let mut bytecode_cache_file = BufWriter::new(File::create(bytecode_cache_path)?);
 
     let mut ph_map = phf_codegen::Map::<String>::new();
-    let mut lrt_filenames = vec![];
+    let mut lbt_filenames = vec![];
     let mut total_bytes: usize = 0;
 
     fs::write("../VERSION", env!("CARGO_PKG_VERSION")).expect("Unable to write VERSION file");
@@ -94,9 +94,9 @@ fn generate_bytecode_cache(out_dir: &str) -> StdResult<(), Box<dyn Error>> {
 
             info!("Compiling module: {}", module_name);
 
-            let lrt_path = PathBuf::from(&out_dir).join(path.with_extension(BYTECODE_EXT));
-            let lrt_filename = lrt_path.to_string_lossy().to_string().replace('\\', "/");
-            lrt_filenames.push(lrt_filename.clone());
+            let lbt_path = PathBuf::from(&out_dir).join(path.with_extension(BYTECODE_EXT));
+            let lbt_filename = lbt_path.to_string_lossy().to_string().replace('\\', "/");
+            lbt_filenames.push(lbt_filename.clone());
             let bytes = {
                 {
                     let module = Module::declare(ctx.clone(), module_name.clone(), source)?;
@@ -112,17 +112,17 @@ fn generate_bytecode_cache(out_dir: &str) -> StdResult<(), Box<dyn Error>> {
 
             total_bytes += bytes.len();
 
-            fs::create_dir_all(lrt_path.parent().unwrap())?;
+            fs::create_dir_all(lbt_path.parent().unwrap())?;
             if cfg!(feature = "uncompressed") {
                 let uncompressed = add_bytecode_header(bytes, None);
-                fs::write(&lrt_path, uncompressed)?;
+                fs::write(&lbt_path, uncompressed)?;
             } else {
-                fs::write(&lrt_path, bytes)?;
+                fs::write(&lbt_path, bytes)?;
             }
 
             info!("Done!");
 
-            ph_map.entry(module_name, format!("include_bytes!(\"{}\")", lrt_filename));
+            ph_map.entry(module_name, format!("include_bytes!(\"{}\")", lbt_filename));
         }
 
         StdResult::<_, Box<dyn Error>>::Ok(())
@@ -150,12 +150,12 @@ fn generate_bytecode_cache(out_dir: &str) -> StdResult<(), Box<dyn Error>> {
             fs::create_dir_all(parent)?;
         }
         let dict_str = prebuild_dict_path.to_string_lossy().to_string();
-        generate_compression_dictionary(&dict_str, &lrt_filenames)?;
+        generate_compression_dictionary(&dict_str, &lbt_filenames)?;
     }
 
     if !cfg!(feature = "uncompressed") {
         let dict_str = prebuild_dict_path.to_string_lossy().to_string();
-        total_bytes = compress_bytecode(&dict_str, lrt_filenames)?;
+        total_bytes = compress_bytecode(&dict_str, lbt_filenames)?;
 
         info!(
             "\n===============================\nCompressed bytecode size: {}\n===============================",

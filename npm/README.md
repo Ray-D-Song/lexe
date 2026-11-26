@@ -14,7 +14,7 @@ Or run directly with `npx`:
 npx lexe --version
 ```
 
-Installing via npm automatically fetches and SHA256-verifies the matching native `lexe` release binary (`linux-x64`, `linux-arm64`, `macos-x64`, `macos-arm64`, `windows-x64`, `windows-arm64`) from [GitHub Releases](https://github.com/Ray-D-Song/lexe/releases). If the pre-download during install is skipped or offline, Lexe downloads and caches the binary on first invocation.
+Installing via npm installs the matching native `lexe` binary. On Linux, npm picks one of the `@lexe/linux-<arch>-<libc>` optional subpackages: `gnu` (glibc, supports native `.node` addons) or `musl` (static, no native addons). On macOS and Windows the binary is fetched during install. Each download is SHA256-verified against the GitHub Release. If the pre-download during install is skipped or offline, Lexe downloads and caches the binary on first invocation.
 
 ## Quick start
 
@@ -41,6 +41,7 @@ npm install -D lexe-types
 - `LEXE_SKIP_DOWNLOAD`: Set to `1` or `true` to skip pre-downloading the binary during `npm install`.
 - `LEXE_CACHE_DIR`: Override the cache directory where downloaded release binaries are stored.
 - `LEXE_RELEASE_BASE_URL`: Override the base download URL for release binaries and `SHA256SUMS`.
+- `LEXE_LIBC`: Set to `gnu` or `musl` to override Linux libc detection when choosing a binary.
 
 ## Documentation
 

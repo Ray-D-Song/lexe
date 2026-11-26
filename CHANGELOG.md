@@ -4,7 +4,13 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
-## [0.1.4] - 2026-11-26
+## [0.1.5] - 2026-11-26
+
+- Split Linux release binaries by C library. `lexe-linux-x64-gnu` and `lexe-linux-arm64-gnu` are dynamically linked against glibc with a glibc 2.28 baseline and export N-API symbols, so native `.node` addons such as `node-pty` load. `lexe-linux-x64-musl` and `lexe-linux-arm64-musl` remain statically linked and do not load native addons. The unadorned `lexe-linux-x64` and `lexe-linux-arm64` assets are no longer published.
+- Added `linux-x64-musl` and `linux-arm64-musl` to `lexe compile -p`. `linux-x64` and `linux-arm64` now refer to the glibc builds.
+- The npm package now installs a Linux runtime from `@lexe/linux-<arch>-<libc>` optional subpackages, selected automatically by npm's `libc` field. `LEXE_LIBC=gnu|musl` overrides detection.
+- `lexe upgrade` and the release download fallback select the `-gnu` or `-musl` asset for the running binary.
+- Changed the compiled bytecode file extension from `.lrt` to `.lbt`. `lexe compile` now defaults to `<input>.lbt`, and `require` and the embedded loader recognize `.lbt`. The bytecode header magic (`lrt01`) is unchanged, so the format version does not change.
 
 - Added Single Executable Application assets and the `node:sea` API (`isSea`, `getAssetKeys`, `getAsset`, `getRawAsset`, and `getAssetAsBlob`). `lexe compile --executable` now accepts `--sea-config`, `--asset`, and `--assets-dir`, embeds compressed assets, and preserves application arguments and entrypoint metadata.
 - Added `node:ffi`, backed by libffi, with dynamic library loading, typed native calls, JavaScript callbacks, pointer access, and copied or shared ArrayBuffer views. Native FFI support is enabled in default builds.

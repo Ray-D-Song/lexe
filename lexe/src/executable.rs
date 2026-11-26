@@ -14,8 +14,12 @@ type ExecError = Box<dyn std::error::Error + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Platform {
-    LinuxX64,
-    LinuxArm64,
+    /// Dynamically linked against glibc (glibc 2.28 baseline). Supports N-API native addons.
+    LinuxX64Gnu,
+    LinuxArm64Gnu,
+    /// Statically linked against musl. Does not support N-API native addons.
+    LinuxX64Musl,
+    LinuxArm64Musl,
     DarwinX64,
     DarwinArm64,
     WindowsX64,
@@ -25,10 +29,11 @@ pub enum Platform {
 impl Platform {
     pub fn current() -> Self {
         if cfg!(target_os = "linux") {
-            if cfg!(target_arch = "x86_64") {
-                Platform::LinuxX64
-            } else {
-                Platform::LinuxArm64
+            match (cfg!(target_arch = "x86_64"), cfg!(target_env = "musl")) {
+                (true, false) => Platform::LinuxX64Gnu,
+                (true, true) => Platform::LinuxX64Musl,
+                (false, false) => Platform::LinuxArm64Gnu,
+                (false, true) => Platform::LinuxArm64Musl,
             }
         } else if cfg!(target_os = "macos") {
             if cfg!(target_arch = "x86_64") {
@@ -43,10 +48,14 @@ impl Platform {
         }
     }
 
+    /// Name used by `-p/--platform` and in `-p` output file names.
+    /// The glibc variants keep the historical `linux-x64` / `linux-arm64` names.
     pub fn as_str(self) -> &'static str {
         match self {
-            Platform::LinuxX64 => "linux-x64",
-            Platform::LinuxArm64 => "linux-arm64",
+            Platform::LinuxX64Gnu => "linux-x64",
+            Platform::LinuxArm64Gnu => "linux-arm64",
+            Platform::LinuxX64Musl => "linux-x64-musl",
+            Platform::LinuxArm64Musl => "linux-arm64-musl",
             Platform::DarwinX64 => "darwin-x64",
             Platform::DarwinArm64 => "darwin-arm64",
             Platform::WindowsX64 => "windows-x64",
@@ -56,8 +65,10 @@ impl Platform {
 
     pub fn release_asset_name(self) -> &'static str {
         match self {
-            Platform::LinuxX64 => "lexe-linux-x64",
-            Platform::LinuxArm64 => "lexe-linux-arm64",
+            Platform::LinuxX64Gnu => "lexe-linux-x64-gnu",
+            Platform::LinuxArm64Gnu => "lexe-linux-arm64-gnu",
+            Platform::LinuxX64Musl => "lexe-linux-x64-musl",
+            Platform::LinuxArm64Musl => "lexe-linux-arm64-musl",
             Platform::DarwinX64 => "lexe-macos-x64",
             Platform::DarwinArm64 => "lexe-macos-arm64",
             Platform::WindowsX64 => "lexe-windows-x64.exe",
@@ -71,8 +82,10 @@ impl Platform {
 
     pub fn all() -> &'static [Platform] {
         &[
-            Platform::LinuxX64,
-            Platform::LinuxArm64,
+            Platform::LinuxX64Gnu,
+            Platform::LinuxArm64Gnu,
+            Platform::LinuxX64Musl,
+            Platform::LinuxArm64Musl,
             Platform::DarwinX64,
             Platform::DarwinArm64,
             Platform::WindowsX64,
@@ -86,14 +99,16 @@ impl FromStr for Platform {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.trim() {
-            "linux-x64" => Ok(Platform::LinuxX64),
-            "linux-arm64" => Ok(Platform::LinuxArm64),
+            "linux-x64" | "linux-x64-gnu" => Ok(Platform::LinuxX64Gnu),
+            "linux-arm64" | "linux-arm64-gnu" => Ok(Platform::LinuxArm64Gnu),
+            "linux-x64-musl" => Ok(Platform::LinuxX64Musl),
+            "linux-arm64-musl" => Ok(Platform::LinuxArm64Musl),
             "darwin-x64" | "macos-x64" => Ok(Platform::DarwinX64),
             "darwin-arm64" | "macos-arm64" => Ok(Platform::DarwinArm64),
             "windows-x64" => Ok(Platform::WindowsX64),
             "windows-arm64" => Ok(Platform::WindowsArm64),
             other => Err(format!(
-                "Unknown platform '{other}'. Valid options: linux-x64, linux-arm64, darwin-x64, darwin-arm64, windows-x64, windows-arm64"
+                "Unknown platform '{other}'. Valid options: linux-x64, linux-arm64, linux-x64-musl, linux-arm64-musl, darwin-x64, darwin-arm64, windows-x64, windows-arm64"
             )),
         }
     }
@@ -454,7 +469,7 @@ pub fn resolve_bytecode_output_path(args: &CompileArgs) -> PathBuf {
     } else {
         args.input.clone()
     };
-    buf.set_extension("lrt");
+    buf.set_extension("lbt");
     buf
 }
 
@@ -553,7 +568,10 @@ pub fn inject_bytecode(
 
     let mut output = File::create(output_path)?;
     match platform {
-        Platform::LinuxX64 | Platform::LinuxArm64 => {
+        Platform::LinuxX64Gnu
+        | Platform::LinuxArm64Gnu
+        | Platform::LinuxX64Musl
+        | Platform::LinuxArm64Musl => {
             libsui::Elf::new(runtime_binary).append(SECTION_NAME, bytecode, &mut output)?;
         },
         Platform::DarwinX64 | Platform::DarwinArm64 => {
@@ -1042,11 +1060,42 @@ mod tests {
     }
 
     #[test]
+    fn test_linux_libc_variants_have_distinct_assets() {
+        assert_eq!(
+            Platform::LinuxX64Gnu.release_asset_name(),
+            "lexe-linux-x64-gnu"
+        );
+        assert_eq!(
+            Platform::LinuxArm64Gnu.release_asset_name(),
+            "lexe-linux-arm64-gnu"
+        );
+        assert_eq!(
+            Platform::LinuxX64Musl.release_asset_name(),
+            "lexe-linux-x64-musl"
+        );
+        assert_eq!(
+            Platform::LinuxArm64Musl.release_asset_name(),
+            "lexe-linux-arm64-musl"
+        );
+        // Every Linux asset must be unique and follow the libc suffix convention.
+        let mut names: Vec<_> = Platform::all()
+            .iter()
+            .map(|p| p.release_asset_name())
+            .collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), Platform::all().len());
+    }
+
+    #[test]
     fn test_platform_parsing_and_aliases() {
-        assert_eq!(Platform::from_str("linux-x64").unwrap(), Platform::LinuxX64);
+        assert_eq!(
+            Platform::from_str("linux-x64").unwrap(),
+            Platform::LinuxX64Gnu
+        );
         assert_eq!(
             Platform::from_str("linux-arm64").unwrap(),
-            Platform::LinuxArm64
+            Platform::LinuxArm64Gnu
         );
         assert_eq!(
             Platform::from_str("darwin-x64").unwrap(),
@@ -1071,6 +1120,18 @@ mod tests {
         assert_eq!(
             Platform::from_str("windows-arm64").unwrap(),
             Platform::WindowsArm64
+        );
+        assert_eq!(
+            Platform::from_str("linux-x64-musl").unwrap(),
+            Platform::LinuxX64Musl
+        );
+        assert_eq!(
+            Platform::from_str("linux-arm64-musl").unwrap(),
+            Platform::LinuxArm64Musl
+        );
+        assert_eq!(
+            Platform::from_str("linux-x64-gnu").unwrap(),
+            Platform::LinuxX64Gnu
         );
         assert!(Platform::from_str("freebsd-x64").is_err());
     }
@@ -1103,7 +1164,7 @@ mod tests {
         assert_eq!(
             multi.platforms,
             vec![
-                Platform::LinuxX64,
+                Platform::LinuxX64Gnu,
                 Platform::WindowsArm64,
                 Platform::DarwinArm64,
             ]
@@ -1114,7 +1175,7 @@ mod tests {
         assert_eq!(
             multi_targets,
             vec![
-                (Platform::LinuxX64, PathBuf::from("out/cli-linux-x64")),
+                (Platform::LinuxX64Gnu, PathBuf::from("out/cli-linux-x64")),
                 (
                     Platform::WindowsArm64,
                     PathBuf::from("out/cli-windows-arm64.exe"),
@@ -1180,10 +1241,11 @@ mod tests {
     fn test_parse_sha256sums_entry() {
         let valid_hex = "a".repeat(64);
         let other_hex = "b".repeat(64);
-        let sums = format!("{other_hex}  lexe-linux-x64\n{valid_hex} *lexe-windows-arm64.exe\n");
+        let sums =
+            format!("{other_hex}  lexe-linux-x64-gnu\n{valid_hex} *lexe-windows-arm64.exe\n");
 
         assert_eq!(
-            parse_sha256sums_entry(&sums, "lexe-linux-x64").unwrap(),
+            parse_sha256sums_entry(&sums, "lexe-linux-x64-gnu").unwrap(),
             other_hex
         );
         assert_eq!(
@@ -1192,8 +1254,8 @@ mod tests {
         );
         assert!(parse_sha256sums_entry(&sums, "lexe-macos-x64").is_err());
 
-        let bad_sums = "nothex  lexe-linux-x64\n";
-        assert!(parse_sha256sums_entry(bad_sums, "lexe-linux-x64").is_err());
+        let bad_sums = "nothex  lexe-linux-x64-gnu\n";
+        assert!(parse_sha256sums_entry(bad_sums, "lexe-linux-x64-gnu").is_err());
     }
 
     #[test]
@@ -1205,13 +1267,13 @@ mod tests {
         fs::create_dir_all(&dir_a).unwrap();
         fs::create_dir_all(&dir_b).unwrap();
 
-        let bin_a = dir_a.join("lexe-linux-x64");
-        let bin_b = dir_b.join("lexe-linux-x64");
+        let bin_a = dir_a.join("lexe-linux-x64-gnu");
+        let bin_b = dir_b.join("lexe-linux-x64-gnu");
         fs::write(&bin_a, b"from-a").unwrap();
         fs::write(&bin_b, b"from-b").unwrap();
 
         env::set_var("LEXE_BIN_DIR", &dir_b);
-        let found = find_cached_runtime_binary(Platform::LinuxX64, Some(&dir_a));
+        let found = find_cached_runtime_binary(Platform::LinuxX64Gnu, Some(&dir_a));
         env::remove_var("LEXE_BIN_DIR");
 
         assert_eq!(found.as_deref(), Some(bin_a.as_path()));
@@ -1232,9 +1294,16 @@ mod tests {
         let _guard = env_lock().lock().await;
 
         let cache_dir = temp_test_dir("lexe-dl-cache");
-        let payload = b"FAKE_LINUX_X64_BINARY_PAYLOAD".to_vec();
+        // Pick a Linux target that is not the host, so resolve_runtime_binary takes the
+        // download path instead of returning the running test binary.
+        let target = if Platform::current() == Platform::LinuxArm64Gnu {
+            Platform::LinuxX64Gnu
+        } else {
+            Platform::LinuxArm64Gnu
+        };
+        let payload = b"FAKE_LINUX_BINARY_PAYLOAD".to_vec();
         let digest = sha256_hex(&payload);
-        let asset = Platform::LinuxX64.release_asset_name();
+        let asset = target.release_asset_name();
         let sha256sums = format!("{digest}  {asset}\n");
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1243,7 +1312,7 @@ mod tests {
         let server_payload = payload.clone();
         let server_sums = sha256sums.clone();
         let server = tokio::spawn(async move {
-            // Expect 3 requests: GET /SHA256SUMS, GET /lexe-linux-x64 (302), GET /cdn/lexe-linux-x64
+            // Expect 3 requests: GET /SHA256SUMS, GET /<asset> (302), GET /cdn/<asset>
             for _ in 0..3 {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut buf = [0u8; 4096];
@@ -1285,7 +1354,7 @@ mod tests {
         env::remove_var("LEXE_BIN_DIR");
 
         let mut sums_cache = None;
-        let downloaded = resolve_runtime_binary(Platform::LinuxX64, None, &mut sums_cache)
+        let downloaded = resolve_runtime_binary(target, None, &mut sums_cache)
             .await
             .unwrap();
         assert_eq!(downloaded, payload);
@@ -1297,7 +1366,7 @@ mod tests {
         server.await.unwrap();
 
         // Second call should hit cache even after server shut down.
-        let from_cache = resolve_runtime_binary(Platform::LinuxX64, None, &mut sums_cache)
+        let from_cache = resolve_runtime_binary(target, None, &mut sums_cache)
             .await
             .unwrap();
         assert_eq!(from_cache, payload);
@@ -1321,7 +1390,7 @@ mod tests {
         let _guard = env_lock().lock().await;
 
         let cache_dir = temp_test_dir("lexe-dl-bad-sha");
-        let asset = Platform::LinuxArm64.release_asset_name();
+        let asset = Platform::LinuxArm64Gnu.release_asset_name();
         let bad_sums = format!("{}  {asset}\n", "0".repeat(64));
         let payload = b"CORRUPTED_OR_TAMPERED_BYTES".to_vec();
 
@@ -1360,7 +1429,7 @@ mod tests {
         env::remove_var("LEXE_BIN_DIR");
 
         let mut sums_cache = None;
-        let err = resolve_runtime_binary(Platform::LinuxArm64, None, &mut sums_cache)
+        let err = resolve_runtime_binary(Platform::LinuxArm64Gnu, None, &mut sums_cache)
             .await
             .unwrap_err();
         assert!(

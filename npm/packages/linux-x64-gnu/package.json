@@ -1,0 +1,23 @@
+{
+  "name": "@lexe/linux-x64-gnu",
+  "version": "0.1.5",
+  "description": "Lexe native runtime binary for Linux x64 (gnu). Installed automatically by the lexe package; do not depend on it directly.",
+  "license": "Apache-2.0",
+  "author": "Ray-D-Song",
+  "homepage": "https://github.com/Ray-D-Song/lexe",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ray-D-Song/lexe.git",
+    "directory": "npm/packages/linux-x64-gnu"
+  },
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "libc": ["glibc"],
+  "files": ["bin/"],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
