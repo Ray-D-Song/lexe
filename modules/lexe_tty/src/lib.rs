@@ -585,6 +585,150 @@ enum ReaderState {
     Destroyed,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadEncoding {
+    Utf8,
+    Ascii,
+    Latin1,
+    Utf16Le,
+    Hex,
+    Base64,
+    Base64Url,
+}
+
+impl ReadEncoding {
+    fn parse(raw: &str) -> std::result::Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "utf8" | "utf-8" => Ok(Self::Utf8),
+            "ascii" => Ok(Self::Ascii),
+            "latin1" | "binary" => Ok(Self::Latin1),
+            "utf16le" | "utf-16le" | "ucs2" | "ucs-2" => Ok(Self::Utf16Le),
+            "hex" => Ok(Self::Hex),
+            "base64" => Ok(Self::Base64),
+            "base64url" => Ok(Self::Base64Url),
+            other => Err(format!("Unknown encoding: {other}")),
+        }
+    }
+}
+
+fn decode_utf8_streaming(pending: &mut Vec<u8>, chunk: &[u8], flush: bool) -> String {
+    pending.extend_from_slice(chunk);
+    let mut out = String::new();
+    let mut i = 0;
+    while i < pending.len() {
+        match std::str::from_utf8(&pending[i..]) {
+            Ok(valid) => {
+                out.push_str(valid);
+                i = pending.len();
+                break;
+            },
+            Err(err) => {
+                let valid_len = err.valid_up_to();
+                if valid_len > 0 {
+                    // SAFETY: `valid_up_to()` guarantees valid UTF-8 prefix.
+                    let valid = unsafe { std::str::from_utf8_unchecked(&pending[i..i + valid_len]) };
+                    out.push_str(valid);
+                    i += valid_len;
+                }
+                match err.error_len() {
+                    Some(bad_len) => {
+                        out.push('\u{FFFD}');
+                        i += bad_len;
+                    },
+                    None => {
+                        if flush {
+                            out.push('\u{FFFD}');
+                            i = pending.len();
+                        }
+                        break;
+                    },
+                }
+            },
+        }
+    }
+    pending.drain(..i);
+    out
+}
+
+fn base64_encode(bytes: &[u8], url_safe: bool) -> String {
+    const STD: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let table = if url_safe { URL } else { STD };
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut i = 0;
+    while i + 3 <= bytes.len() {
+        let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8) | (bytes[i + 2] as u32);
+        out.push(table[((n >> 18) & 0x3f) as usize] as char);
+        out.push(table[((n >> 12) & 0x3f) as usize] as char);
+        out.push(table[((n >> 6) & 0x3f) as usize] as char);
+        out.push(table[(n & 0x3f) as usize] as char);
+        i += 3;
+    }
+    match bytes.len() - i {
+        1 => {
+            let n = (bytes[i] as u32) << 16;
+            out.push(table[((n >> 18) & 0x3f) as usize] as char);
+            out.push(table[((n >> 12) & 0x3f) as usize] as char);
+            if !url_safe {
+                out.push_str("==");
+            }
+        },
+        2 => {
+            let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8);
+            out.push(table[((n >> 18) & 0x3f) as usize] as char);
+            out.push(table[((n >> 12) & 0x3f) as usize] as char);
+            out.push(table[((n >> 6) & 0x3f) as usize] as char);
+            if !url_safe {
+                out.push('=');
+            }
+        },
+        _ => {},
+    }
+    out
+}
+
+fn decode_read_chunk(pending: &mut Vec<u8>, chunk: &[u8], enc: ReadEncoding, flush: bool) -> String {
+    match enc {
+        ReadEncoding::Utf8 => decode_utf8_streaming(pending, chunk, flush),
+        ReadEncoding::Ascii => chunk.iter().map(|&b| (b & 0x7f) as char).collect(),
+        ReadEncoding::Latin1 => chunk.iter().map(|&b| b as char).collect(),
+        ReadEncoding::Utf16Le => {
+            pending.extend_from_slice(chunk);
+            let pairs = pending.len() / 2;
+            let mut units = Vec::with_capacity(pairs);
+            for idx in 0..pairs {
+                units.push(u16::from_le_bytes([pending[idx * 2], pending[idx * 2 + 1]]));
+            }
+            pending.drain(..pairs * 2);
+            if flush {
+                pending.clear();
+            }
+            String::from_utf16_lossy(&units)
+        },
+        ReadEncoding::Hex => {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            let mut out = String::with_capacity(chunk.len() * 2);
+            for &b in chunk {
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0x0f) as usize] as char);
+            }
+            out
+        },
+        ReadEncoding::Base64 | ReadEncoding::Base64Url => {
+            let url_safe = enc == ReadEncoding::Base64Url;
+            pending.extend_from_slice(chunk);
+            if flush {
+                let all = std::mem::take(pending);
+                return base64_encode(&all, url_safe);
+            }
+            let full_len = (pending.len() / 3) * 3;
+            let out = base64_encode(&pending[..full_len], url_safe);
+            pending.drain(..full_len);
+            out
+        },
+    }
+}
+
 enum ReaderMsg {
     Data(Vec<u8>),
     End,
@@ -603,6 +747,8 @@ pub struct ReadStream<'js> {
     pub fd: i32,
     is_raw: bool,
     is_tty: bool,
+    encoding: Option<ReadEncoding>,
+    pending_bytes: Vec<u8>,
     reader_state: ReaderState,
     next_generation: u64,
     destroyed: bool,
@@ -618,6 +764,8 @@ impl<'js> Clone for ReadStream<'js> {
             fd: self.fd,
             is_raw: self.is_raw,
             is_tty: self.is_tty,
+            encoding: self.encoding,
+            pending_bytes: Vec::new(),
             reader_state: ReaderState::Paused,
             next_generation: self.next_generation,
             destroyed: self.destroyed,
@@ -701,6 +849,28 @@ impl<'js> ReadStream<'js> {
             }
         }
         this.0
+    }
+
+    pub fn set_encoding(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        encoding: Opt<Option<String>>,
+    ) -> Result<Class<'js, Self>> {
+        let parsed = match encoding.0.flatten() {
+            Some(enc) => Some(ReadEncoding::parse(&enc).map_err(|msg| {
+                if let Ok(err) = Exception::from_message(ctx.clone(), &msg) {
+                    let _ = err.as_object().set("code", "ERR_UNKNOWN_ENCODING");
+                    return ctx.throw(err.into_value());
+                }
+                Exception::throw_type(&ctx, &msg)
+            })?),
+            None => None,
+        };
+        let mut s = this.0.borrow_mut();
+        s.encoding = parsed;
+        s.pending_bytes.clear();
+        drop(s);
+        Ok(this.0)
     }
 
     pub fn set_raw_mode(
@@ -812,6 +982,8 @@ impl<'js> ReadStream<'js> {
                 fd,
                 is_raw: false,
                 is_tty,
+                encoding: None,
+                pending_bytes: Vec::new(),
                 reader_state: ReaderState::Paused,
                 next_generation: 1,
                 destroyed: false,
@@ -982,30 +1154,67 @@ impl<'js> ReadStream<'js> {
                 }
 
                 match msg {
-                    ReaderMsg::Data(chunk) => match Buffer(chunk).into_js(&ctx2) {
-                        Ok(data) => {
-                            let _ = ReadStream::emit_str(
-                                this2.clone(),
-                                &ctx2,
-                                "data",
-                                vec![data],
-                                false,
-                            );
-                        },
-                        Err(e) => {
-                            let msg = format!("{e}");
-                            if let Ok(err) = Exception::from_message(ctx2.clone(), &msg) {
+                    ReaderMsg::Data(chunk) => {
+                        let encoded = {
+                            let mut s = this2.borrow_mut();
+                            s.encoding
+                                .map(|enc| decode_read_chunk(&mut s.pending_bytes, &chunk, enc, false))
+                        };
+                        let data_res = match encoded {
+                            Some(text) => {
+                                if text.is_empty() {
+                                    continue;
+                                }
+                                text.into_js(&ctx2)
+                            },
+                            None => Buffer(chunk).into_js(&ctx2),
+                        };
+                        match data_res {
+                            Ok(data) => {
                                 let _ = ReadStream::emit_str(
                                     this2.clone(),
                                     &ctx2,
-                                    "error",
-                                    vec![err.into_value()],
+                                    "data",
+                                    vec![data],
+                                    false,
+                                );
+                            },
+                            Err(e) => {
+                                let msg = format!("{e}");
+                                if let Ok(err) = Exception::from_message(ctx2.clone(), &msg) {
+                                    let _ = ReadStream::emit_str(
+                                        this2.clone(),
+                                        &ctx2,
+                                        "error",
+                                        vec![err.into_value()],
+                                        false,
+                                    );
+                                }
+                            },
+                        }
+                    },
+                    ReaderMsg::End => {
+                        let flushed = {
+                            let mut s = this2.borrow_mut();
+                            match s.encoding {
+                                Some(enc) if !s.pending_bytes.is_empty() => {
+                                    let text = decode_read_chunk(&mut s.pending_bytes, &[], enc, true);
+                                    if text.is_empty() { None } else { Some(text) }
+                                },
+                                _ => None,
+                            }
+                        };
+                        if let Some(text) = flushed {
+                            if let Ok(data) = text.into_js(&ctx2) {
+                                let _ = ReadStream::emit_str(
+                                    this2.clone(),
+                                    &ctx2,
+                                    "data",
+                                    vec![data],
                                     false,
                                 );
                             }
-                        },
-                    },
-                    ReaderMsg::End => {
+                        }
                         let _ = ReadStream::emit_str(this2.clone(), &ctx2, "end", vec![], false);
                     },
                     ReaderMsg::Error(msg) => {
@@ -1147,7 +1356,14 @@ fn unix_reader_loop(fd: i32, cancel: WorkerCancel, tx: mpsc::UnboundedSender<Rea
             break;
         }
 
-        if pfds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+        if pfds[0].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            if pfds[0].revents & libc::POLLNVAL != 0
+                && unsafe { libc::fcntl(read_fd, libc::F_GETFD) } == -1
+            {
+                let err = io::Error::last_os_error();
+                let _ = tx.send(ReaderMsg::Error(err.to_string()));
+                break;
+            }
             let n =
                 unsafe { libc::read(read_fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
             if n < 0 {
@@ -1498,48 +1714,69 @@ impl<'js> WriteStream<'js> {
     }
 
     pub fn has_colors(
-        this: This<Class<'js, Self>>,
+        this: This<Value<'js>>,
         ctx: Ctx<'js>,
         count_or_env: Opt<Value<'js>>,
-        _env: Opt<Value<'js>>,
+        env: Opt<Value<'js>>,
     ) -> Result<bool> {
-        let depth = Self::get_color_depth(This(this.0), ctx, count_or_env)?;
-        Ok(depth >= 4)
+        let mut required_colors: Option<i64> = None;
+        let mut env_arg = env.0;
+        if let Some(arg) = count_or_env.0 {
+            if let Some(n) = arg.as_number() {
+                required_colors = Some(n as i64);
+            } else if arg.is_object() {
+                env_arg = Some(arg);
+            }
+        }
+        let depth = Self::get_color_depth(this, ctx, Opt(env_arg))?;
+        let min_colors = required_colors.unwrap_or(16);
+        let available_colors = 1i64.checked_shl(depth.min(30)).unwrap_or(i64::MAX);
+        Ok(available_colors >= min_colors)
     }
 
     pub fn get_color_depth(
-        _this: This<Class<'js, Self>>,
+        this: This<Value<'js>>,
         ctx: Ctx<'js>,
         env_or_count: Opt<Value<'js>>,
     ) -> Result<u32> {
         use lexe_utils::object::ObjectExt;
-        let globals = ctx.globals();
-        let process: Object = globals.get("process")?;
-        let env: Object = process.get("env")?;
+        let env: Option<Object> = match env_or_count.0.and_then(|v| v.into_object()) {
+            Some(obj) => Some(obj),
+            None => ctx
+                .globals()
+                .get::<_, Option<Object>>("process")
+                .ok()
+                .flatten()
+                .and_then(|process| process.get::<_, Option<Object>>("env").ok().flatten()),
+        };
 
-        let force: Option<String> = env.get_optional("FORCE_COLOR")?;
-        if let Some(v) = force {
-            return Ok(match v.as_str() {
-                "" | "1" | "true" => 4,
-                "2" => 8,
-                "3" => 24,
-                _ => 1,
-            });
+        if let Some(env) = env {
+            let force: Option<String> = env.get_optional("FORCE_COLOR")?;
+            if let Some(v) = force {
+                return Ok(match v.as_str() {
+                    "" | "1" | "true" => 4,
+                    "2" => 8,
+                    "3" => 24,
+                    _ => 1,
+                });
+            }
+            let no_color: Option<String> = env.get_optional("NO_COLOR")?;
+            if no_color.as_deref().is_some_and(|s| !s.is_empty()) {
+                return Ok(1);
+            }
+            let node_disable: Option<String> = env.get_optional("NODE_DISABLE_COLORS")?;
+            if node_disable.as_deref().is_some_and(|s| !s.is_empty()) {
+                return Ok(1);
+            }
+            let term: Option<String> = env.get_optional("TERM")?;
+            if term.as_deref() == Some("dumb") {
+                return Ok(1);
+            }
         }
-        let no_color: Option<String> = env.get_optional("NO_COLOR")?;
-        if no_color.as_deref().is_some_and(|s| !s.is_empty()) {
-            return Ok(1);
-        }
-        let node_disable: Option<String> = env.get_optional("NODE_DISABLE_COLORS")?;
-        if node_disable.as_deref().is_some_and(|s| !s.is_empty()) {
-            return Ok(1);
-        }
-        let term: Option<String> = env.get_optional("TERM")?;
-        if term.as_deref() == Some("dumb") {
-            return Ok(1);
-        }
-        let _ = env_or_count;
-        Ok(if isatty(1) { 4 } else { 1 })
+        let is_tty = Class::<Self>::from_value(&this.0)
+            .map(|c| c.borrow().is_tty)
+            .unwrap_or(false);
+        Ok(if is_tty { 4 } else { 1 })
     }
 
     #[qjs(get, rename = "isTTY")]
@@ -2179,5 +2416,66 @@ mod tests {
             libc::close(slave);
             libc::close(master);
         }
+    }
+
+    #[test]
+    fn streaming_utf8_decoding_handles_split_codepoints() {
+        let mut pending = Vec::new();
+        // U+1F389 ("🎉") = F0 9F 8E 89 split across chunks.
+        let part1 = decode_read_chunk(&mut pending, &[b'a', 0xF0, 0x9F], ReadEncoding::Utf8, false);
+        let part2 = decode_read_chunk(&mut pending, &[0x8E, 0x89, b'b'], ReadEncoding::Utf8, true);
+        assert_eq!(part1, "a");
+        assert_eq!(part2, "🎉b");
+        assert!(pending.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_reader_loop_dev_null_emits_end() {
+        let fd = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY) };
+        assert!(fd >= 0);
+        let (cancel, worker_cancel) = CancelHandle::new().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let t = std::thread::spawn(move || {
+            unix_reader_loop(fd, worker_cancel, tx);
+        });
+        t.join().unwrap();
+        drop(cancel);
+        unsafe { libc::close(fd) };
+
+        let first = rx.try_recv().unwrap();
+        assert!(matches!(first, ReaderMsg::End));
+    }
+
+    #[tokio::test]
+    async fn write_stream_prototype_has_colors_does_not_throw() {
+        test_async_with(|ctx| {
+            Box::pin(async move {
+                ModuleEvaluator::eval_rust::<TtyModule>(ctx.clone(), "tty")
+                    .await
+                    .unwrap();
+                let module = ModuleEvaluator::eval_js(
+                    ctx.clone(),
+                    "test",
+                    r#"
+                        import tty from "tty";
+                        export async function test() {
+                            return {
+                                hasColors: tty.WriteStream.prototype.hasColors(),
+                                colorDepth: tty.WriteStream.prototype.getColorDepth(),
+                            };
+                        }
+                    "#,
+                )
+                .await
+                .unwrap();
+                let res: Object = call_test(&ctx, &module, ()).await;
+                let has_colors: bool = res.get("hasColors").unwrap();
+                let color_depth: u32 = res.get("colorDepth").unwrap();
+                assert!(!has_colors);
+                assert_eq!(color_depth, 1);
+            })
+        })
+        .await;
     }
 }
