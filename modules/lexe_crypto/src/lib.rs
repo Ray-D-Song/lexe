@@ -54,8 +54,9 @@ use rquickjs::{
     atom::PredefinedAtom,
     function::{Constructor, Opt},
     module::{Declarations, Exports, ModuleDef},
+    object::Property,
     prelude::{Func, Rest},
-    Array, Class, Ctx, Error, Exception, Function, IntoJs, Null, Object, Result, Value,
+    Array, Class, Ctx, Error, Exception, FromJs, Function, IntoJs, Null, Object, Result, Value,
 };
 use subtle::{
     subtle_decrypt, subtle_derive_bits, subtle_derive_key, subtle_digest, subtle_encrypt,
@@ -262,6 +263,13 @@ impl Crypto {
     }
 }
 
+fn is_native_class<'js, T: rquickjs::class::JsClass<'js>>(
+    ctx: Ctx<'js>,
+    value: Value<'js>,
+) -> bool {
+    Class::<T>::from_js(&ctx, value).is_ok()
+}
+
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let globals = ctx.globals();
 
@@ -296,6 +304,27 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     crypto.set("subtle", subtle)?;
 
     globals.set("crypto", crypto)?;
+
+    globals.prop(
+        "__lexeIsCryptoKey",
+        Property::from(Func::from(is_native_class::<CryptoKey>))
+            .writable()
+            .configurable(),
+    )?;
+
+    #[cfg(feature = "_rustcrypto")]
+    {
+        // Register KeyObject's runtime class ID before `require("node:crypto")`
+        // so `util.types.isKeyObject(...)` works regardless of import order.
+        let hidden = Object::new(ctx.clone())?;
+        Class::<KeyObject>::define(&hidden)?;
+        globals.prop(
+            "__lexeIsKeyObject",
+            Property::from(Func::from(is_native_class::<KeyObject>))
+                .writable()
+                .configurable(),
+        )?;
+    }
 
     Ok(())
 }

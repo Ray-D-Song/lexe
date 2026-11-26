@@ -273,4 +273,75 @@ it("console.log still lays objects out over multiple lines", () => {
   expect(text).not.toContain("\r");
 });
 
+describe("util.types native, module namespace, and cross-realm parity", () => {
+  const _require = require;
+
+  it("matches Node 24 util.types exports", () => {
+    const keys = Object.getOwnPropertyNames(types).sort();
+    expect(keys).toContain("isCryptoKey");
+    expect(keys).toContain("isExternal");
+    expect(keys).toContain("isKeyObject");
+    expect(keys).toContain("isModuleNamespaceObject");
+    expect(keys.length).toBe(43);
+    expect(Object.keys(globalThis)).not.toContain("__lexeIsCryptoKey");
+    expect(Object.keys(globalThis)).not.toContain("__lexeIsKeyObject");
+    expect(Object.keys(globalThis)).not.toContain("__lexeIsExternal");
+  });
+
+  it("detects WebCrypto CryptoKey instances and rejects look-alikes", async () => {
+    const cryptoMod = _require("node:crypto");
+    const key = await cryptoMod.webcrypto.subtle.generateKey(
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign", "verify"],
+    );
+    expect(types.isCryptoKey(key)).toBe(true);
+    expect(types.isCryptoKey(Object.create(CryptoKey.prototype))).toBe(false);
+    expect(types.isCryptoKey({ type: "secret", extractable: false })).toBe(false);
+    expect(types.isCryptoKey(null)).toBe(false);
+  });
+
+  it("detects KeyObject instances and rejects look-alikes", () => {
+    const cryptoMod = _require("node:crypto");
+    const keyObj = cryptoMod.createSecretKey(Buffer.from("0123456789abcdef"));
+    expect(keyObj instanceof cryptoMod.KeyObject).toBe(true);
+    expect(types.isKeyObject(keyObj)).toBe(true);
+    expect(types.isKeyObject(Object.create(cryptoMod.KeyObject.prototype))).toBe(false);
+    expect(types.isKeyObject({ type: "secret" })).toBe(false);
+    expect(types.isKeyObject(null)).toBe(false);
+  });
+
+  it("handles isExternal safely on JS values", () => {
+    expect(types.isExternal({})).toBe(false);
+    expect(types.isExternal(new Uint8Array(4))).toBe(false);
+    expect(types.isExternal(null)).toBe(false);
+    expect(types.isExternal(undefined)).toBe(false);
+  });
+
+  it("detects ES module namespace objects and cross-realm native errors", async () => {
+    const vm = _require("node:vm");
+    const ctx = vm.createContext({});
+    expect(types.isNativeError(vm.runInContext("new TypeError('boom')", ctx))).toBe(true);
+    expect(types.isDate(vm.runInContext("new Date()", ctx))).toBe(true);
+    expect(types.isRegExp(vm.runInContext("/abc/", ctx))).toBe(true);
+    expect(types.isMap(vm.runInContext("new Map()", ctx))).toBe(true);
+    const utilNs = await import("node:util");
+    expect(types.isModuleNamespaceObject(utilNs)).toBe(true);
+    expect(types.isModuleNamespaceObject({ [Symbol.toStringTag]: "Module" })).toBe(false);
+    expect(types.isModuleNamespaceObject(Object.freeze({ [Symbol.toStringTag]: "Module" }))).toBe(false);
+    expect(types.isMap({ [Symbol.toStringTag]: "Map" })).toBe(false);
+    expect(types.isSet({ [Symbol.toStringTag]: "Set" })).toBe(false);
+    expect(types.isUint8Array({ [Symbol.toStringTag]: "Uint8Array" })).toBe(false);
+    expect(types.isDataView({ [Symbol.toStringTag]: "DataView" })).toBe(false);
+    expect(types.isAsyncFunction({ [Symbol.toStringTag]: "AsyncFunction" })).toBe(false);
+    expect(types.isGeneratorFunction({ [Symbol.toStringTag]: "GeneratorFunction" })).toBe(false);
+    expect(types.isArgumentsObject({ [Symbol.toStringTag]: "Arguments" })).toBe(false);
+    async function* asyncGen() {}
+    expect(types.isAsyncFunction(asyncGen)).toBe(true);
+    expect(types.isGeneratorFunction(asyncGen)).toBe(true);
+    expect(types.isGeneratorObject(asyncGen())).toBe(true);
+    expect(types.isArgumentsObject((function (_a: number) { return arguments; })(1))).toBe(true);
+  });
+});
+
 void Duplex;

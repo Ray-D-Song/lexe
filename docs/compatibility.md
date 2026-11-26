@@ -48,7 +48,7 @@
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎ | — |
 | node:util | ✔︎ | ✔︎⚠️ | Missing `parseArgs` and `transferableAbort*`; limited `TextDecoder` encodings ([details](#nodeutil-and-nodeutiltypes)) |
-| node:util/types | ✔︎ | ✔︎⚠️ | Missing `isWebAssemblyCompiledModule`; native object checks depend on the corresponding subsystem ([details](#nodeutil-and-nodeutiltypes)) |
+| node:util/types | ✔︎ | ✔︎ | — |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✘ | Not implemented |
@@ -167,7 +167,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `util.inspect()` and `util.formatWithOptions()` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, and `customInspect` (while `showProxy`, `getters`, `numericSeparator`, and line-wrapping `breakLength` are not implemented).
 - `util.styleText()` does not support hex/RGB truecolor formats.
 - `util.TextDecoder` supports only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus `hex`/`base64`), lacking full WHATWG legacy encodings.
-- `node:util/types` omits `isWebAssemblyCompiledModule()`. `isExternal()`, `isKeyObject()`, and `isCryptoKey()` use native host hooks when the corresponding subsystem is available.
+- `node:util/types` matches Node 24 exports, including native checks for `isExternal()`, `isKeyObject()`, and `isCryptoKey()` when those subsystems are enabled.
 
 #### `node:v8`
 

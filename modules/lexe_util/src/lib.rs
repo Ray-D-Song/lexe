@@ -9,11 +9,11 @@ use lexe_utils::{
     module::{export_default, ModuleInfo},
 };
 use rquickjs::{
-    atom::PredefinedAtom,
     function::{Func, Opt},
     module::{Declarations, Exports, ModuleDef},
+    object::Property,
     prelude::Rest,
-    ArrayBuffer, Class, Ctx, Exception, Function, Object, Result, Symbol, Value,
+    qjs, ArrayBuffer, Class, Ctx, Exception, Function, Object, Result, Symbol, Value,
 };
 use std::collections::HashMap;
 use text_decoder::TextDecoder;
@@ -152,15 +152,14 @@ fn get_or_create_types_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
     return globalThis[KEY];
   }
 
-  const objectToString = Object.prototype.toString;
+  const internalTag = globalThis.__lexeInternalTag;
+  const errorIsError = typeof Error.isError === "function" ? Error.isError : null;
 
-  // `[object X]` → `"X"`, the internal-slot tag the engine reports. Unlike a
-  // user-assigned `Symbol.toStringTag`, this is not forgeable in QuickJS for the
-  // built-ins below, so it is what the predicates key on.
+  // Map QuickJS's native `JS_GetClassID` tag instead of `Object.prototype.toString`,
+  // so forged `Symbol.toStringTag` properties cannot spoof built-in types.
   const tagOf = (value) => {
-    if (value === null || value === undefined) return "";
-    const tag = objectToString.call(value);
-    return tag.slice(8, tag.length - 1);
+    if (value === null || value === undefined || !internalTag) return "";
+    return internalTag(value);
   };
 
   // A real Error has its own `stack`/`message` slots; `Object.create(Error.prototype)`
@@ -299,8 +298,11 @@ fn get_or_create_types_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
       if (typeof value !== "object" || value === null) {
         return false;
       }
-      // `Object.create(Error.prototype)` is not a native error; only objects
-      // created by the Error constructors carry the internal slots.
+      if (errorIsError) {
+        return errorIsError(value);
+      }
+      // Fallback when Error.isError is unavailable: `Object.create(Error.prototype)`
+      // lacks the internal Error slot and is rejected.
       return Error.prototype.isPrototypeOf(value)
         && Object.prototype.toString.call(value) === "[object Error]"
         && typeof value.message === "string"
@@ -310,17 +312,18 @@ fn get_or_create_types_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
       return tagOf(value) === "Arguments";
     },
     isGeneratorFunction(value) {
-      return tagOf(value) === "GeneratorFunction";
+      const tag = tagOf(value);
+      return tag === "GeneratorFunction" || tag === "AsyncGeneratorFunction";
     },
     isGeneratorObject(value) {
-      return tagOf(value) === "Generator";
+      const tag = tagOf(value);
+      return tag === "Generator" || tag === "AsyncGenerator";
     },
     isAsyncFunction(value) {
-      return tagOf(value) === "AsyncFunction";
+      const tag = tagOf(value);
+      return tag === "AsyncFunction" || tag === "AsyncGeneratorFunction";
     },
     isModuleNamespaceObject(value) {
-      // Module namespace objects are the only ones whose toStringTag is
-      // "Module" and are not constructible.
       return tagOf(value) === "Module";
     },
 
@@ -1490,40 +1493,92 @@ fn create_style_text<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
     )
 }
 
+/// Map QuickJS predefined `JSClassID` values (`quickjs.c`) to canonical internal tags.
+fn internal_tag_for_value(value: &Value<'_>) -> &'static str {
+    let class_id = unsafe { qjs::JS_GetClassID(value.as_raw()) };
+    match class_id {
+        4 => "Number",
+        5 => "String",
+        6 => "Boolean",
+        7 => "Symbol",
+        8 | 9 => "Arguments",
+        10 => "Date",
+        11 => "Module",
+        17 => "GeneratorFunction",
+        19 => "RegExp",
+        20 => "ArrayBuffer",
+        21 => "SharedArrayBuffer",
+        22 => "Uint8ClampedArray",
+        23 => "Int8Array",
+        24 => "Uint8Array",
+        25 => "Int16Array",
+        26 => "Uint16Array",
+        27 => "Int32Array",
+        28 => "Uint32Array",
+        29 => "BigInt64Array",
+        30 => "BigUint64Array",
+        31 => "Float16Array",
+        32 => "Float32Array",
+        33 => "Float64Array",
+        34 => "DataView",
+        35 => "BigInt",
+        36 => "Map",
+        37 => "Set",
+        38 => "WeakMap",
+        39 => "WeakSet",
+        44 => "Map Iterator",
+        45 => "Set Iterator",
+        49 => "Generator",
+        51 => "Proxy",
+        52 => "Promise",
+        55 => "AsyncFunction",
+        59 => "AsyncGeneratorFunction",
+        60 => "AsyncGenerator",
+        _ => "",
+    }
+}
+
 fn install_type_predicates(ctx: &Ctx<'_>) -> Result<()> {
     let globals = ctx.globals();
-    if globals.contains_key("__lexeIsProxy")? {
+    if globals.contains_key("__lexeInternalTag")? {
         return Ok(());
     }
 
-    globals.set("__lexeIsProxy", Func::from(|value: Value| value.is_proxy()))?;
-    globals.set(
+    globals.prop(
+        "__lexeInternalTag",
+        Property::from(Func::from(|value: Value| internal_tag_for_value(&value)))
+            .writable()
+            .configurable(),
+    )?;
+    globals.prop(
+        "__lexeIsProxy",
+        Property::from(Func::from(|value: Value| value.is_proxy()))
+            .writable()
+            .configurable(),
+    )?;
+    globals.prop(
         "__lexeIsPromise",
-        Func::from(|value: Value| value.is_promise()),
+        Property::from(Func::from(|value: Value| value.is_promise()))
+            .writable()
+            .configurable(),
     )?;
-    globals.set(
+    globals.prop(
         "__lexeIsArrayBuffer",
-        Func::from(|value: Value| ArrayBuffer::from_value(value).is_some()),
+        Property::from(Func::from(|value: Value| {
+            ArrayBuffer::from_value(value).is_some()
+        }))
+        .writable()
+        .configurable(),
     )?;
-    // `ArrayBuffer::from_value` succeeds for a SharedArrayBuffer too, so the
-    // two have to be told apart by constructor name — the same way structured
-    // clone does it.
-    globals.set(
+    // `JS_CLASS_SHARED_ARRAY_BUFFER` (21) is distinct from `JS_CLASS_ARRAY_BUFFER` (20)
+    // and cannot be spoofed via `.constructor` overrides.
+    globals.prop(
         "__lexeIsSharedArrayBuffer",
-        Func::from(|ctx: Ctx<'_>, value: Value<'_>| -> Result<bool> {
-            let Some(obj) = value.as_object() else {
-                return Ok(false);
-            };
-            if ArrayBuffer::from_value(value.clone()).is_none() {
-                return Ok(false);
-            }
-            let Some(ctor) = obj.get::<_, Option<Object>>(PredefinedAtom::Constructor)? else {
-                return Ok(false);
-            };
-            let name: String = ctor.get(PredefinedAtom::Name)?;
-            let _ = ctx;
-            Ok(name == "SharedArrayBuffer")
-        }),
+        Property::from(Func::from(|value: Value| {
+            internal_tag_for_value(&value) == "SharedArrayBuffer"
+        }))
+        .writable()
+        .configurable(),
     )?;
     Ok(())
 }
@@ -2017,6 +2072,50 @@ INVALID_LINE
                 let ok: String = style_text.call(("green", "ok", opts)).unwrap();
                 assert!(ok.contains("ok"));
                 assert!(ok.contains('\u{001b}'));
+            })
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn internal_tag_matches_quickjs_class_ids() {
+        use lexe_test::test_async_with;
+
+        test_async_with(|ctx| {
+            Box::pin(async move {
+                let cases = [
+                    ("new Map()", "Map"),
+                    ("new Set()", "Set"),
+                    ("new WeakMap()", "WeakMap"),
+                    ("new WeakSet()", "WeakSet"),
+                    ("new Date()", "Date"),
+                    ("/a/", "RegExp"),
+                    ("new ArrayBuffer(4)", "ArrayBuffer"),
+                    ("new SharedArrayBuffer(4)", "SharedArrayBuffer"),
+                    ("new DataView(new ArrayBuffer(4))", "DataView"),
+                    ("new Uint8Array(4)", "Uint8Array"),
+                    ("new Uint8ClampedArray(4)", "Uint8ClampedArray"),
+                    ("new BigInt64Array(1)", "BigInt64Array"),
+                    ("new BigUint64Array(1)", "BigUint64Array"),
+                    ("new Map().entries()", "Map Iterator"),
+                    ("new Set().values()", "Set Iterator"),
+                    (
+                        "((function(a){ 'use strict'; return arguments; })(1))",
+                        "Arguments",
+                    ),
+                    ("((function(a){ return arguments; })(1))", "Arguments"),
+                    ("async function(){}", "AsyncFunction"),
+                    ("function*(){}", "GeneratorFunction"),
+                    ("(function*(){})()", "Generator"),
+                    ("async function*(){}", "AsyncGeneratorFunction"),
+                    ("(async function*(){})()", "AsyncGenerator"),
+                    ("Object(1n)", "BigInt"),
+                    ("Object(Symbol('s'))", "Symbol"),
+                ];
+                for (expr, expected) in cases {
+                    let val: Value = ctx.eval(format!("({expr})")).unwrap();
+                    assert_eq!(internal_tag_for_value(&val), expected, "expr={expr}");
+                }
             })
         })
         .await;

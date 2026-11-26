@@ -34,10 +34,28 @@ pub fn init_v8_shim() {
     v8_compat::ensure_shim_linked();
 }
 
+pub(crate) fn install_external_predicate(ctx: std::ptr::NonNull<rquickjs::qjs::JSContext>) {
+    let qjs_ctx = unsafe { rquickjs::Ctx::from_raw(ctx) };
+    let globals = qjs_ctx.globals();
+    if globals.contains_key("__lexeIsExternal").unwrap_or(false) {
+        return;
+    }
+    let _ = globals.prop(
+        "__lexeIsExternal",
+        rquickjs::object::Property::from(rquickjs::prelude::Func::from(
+            |ctx: rquickjs::Ctx<'_>, value: rquickjs::Value<'_>| {
+                crate::external::is_external_object(ctx.as_raw().as_ptr(), value.as_raw())
+            },
+        ))
+        .writable()
+        .configurable(),
+    );
+}
+
 pub fn register_async_context(ctx: std::ptr::NonNull<rquickjs::qjs::JSContext>) {
     #[cfg(feature = "v8-compat")]
     init_v8_shim();
-    let _ = ctx;
+    install_external_predicate(ctx);
     lexe_utils::driver_poll::set_driver_poll_hook(Some(crate::api::poll_pending_drivers));
     lexe_utils::driver_poll::set_driver_busy_hook(Some(crate::api::drivers_busy));
 }
@@ -3399,6 +3417,63 @@ mod tests {
             let caught: String = ctx.eval("globalThis.__caught.join(':')").unwrap();
             assert_eq!(caught, "uncaughtException:boom");
 
+            env.scopes.close(raw.as_ptr());
+            env.dispose();
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn napi_external_predicate_hook_detects_external_objects() {
+        let _lock = gc_test_lock().await;
+        use crate::api::napi_create_external;
+        use std::os::raw::c_void;
+
+        let rt = AsyncRuntime::new().unwrap();
+        let ctx = AsyncContext::full(&rt).await.unwrap();
+        ctx.with(|ctx| {
+            let raw = ctx.as_raw();
+            crate::install_external_predicate(raw);
+
+            let mut env = Env::new(raw);
+            env.scopes.open();
+            let env_ptr = env.as_napi_env();
+
+            let mut ext_val = std::ptr::null_mut();
+            let mut dummy: u8 = 7;
+            assert_eq!(
+                unsafe {
+                    napi_create_external(
+                        env_ptr,
+                        (&mut dummy as *mut u8).cast::<c_void>(),
+                        None,
+                        std::ptr::null_mut(),
+                        &mut ext_val,
+                    )
+                },
+                napi_status::napi_ok
+            );
+
+            let raw_js = unsafe { napi_to_value(&env, ext_val) }.expect("external value");
+            let val = unsafe {
+                rquickjs::Value::from_raw(ctx.clone(), qjs::JS_DupValue(raw.as_ptr(), raw_js))
+            };
+            ctx.globals().set("__testExt", val).unwrap();
+
+            let detected: bool = ctx
+                .eval("globalThis.__lexeIsExternal(globalThis.__testExt)")
+                .unwrap();
+            let plain: bool = ctx.eval("globalThis.__lexeIsExternal({})").unwrap();
+            let prim: bool = ctx.eval("globalThis.__lexeIsExternal(42)").unwrap();
+            let hidden: bool = ctx
+                .eval("!Object.keys(globalThis).includes('__lexeIsExternal')")
+                .unwrap();
+            assert!(detected);
+            assert!(!plain);
+            assert!(!prim);
+            assert!(hidden);
+
+            ctx.eval::<(), _>("delete globalThis.__testExt").unwrap();
             env.scopes.close(raw.as_ptr());
             env.dispose();
         })

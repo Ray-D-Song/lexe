@@ -342,6 +342,7 @@ fn dlopen_impl(
     } else {
         register_env(ctx_ptr, Box::new(Env::new(ctx_ptr)))
     };
+    crate::install_external_predicate(ctx_ptr);
     unsafe {
         (*env_ptr).ensure_external_class();
         (*env_ptr).scopes.open();
