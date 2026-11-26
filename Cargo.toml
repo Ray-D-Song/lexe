@@ -68,8 +68,12 @@ debug = true
 strip = true
 lto = true
 codegen-units = 1
-opt-level = 3
+opt-level = "z"
 panic = "abort"
+
+# Keep QuickJS C engine at -O3 for JS execution speed.
+[profile.release.package.rquickjs-sys]
+opt-level = 3
 
 # Proc-macros are dlopen'd by rustc; release strip breaks rquickjs_macro loading.
 [profile.release.package.rquickjs-macro]
