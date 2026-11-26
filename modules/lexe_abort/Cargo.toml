@@ -14,20 +14,16 @@ path = "src/lib.rs"
 default = ["sleep-timers"]
 
 sleep-timers = ["lexe_timers"]
-sleep-tokio = ["tokio"]
+sleep-tokio = ["tokio/time"]
 
 [dependencies]
 lexe_async_hooks = { version = "0.1.8", path = "../lexe_async_hooks" }
 lexe_exceptions = { version = "0.1.8", path = "../lexe_exceptions" }
 lexe_events = { version = "0.1.8", path = "../lexe_events" }
+lexe_timers = { version = "0.1.8", path = "../lexe_timers", optional = true }
 lexe_utils = { version = "0.1.8", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
-
-# Optional
-lexe_timers = { version = "0.1.8", path = "../lexe_timers", optional = true }
-tokio = { version = "1", features = [
-    "time",
-], default-features = false, optional = true }
+tokio = { version = "1", features = ["sync", "macros"], default-features = false }
 
 [dev-dependencies]
 lexe_test = { path = "../../libs/lexe_test" }

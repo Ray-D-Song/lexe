@@ -26,9 +26,9 @@ use rquickjs::{
     object::Filter,
     prelude::Rest,
     promise::PromiseState,
-    qjs, CaughtError, Coerced, Ctx,
+    qjs, CatchResultExt, CaughtError, Coerced, Ctx,
     Error::{self},
-    Function, Null, Object, Result, Symbol, Type, Value,
+    Function, IntoJs, Null, Object, Result, Symbol, Type, Value,
 };
 
 pub const NEWLINE: char = '\n';
@@ -199,6 +199,15 @@ pub enum SortedMode<'js> {
     Custom(Function<'js>),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GettersMode {
+    All,
+    Get,
+    Set,
+}
+
+const DEFAULT_BREAK_LENGTH: usize = 80;
+
 pub struct FormatOptions<'js> {
     pub color: bool,
     pub newline: bool,
@@ -209,6 +218,10 @@ pub struct FormatOptions<'js> {
     pub compact: Option<bool>,
     pub sorted: Option<SortedMode<'js>>,
     pub custom_inspect: bool,
+    pub show_proxy: bool,
+    pub getters: Option<GettersMode>,
+    pub numeric_separator: bool,
+    pub break_length: Option<usize>,
     pub quote_root_string: bool,
     get_own_property_desc_fn: Function<'js>,
     object_prototype: Object<'js>,
@@ -245,6 +258,14 @@ impl<'js> FormatOptions<'js> {
             compact: None,
             sorted: None,
             custom_inspect: true,
+            show_proxy: false,
+            getters: None,
+            numeric_separator: false,
+            break_length: if newline {
+                None
+            } else {
+                Some(DEFAULT_BREAK_LENGTH)
+            },
             quote_root_string: false,
             object_filter,
             get_own_property_desc_fn,
@@ -332,6 +353,36 @@ impl<'js> FormatOptions<'js> {
 
         if let Ok(Some(ci)) = obj.get::<_, Option<bool>>("customInspect") {
             out.custom_inspect = ci;
+        }
+
+        if let Ok(Some(sp)) = obj.get::<_, Option<bool>>("showProxy") {
+            out.show_proxy = sp;
+        }
+
+        if let Ok(getters_val) = obj.get::<_, Value<'js>>("getters") {
+            if getters_val.as_bool() == Some(true) {
+                out.getters = Some(GettersMode::All);
+            } else if let Some(s) = getters_val.as_string().and_then(|s| s.to_string().ok()) {
+                out.getters = match s.as_str() {
+                    "get" => Some(GettersMode::Get),
+                    "set" => Some(GettersMode::Set),
+                    _ => None,
+                };
+            }
+        }
+
+        if let Ok(Some(ns)) = obj.get::<_, Option<bool>>("numericSeparator") {
+            out.numeric_separator = ns;
+        }
+
+        if let Ok(bl_val) = obj.get::<_, Value<'js>>("breakLength") {
+            if let Some(n) = bl_val.as_number() {
+                if n.is_infinite() && n.is_sign_positive() {
+                    out.break_length = None;
+                } else if n.is_finite() {
+                    out.break_length = Some((n.max(0.0).floor()) as usize);
+                }
+            }
         }
 
         Ok(out)
@@ -499,6 +550,10 @@ fn format_raw_inner<'js>(
     let color_enabled = options.color;
     let is_root = depth == 0;
 
+    if options.show_proxy && unsafe { qjs::JS_IsProxy(value.as_raw()) } {
+        return format_proxy(result, value, options, visited, depth, color_enabled);
+    }
+
     match value_type {
         Type::Uninitialized | Type::Null => {
             if color_enabled {
@@ -527,9 +582,23 @@ fn format_raw_inner<'js>(
             if color_enabled {
                 Color::YELLOW.push(result);
             }
-            let mut buffer = itoa::Buffer::new();
             let big_int = unsafe { value.as_big_int().unwrap_unchecked() };
-            result.push_str(buffer.format(big_int.clone().to_i64().unwrap()));
+            let raw_str = if let Ok(v) = big_int.clone().to_i64() {
+                let mut buffer = itoa::Buffer::new();
+                buffer.format(v).to_string()
+            } else {
+                value
+                    .ctx()
+                    .globals()
+                    .get::<_, Function>("String")
+                    .and_then(|f| f.call::<_, String>((value.clone(),)))
+                    .unwrap_or_else(|_| "0".to_string())
+            };
+            if options.numeric_separator {
+                result.push_str(&format_number_with_sep(&raw_str));
+            } else {
+                result.push_str(&raw_str);
+            }
             result.push('n');
         },
         Type::Int => {
@@ -537,15 +606,23 @@ fn format_raw_inner<'js>(
                 Color::YELLOW.push(result);
             }
             let mut buffer = itoa::Buffer::new();
-            result.push_str(buffer.format(unsafe { value.as_int().unwrap_unchecked() }));
+            let s = buffer.format(unsafe { value.as_int().unwrap_unchecked() });
+            if options.numeric_separator {
+                result.push_str(&format_number_with_sep(s));
+            } else {
+                result.push_str(s);
+            }
         },
         Type::Float => {
             if color_enabled {
                 Color::YELLOW.push(result);
             }
-            result.push_str(&float_to_string(unsafe {
-                value.as_float().unwrap_unchecked()
-            }));
+            let s = float_to_string(unsafe { value.as_float().unwrap_unchecked() });
+            if options.numeric_separator {
+                result.push_str(&format_number_with_sep(&s));
+            } else {
+                result.push_str(&s);
+            }
         },
         Type::String => {
             //FIXME can be removed if https://github.com/DelSkayn/rquickjs/pull/447 is merged
@@ -780,6 +857,19 @@ fn format_raw_inner<'js>(
                                 custom_options.set("compact", c)?;
                             }
                             custom_options.set("customInspect", options.custom_inspect)?;
+                            custom_options.set("showProxy", options.show_proxy)?;
+                            match options.getters {
+                                Some(GettersMode::All) => custom_options.set("getters", true)?,
+                                Some(GettersMode::Get) => custom_options.set("getters", "get")?,
+                                Some(GettersMode::Set) => custom_options.set("getters", "set")?,
+                                None => custom_options.set("getters", false)?,
+                            }
+                            custom_options.set("numericSeparator", options.numeric_separator)?;
+                            if let Some(bl) = options.break_length {
+                                custom_options.set("breakLength", bl)?;
+                            } else {
+                                custom_options.set("breakLength", f64::INFINITY)?;
+                            }
 
                             let inspect_fn: Function = ctx
                                 .globals()
@@ -973,13 +1063,80 @@ fn format_symbol_label(sym: &Symbol<'_>) -> String {
     }
 }
 
+enum EntryKind<'js> {
+    Data(Value<'js>),
+    Accessor {
+        tag: &'static str,
+        evaluated: Option<std::result::Result<Value<'js>, String>>,
+    },
+}
+
+fn inspect_property_entry<'js>(
+    ctx: &Ctx<'js>,
+    obj: &Object<'js>,
+    key_val: Value<'js>,
+    key_str: Option<&str>,
+    sym_atom: Option<rquickjs::Atom<'js>>,
+    options: &FormatOptions<'js>,
+) -> EntryKind<'js> {
+    if let Some(mode) = options.getters {
+        if let Ok(desc) = options
+            .get_own_property_desc_fn
+            .call::<_, Object>((obj.clone(), key_val))
+        {
+            let get_val = desc.get::<_, Value>("get").ok();
+            let set_val = desc.get::<_, Value>("set").ok();
+            let get_fn = get_val.as_ref().and_then(|v| v.as_function());
+            let set_fn = set_val.as_ref().and_then(|v| v.as_function());
+            let has_get = get_fn.is_some();
+            let has_set = set_fn.is_some();
+            if has_get || has_set {
+                let tag = match (has_get, has_set) {
+                    (true, true) => "Getter/Setter",
+                    (true, false) => "Getter",
+                    (false, true) => "Setter",
+                    (false, false) => unreachable!(),
+                };
+                let evaluated = if let Some(getter) = get_fn {
+                    let should_eval = match mode {
+                        GettersMode::All => true,
+                        GettersMode::Get => !has_set,
+                        GettersMode::Set => has_set,
+                    };
+                    if should_eval {
+                        match getter.call::<_, Value>((This(obj.clone()),)).catch(ctx) {
+                            Ok(v) => Some(Ok(v)),
+                            Err(err) => Some(Err(format!("{err:?}"))),
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                return EntryKind::Accessor { tag, evaluated };
+            }
+        }
+    }
+    let val = if let Some(k) = key_str {
+        obj.get::<&str, Value>(k)
+            .unwrap_or_else(|_| Value::new_undefined(ctx.clone()))
+    } else if let Some(atom) = sym_atom {
+        obj.get::<_, Value>(atom)
+            .unwrap_or_else(|_| Value::new_undefined(ctx.clone()))
+    } else {
+        Value::new_undefined(ctx.clone())
+    };
+    EntryKind::Data(val)
+}
+
 fn collect_object_entries<'js>(
     ctx: &Ctx<'js>,
     obj: &Object<'js>,
     options: &FormatOptions<'js>,
-) -> Result<Vec<(String, String, Value<'js>)>> {
-    // Each tuple is (sort_key, rendered_label, value).
-    let mut entries: Vec<(String, String, Value<'js>)> = Vec::new();
+) -> Result<Vec<(String, String, EntryKind<'js>)>> {
+    // Each tuple is (sort_key, rendered_label, entry).
+    let mut entries: Vec<(String, String, EntryKind<'js>)> = Vec::new();
     let get_desc = &options.get_own_property_desc_fn;
     let sym_filter = Filter::new().symbol();
 
@@ -988,20 +1145,20 @@ fn collect_object_entries<'js>(
         if let Ok(names_fn) = object_ctor.get::<_, Function>("getOwnPropertyNames") {
             if let Ok(names) = names_fn.call::<_, Vec<String>>((obj.clone(),)) {
                 for key in names {
+                    let key_js: Value = key.as_str().into_js(ctx)?;
                     let enumerable = get_desc
-                        .call::<_, Object>((obj.clone(), key.as_str()))
+                        .call::<_, Object>((obj.clone(), key_js.clone()))
                         .ok()
                         .and_then(|d| d.get::<_, bool>(PredefinedAtom::Enumerable).ok())
                         .unwrap_or(true);
-                    let value = obj
-                        .get::<&str, Value>(key.as_str())
-                        .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
+                    let entry =
+                        inspect_property_entry(ctx, obj, key_js, Some(key.as_str()), None, options);
                     let label = if enumerable {
                         key.clone()
                     } else {
                         format!("[{key}]")
                     };
-                    entries.push((key, label, value));
+                    entries.push((key, label, entry));
                 }
             }
         }
@@ -1018,16 +1175,22 @@ fn collect_object_entries<'js>(
                 } else {
                     format!("[{sym_label}]")
                 };
-                let value = obj
-                    .get::<_, Value>(sym_ref.as_atom())
-                    .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
-                entries.push((sym_label, label, value));
+                let entry = inspect_property_entry(
+                    ctx,
+                    obj,
+                    sym.clone(),
+                    None,
+                    Some(sym_ref.as_atom()),
+                    options,
+                );
+                entries.push((sym_label, label, entry));
             }
         }
     } else {
         for key in obj.keys::<String>().flatten() {
-            let value: Value = obj.get::<&str, _>(key.as_str())?;
-            entries.push((key.clone(), key, value));
+            let key_js: Value = key.as_str().into_js(ctx)?;
+            let entry = inspect_property_entry(ctx, obj, key_js, Some(key.as_str()), None, options);
+            entries.push((key.clone(), key, entry));
         }
         for sym in obj.own_keys::<Value>(sym_filter).flatten() {
             if let Some(sym_ref) = sym.as_symbol() {
@@ -1038,10 +1201,15 @@ fn collect_object_entries<'js>(
                     .unwrap_or(false);
                 if enumerable {
                     let sym_label = format_symbol_label(sym_ref);
-                    let value = obj
-                        .get::<_, Value>(sym_ref.as_atom())
-                        .unwrap_or_else(|_| Value::new_undefined(ctx.clone()));
-                    entries.push((sym_label.clone(), sym_label, value));
+                    let entry = inspect_property_entry(
+                        ctx,
+                        obj,
+                        sym.clone(),
+                        None,
+                        Some(sym_ref.as_atom()),
+                        options,
+                    );
+                    entries.push((sym_label.clone(), sym_label, entry));
                 }
             }
         }
@@ -1072,6 +1240,236 @@ fn collect_object_entries<'js>(
     Ok(entries)
 }
 
+fn format_number_with_sep(raw: &str) -> String {
+    if raw == "NaN" || raw == "Infinity" || raw == "-Infinity" {
+        return raw.to_string();
+    }
+    if raw.contains('e') || raw.contains('E') {
+        return raw.to_string();
+    }
+    let (neg, unsigned) = if let Some(rest) = raw.strip_prefix('-') {
+        ("-", rest)
+    } else {
+        ("", raw)
+    };
+    let (int_part, frac_part) = match unsigned.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (unsigned, None),
+    };
+    let mut out = String::with_capacity(raw.len() + raw.len() / 3);
+    out.push_str(neg);
+    let len = int_part.len();
+    for (idx, ch) in int_part.chars().enumerate() {
+        if idx > 0 && (len - idx).is_multiple_of(3) {
+            out.push('_');
+        }
+        out.push(ch);
+    }
+    if let Some(frac) = frac_part {
+        out.push('.');
+        for (idx, ch) in frac.chars().enumerate() {
+            if idx > 0 && idx.is_multiple_of(3) {
+                out.push('_');
+            }
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn visible_width(s: &str) -> usize {
+    let mut count = 0usize;
+    let mut bytes = s.as_bytes().iter().copied().peekable();
+    while let Some(b) = bytes.next() {
+        if b == 0x1b && bytes.peek() == Some(&b'[') {
+            bytes.next();
+            for c in bytes.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else if (b & 0xc0) != 0x80 {
+            count += 1;
+        }
+    }
+    count
+}
+
+fn format_entry_kind<'js>(
+    out: &mut String,
+    entry: EntryKind<'js>,
+    options: &FormatOptions<'js>,
+    visited: &mut HashSet<usize>,
+    depth: usize,
+) -> Result<()> {
+    match entry {
+        EntryKind::Data(val) => format_raw_inner(out, val, options, visited, depth),
+        EntryKind::Accessor { tag, evaluated } => match evaluated {
+            None => {
+                if options.color {
+                    Color::CYAN.push(out);
+                }
+                out.push('[');
+                out.push_str(tag);
+                out.push(']');
+                if options.color {
+                    Color::reset(out);
+                }
+                Ok(())
+            },
+            Some(Ok(val)) => {
+                if options.color {
+                    Color::CYAN.push(out);
+                }
+                out.push('[');
+                out.push_str(tag);
+                out.push_str(": ");
+                if options.color {
+                    Color::reset(out);
+                }
+                format_raw_inner(out, val, options, visited, depth)?;
+                if options.color {
+                    Color::CYAN.push(out);
+                }
+                out.push(']');
+                if options.color {
+                    Color::reset(out);
+                }
+                Ok(())
+            },
+            Some(Err(err_msg)) => {
+                if options.color {
+                    Color::CYAN.push(out);
+                }
+                out.push('[');
+                out.push_str(tag);
+                out.push_str(": <Inspection threw (");
+                out.push_str(&err_msg);
+                out.push_str(")>]");
+                if options.color {
+                    Color::reset(out);
+                }
+                Ok(())
+            },
+        },
+    }
+}
+
+fn emit_container_items(
+    result: &mut String,
+    open: &str,
+    close: &str,
+    items: &[String],
+    options: &FormatOptions<'_>,
+    depth: usize,
+    is_array: bool,
+) {
+    result.push_str(open);
+    if items.is_empty() {
+        result.push_str(close);
+        return;
+    }
+
+    let items_width: usize = items
+        .iter()
+        .map(|s| s.split('\n').next().map_or(0, visible_width))
+        .sum();
+    let single_line_width =
+        open.len() + 1 + items_width + items.len().saturating_sub(1) * 2 + 1 + close.len();
+    let has_multi_item_newline = items.len() > 1 && items.iter().any(|s| s.contains('\n'));
+    let exceeds_break = options
+        .break_length
+        .is_some_and(|bl| single_line_width + depth * 2 > bl);
+
+    let multiline = match options.compact {
+        Some(true) => false,
+        Some(false) => !is_array || has_multi_item_newline || exceeds_break,
+        None => {
+            (!is_array && depth < 2 && options.newline) || has_multi_item_newline || exceeds_break
+        },
+    };
+
+    if multiline {
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                result.push(',');
+            }
+            result.push(NEWLINE);
+            push_indentation(result, depth + 1);
+            result.push_str(item);
+        }
+        result.push(NEWLINE);
+        push_indentation(result, depth);
+    } else {
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                result.push(',');
+            }
+            result.push(SPACING);
+            result.push_str(item);
+        }
+        result.push(SPACING);
+    }
+    result.push_str(close);
+}
+
+fn format_proxy<'js>(
+    result: &mut String,
+    value: Value<'js>,
+    options: &FormatOptions<'js>,
+    visited: &mut HashSet<usize>,
+    depth: usize,
+    color_enabled: bool,
+) -> Result<()> {
+    let hash = hash::default_hash(&value);
+    if visited.contains(&hash) {
+        if color_enabled {
+            Color::CYAN.push(result);
+        }
+        result.push_str(CIRCULAR);
+        if color_enabled {
+            Color::reset(result);
+        }
+        return Ok(());
+    }
+    if options.max_depth.is_some_and(|max| (depth as i64) > max) {
+        if color_enabled {
+            Color::CYAN.push(result);
+        }
+        result.push_str("[Proxy]");
+        if color_enabled {
+            Color::reset(result);
+        }
+        return Ok(());
+    }
+    visited.insert(hash);
+    let ctx = value.ctx().clone();
+    let raw = value.as_raw();
+    let (target, handler) = unsafe {
+        let t = qjs::JS_GetProxyTarget(ctx.as_raw().as_ptr(), raw);
+        let h = qjs::JS_GetProxyHandler(ctx.as_raw().as_ptr(), raw);
+        (
+            Value::from_raw(ctx.clone(), t),
+            Value::from_raw(ctx.clone(), h),
+        )
+    };
+    let mut t_str = String::new();
+    format_raw_inner(&mut t_str, target, options, visited, depth + 1)?;
+    let mut h_str = String::new();
+    format_raw_inner(&mut h_str, handler, options, visited, depth + 1)?;
+    emit_container_items(
+        result,
+        "Proxy [",
+        "]",
+        &[t_str, h_str],
+        options,
+        depth,
+        false,
+    );
+    visited.remove(&hash);
+    Ok(())
+}
+
 fn push_more_items(result: &mut String, remaining: usize) {
     result.push_str("... ");
     let mut buffer = itoa::Buffer::new();
@@ -1092,49 +1490,32 @@ fn write_object<'js>(
     color_enabled: bool,
     is_array: bool,
 ) -> Result<()> {
-    result.push(if is_array { '[' } else { '{' });
+    let open = if is_array { "[" } else { "{" };
+    let close = if is_array { "]" } else { "}" };
 
-    let use_newline = options.compact.map(|c| !c).unwrap_or(options.newline);
-    let apply_indentation = match options.compact {
-        Some(true) => false,
-        Some(false) => !is_array,
-        None => !is_array && depth < 2 && options.newline,
-    };
-
-    if !is_array && (options.show_hidden || options.sorted.is_some()) {
+    if !is_array && (options.show_hidden || options.sorted.is_some() || options.getters.is_some()) {
         let entries = collect_object_entries(obj.ctx(), obj, options)?;
-        if !entries.is_empty() {
-            let mut first = false;
-            for (_sort_key, label, value) in entries {
-                let numeric_key = label.parse::<f64>().is_ok();
-                write_sep(result, first, apply_indentation, use_newline);
-                if apply_indentation {
-                    push_indentation(result, depth + 1);
-                }
-                let _ = format_raw_string_inner(
-                    result,
-                    label,
-                    numeric_key,
-                    numeric_key & color_enabled,
-                    None,
-                );
-                if numeric_key && color_enabled {
-                    Color::reset(result);
-                }
-                result.push(':');
-                result.push(SPACING);
-                format_raw_inner(result, value, options, visited, depth + 1)?;
-                first = true;
+        let mut rendered = Vec::with_capacity(entries.len());
+        for (_sort_key, label, entry) in entries {
+            let numeric_key = label.parse::<f64>().is_ok();
+            let mut item = String::new();
+            let _ = format_raw_string_inner(
+                &mut item,
+                label,
+                numeric_key,
+                numeric_key & color_enabled,
+                None,
+            );
+            if numeric_key && color_enabled {
+                Color::reset(&mut item);
             }
-            if apply_indentation {
-                result.push(NEWLINE);
-                push_indentation(result, depth);
-            } else {
-                result.push(SPACING);
-            }
-            result.push('}');
-            return Ok(());
+            item.push(':');
+            item.push(SPACING);
+            format_entry_kind(&mut item, entry, options, visited, depth + 1)?;
+            rendered.push(item);
         }
+        emit_container_items(result, open, close, &rendered, options, depth, false);
+        return Ok(());
     }
 
     let mut keys = obj.keys();
@@ -1152,38 +1533,27 @@ fn write_object<'js>(
             .and_then(|f| f.call::<_, Vec<String>>((obj.clone(),)).ok());
         if let Some(pk) = proxy_keys {
             if !pk.is_empty() {
-                let mut first = false;
+                let mut rendered = Vec::with_capacity(pk.len());
                 for key in pk.iter() {
                     let value: Value = obj.get::<&str, _>(key.as_str())?;
                     let numeric_key = key.parse::<f64>().is_ok();
-                    write_sep(result, first, apply_indentation, use_newline);
-                    if apply_indentation {
-                        push_indentation(result, depth + 1);
-                    }
+                    let mut item = String::new();
                     let _ = format_raw_string_inner(
-                        result,
+                        &mut item,
                         key.clone(),
                         numeric_key,
                         numeric_key & color_enabled,
                         None,
                     );
                     if numeric_key && color_enabled {
-                        Color::reset(result);
+                        Color::reset(&mut item);
                     }
-                    result.push(':');
-                    result.push(SPACING);
-                    format_raw_inner(result, value, options, visited, depth + 1)?;
-                    first = true;
+                    item.push(':');
+                    item.push(SPACING);
+                    format_raw_inner(&mut item, value, options, visited, depth + 1)?;
+                    rendered.push(item);
                 }
-                if first {
-                    if apply_indentation {
-                        result.push(NEWLINE);
-                        push_indentation(result, depth);
-                    } else {
-                        result.push(SPACING);
-                    }
-                }
-                result.push('}');
+                emit_container_items(result, open, close, &rendered, options, depth, false);
                 return Ok(());
             }
         }
@@ -1195,52 +1565,41 @@ fn write_object<'js>(
         }
     }
 
-    let mut first = false;
-    let mut numeric_key;
+    let mut rendered: Vec<String> = Vec::new();
     let length = keys.len();
     if is_array && options.max_array_length == Some(0) && length > 0 {
-        write_sep(result, false, apply_indentation, use_newline);
-        if apply_indentation {
-            push_indentation(result, depth + 1);
-        }
-        push_more_items(result, length);
-        first = true;
+        let mut more = String::new();
+        push_more_items(&mut more, length);
+        rendered.push(more);
     } else {
         for (i, key) in keys.flatten().enumerate() {
             let value: Value = obj.get::<&String, _>(&key)?;
             if !(value.is_function() && filter_functions) {
-                numeric_key = key.parse::<f64>().is_ok();
-                write_sep(result, first, apply_indentation, use_newline);
-
-                if apply_indentation {
-                    push_indentation(result, depth + 1);
-                }
+                let numeric_key = key.parse::<f64>().is_ok();
+                let mut item = String::new();
                 if !is_array {
                     let _ = format_raw_string_inner(
-                        result,
+                        &mut item,
                         key,
                         numeric_key,
                         numeric_key & color_enabled,
                         None,
                     );
                     if numeric_key && color_enabled {
-                        Color::reset(result);
+                        Color::reset(&mut item);
                     }
-
-                    result.push(':');
-                    result.push(SPACING);
+                    item.push(':');
+                    item.push(SPACING);
                 }
 
-                format_raw_inner(result, value, options, visited, depth + 1)?;
-                first = true;
+                format_raw_inner(&mut item, value, options, visited, depth + 1)?;
+                rendered.push(item);
                 if is_array {
                     if let Some(limit) = options.max_array_length {
                         if i + 1 >= limit && i + 1 < length {
-                            write_sep(result, first, apply_indentation, use_newline);
-                            if apply_indentation {
-                                push_indentation(result, depth + 1);
-                            }
-                            push_more_items(result, length - (i + 1));
+                            let mut more = String::new();
+                            push_more_items(&mut more, length - (i + 1));
+                            rendered.push(more);
                             break;
                         }
                     }
@@ -1249,31 +1608,19 @@ fn write_object<'js>(
         }
     }
     if is_array && options.show_hidden {
-        write_sep(result, first, apply_indentation, use_newline);
-        if apply_indentation {
-            push_indentation(result, depth + 1);
-        }
-        result.push_str("[length]: ");
+        let mut len_item = String::from("[length]: ");
         if color_enabled {
-            Color::YELLOW.push(result);
+            Color::YELLOW.push(&mut len_item);
         }
         let mut buffer = itoa::Buffer::new();
-        result.push_str(buffer.format(length));
+        len_item.push_str(buffer.format(length));
         if color_enabled {
-            Color::reset(result);
+            Color::reset(&mut len_item);
         }
-        first = true;
-    }
-    if first {
-        if apply_indentation {
-            result.push(NEWLINE);
-            push_indentation(result, depth);
-        } else {
-            result.push(SPACING);
-        }
+        rendered.push(len_item);
     }
 
-    result.push(if is_array { ']' } else { '}' });
+    emit_container_items(result, open, close, &rendered, options, depth, is_array);
 
     Ok(())
 }

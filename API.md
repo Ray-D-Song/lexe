@@ -1051,6 +1051,10 @@ Startup probe only — Lexe does **not** implement the Node Inspector debugging 
 
 [types.isUint8Array](https://nodejs.org/api/util.html#utiltypesisuint8arrayvalue)
 
+[transferableAbortController](https://nodejs.org/api/util.html#utiltransferableabortcontroller)
+
+[transferableAbortSignal](https://nodejs.org/api/util.html#utiltransferableabortsignalsignal)
+
 [TextDecoder](https://nodejs.org/api/util.html#class-utiltextdecoder)
 
 [TextEncoder](https://nodejs.org/api/util.html#class-utiltextencoder)
@@ -1061,9 +1065,9 @@ Startup probe only — Lexe does **not** implement the Node Inspector debugging 
 >
 > `format` does not append a trailing newline. `inspect.custom` uses the `nodejs.util.inspect.custom` symbol.
 >
-> `formatWithOptions` currently honors only the `colors` inspect option; other Node inspect options are ignored.
+> `util.inspect()` and `util.formatWithOptions()` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, `customInspect`, `showProxy`, `getters`, `numericSeparator`, and `breakLength`.
 >
-> `debuglog` reads `process.env.NODE_DEBUG` (comma/whitespace separated, `*` wildcard suffix supported). `types.isSharedArrayBuffer` always returns `false`.
+> `debuglog` reads `process.env.NODE_DEBUG` (comma/whitespace separated, `*` wildcard suffix supported).
 >
 > `TextDecoder.decode` supports the `stream` option for incremental decoding across calls. BOM stripping works across streaming chunks when `ignoreBOM` is `false`.
 

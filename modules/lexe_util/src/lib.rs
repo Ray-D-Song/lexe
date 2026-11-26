@@ -1671,6 +1671,28 @@ pub fn define_text_encoding_constructors(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
+fn install_transferable_abort<'js>(ctx: &Ctx<'js>, default: &Object<'js>) -> Result<()> {
+    let installer: Function<'js> = ctx.eval(
+        r#"(function(target) {
+  target.transferableAbortController = function transferableAbortController() {
+    if (typeof globalThis.__lexeTransferableAbortController !== "function") {
+      throw new Error("AbortController is unavailable in this build");
+    }
+    return globalThis.__lexeTransferableAbortController();
+  };
+  target.transferableAbortSignal = function transferableAbortSignal(signal) {
+    if (typeof AbortSignal !== "function" || !(signal instanceof AbortSignal)) {
+      const err = new TypeError('The "signal" argument must be an instance of AbortSignal.');
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
+    return globalThis.__lexeTransferableAbortSignal(signal);
+  };
+})"#,
+    )?;
+    installer.call::<_, ()>((default.clone(),))
+}
+
 pub struct UtilModule;
 
 impl ModuleDef for UtilModule {
@@ -1691,6 +1713,8 @@ impl ModuleDef for UtilModule {
         declare.declare("diff")?;
         declare.declare("getCallSites")?;
         declare.declare("aborted")?;
+        declare.declare("transferableAbortController")?;
+        declare.declare("transferableAbortSignal")?;
         declare.declare("callbackify")?;
         declare.declare("_extend")?;
         declare.declare("debuglog")?;
@@ -1745,6 +1769,7 @@ impl ModuleDef for UtilModule {
             default.set("isDeepStrictEqual", is_deep_strict_equal)?;
             default.set("parseArgs", parse_args)?;
             default.set("parseEnv", Func::from(parse_env_js))?;
+            install_transferable_abort(ctx, default)?;
             let inspect_symbol =
                 Symbol::new_global(ctx.clone(), CUSTOM_INSPECT_SYMBOL_DESCRIPTION)?;
             let inspect_value: Value = default.get("inspect")?;

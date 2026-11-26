@@ -47,7 +47,7 @@
 | node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎ | — |
-| node:util | ✔︎ | ✔︎⚠️ | Missing `transferableAbort*`; limited `TextDecoder` encodings and `inspect` options ([details](#nodeutil-and-nodeutiltypes)) |
+| node:util | ✔︎ | ✔︎⚠️ | Limited `TextDecoder` encodings (`utf-8`, `utf-16le`, `utf-16be`, `windows-1252`) ([details](#nodeutil-and-nodeutiltypes)) |
 | node:util/types | ✔︎ | ✔︎ | — |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
@@ -160,8 +160,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `node:util` and `node:util/types`
 
-- `node:util` missing exports: `transferableAbortController()` and `transferableAbortSignal()`.
-- `util.inspect()` and `util.formatWithOptions()` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, and `customInspect` (while `showProxy`, `getters`, `numericSeparator`, and line-wrapping `breakLength` are not implemented).
+- `util.inspect()` and `util.formatWithOptions()` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, `customInspect`, `showProxy`, `getters` (`true`, `"get"`, `"set"`), `numericSeparator`, and `breakLength`.
 - `util.TextDecoder` supports only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus `hex`/`base64`), lacking full WHATWG legacy encodings.
 - `node:util/types` matches Node 24 exports, including native checks for `isExternal()`, `isKeyObject()`, and `isCryptoKey()` when those subsystems are enabled.
 

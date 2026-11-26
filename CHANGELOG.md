@@ -4,6 +4,10 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Improved `node:util` compatibility (`docs/compatibility.md`):
+  - Added `util.transferableAbortController()` and `util.transferableAbortSignal()` backed by native structured-clone/transfer codecs for `AbortSignal` with cross-isolate abort propagation (`ABORT_HUB`) and `DataCloneError` enforcement for detached/non-transferable signals.
+  - Added `util.inspect()` and `util.formatWithOptions()` support for `showProxy`, `getters` (`true`, `"get"`, `"set"`), `numericSeparator`, and `breakLength` line wrapping.
+  - Kept an active `EventLoopRef` alive for non-`eval` worker isolates until `Terminate` so unreferenced background watchers (`AbortSignal`, `MessagePort`) remain responsive for the worker's lifetime.
 - Improved `node:buffer` compatibility (`docs/compatibility.md`):
   - Implemented `Buffer` slab pooling (`Buffer.poolSize`, default `64 * 1024`) for `Buffer.allocUnsafe()` and `Buffer.from()` with 8-byte alignment, while keeping `Buffer.allocUnsafeSlow()` and unseeded `Buffer.alloc()` unpooled.
   - Added `Buffer.prototype.inspect()` (aliased to `Buffer.prototype[util.inspect.custom]`) and dynamic `buffer.INSPECT_MAX_BYTES` truncation in both `Buffer.prototype.inspect()` and `util.inspect()`.

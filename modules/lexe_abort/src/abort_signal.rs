@@ -1,17 +1,51 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-use std::sync::{Arc, RwLock};
+use std::{
+    any::Any,
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex, OnceLock, RwLock,
+    },
+};
 
 use lexe_events::{Emitter, EventEmitter, EventList};
 use lexe_exceptions::{DOMException, DOMExceptionName};
-use lexe_utils::mc_oneshot;
+use lexe_utils::{
+    clone_wire::{
+        deserialize, register_native_codec, register_native_transfer_codec, serialize,
+        CloneWirePayload, NativeCloneCodec, NativeTransferCodec,
+    },
+    event_loop::{self, wait_until_io_unref, EventLoopRef},
+    mc_oneshot,
+};
 use rquickjs::{
     atom::PredefinedAtom,
     class::{Trace, Tracer},
-    function::OnceFn,
-    prelude::{Opt, This},
-    Array, Class, Ctx, Error, Exception, Function, JsLifetime, Result, Undefined, Value,
+    function::{OnceFn, Opt},
+    prelude::This,
+    qjs, Array, Class, Ctx, Error, Exception, Function, JsLifetime, Result, Undefined, Value,
 };
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+
+#[derive(Default)]
+struct SharedAbortEntry {
+    aborted: bool,
+    reason: Option<CloneWirePayload>,
+    watchers: Vec<UnboundedSender<Option<CloneWirePayload>>>,
+}
+
+static NEXT_ABORT_ID: AtomicU64 = AtomicU64::new(1);
+static ABORT_HUB: OnceLock<Mutex<HashMap<u64, SharedAbortEntry>>> = OnceLock::new();
+
+fn abort_hub() -> &'static Mutex<HashMap<u64, SharedAbortEntry>> {
+    ABORT_HUB.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Clone)]
+struct TransferredAbortSignalHandle {
+    shared_id: u64,
+}
 
 #[derive(Clone)]
 #[rquickjs::class]
@@ -20,6 +54,9 @@ pub struct AbortSignal<'js> {
     pub aborted: bool,
     reason: Option<Value<'js>>,
     pub sender: mc_oneshot::Sender<Value<'js>>,
+    pub transferable: bool,
+    pub detached: bool,
+    pub shared_id: Option<u64>,
 }
 
 unsafe impl<'js> JsLifetime<'js> for AbortSignal<'js> {
@@ -52,6 +89,9 @@ impl<'js> AbortSignal<'js> {
             aborted: false,
             reason: None,
             sender,
+            transferable: false,
+            detached: false,
+            shared_id: None,
         }
     }
 
@@ -172,8 +212,31 @@ impl<'js> AbortSignal<'js> {
             DOMExceptionName::AbortError,
         )?;
         borrow.reason = Some(reason.clone());
-        borrow.sender.send(reason);
+        borrow.sender.send(reason.clone());
+        let shared_id = borrow.shared_id;
         drop(borrow);
+
+        if let Some(id) = shared_id {
+            let wire_reason = serialize(&ctx, reason, Opt(None)).ok();
+            let watchers = {
+                let mut map = abort_hub().lock().unwrap();
+                if let Some(entry) = map.get_mut(&id) {
+                    if !entry.aborted {
+                        entry.aborted = true;
+                        entry.reason = wire_reason.clone();
+                        std::mem::take(&mut entry.watchers)
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            };
+            for tx in watchers {
+                let _ = tx.send(wire_reason.clone());
+            }
+        }
+
         Self::emit_str(this.0, &ctx, "abort", vec![], false)?;
         Ok(())
     }
@@ -248,6 +311,205 @@ fn get_reason_or_dom_exception<'js>(
         Class::instance(ctx.clone(), ex)?.into_value()
     };
     Ok(reason)
+}
+
+fn ensure_shared_id<'js>(ctx: &Ctx<'js>, signal: &Class<'js, AbortSignal<'js>>) -> u64 {
+    let mut borrow = signal.borrow_mut();
+    if let Some(id) = borrow.shared_id {
+        return id;
+    }
+    let id = NEXT_ABORT_ID.fetch_add(1, Ordering::Relaxed);
+    borrow.shared_id = Some(id);
+    let aborted = borrow.aborted;
+    let reason = borrow
+        .reason
+        .clone()
+        .and_then(|r| serialize(ctx, r, Opt(None)).ok());
+    drop(borrow);
+    abort_hub().lock().unwrap().insert(
+        id,
+        SharedAbortEntry {
+            aborted,
+            reason,
+            watchers: Vec::new(),
+        },
+    );
+    id
+}
+
+pub fn make_signal_transferable<'js>(
+    ctx: &Ctx<'js>,
+    signal: Class<'js, AbortSignal<'js>>,
+) -> Result<Class<'js, AbortSignal<'js>>> {
+    signal.borrow_mut().transferable = true;
+    ensure_shared_id(ctx, &signal);
+    Ok(signal)
+}
+
+fn build_transferred_signal<'js>(ctx: &Ctx<'js>, shared_id: u64) -> Result<Value<'js>> {
+    let (already_aborted, reason_wire) = {
+        let map = abort_hub().lock().unwrap();
+        match map.get(&shared_id) {
+            Some(entry) => (entry.aborted, entry.reason.clone()),
+            None => (false, None),
+        }
+    };
+
+    let mut sig = AbortSignal::new();
+    sig.transferable = true;
+    sig.shared_id = Some(shared_id);
+
+    if already_aborted {
+        sig.aborted = true;
+        let reason_val = match reason_wire {
+            Some(ref wire) => deserialize(ctx, wire)?,
+            None => {
+                let ex =
+                    DOMException::new_with_name(ctx, DOMExceptionName::AbortError, String::new())?;
+                Class::instance(ctx.clone(), ex)?.into_value()
+            },
+        };
+        sig.reason = Some(reason_val);
+        return Ok(Class::instance(ctx.clone(), sig)?.into_value());
+    }
+
+    let instance = Class::instance(ctx.clone(), sig)?;
+    let (tx, mut rx) = unbounded_channel::<Option<CloneWirePayload>>();
+    {
+        let mut map = abort_hub().lock().unwrap();
+        let entry = map.entry(shared_id).or_default();
+        if entry.aborted {
+            let reason_wire = entry.reason.clone();
+            drop(map);
+            let reason_val = match reason_wire {
+                Some(ref wire) => deserialize(ctx, wire)?,
+                None => {
+                    let ex = DOMException::new_with_name(
+                        ctx,
+                        DOMExceptionName::AbortError,
+                        String::new(),
+                    )?;
+                    Class::instance(ctx.clone(), ex)?.into_value()
+                },
+            };
+            instance.borrow_mut().set_reason(Opt(Some(reason_val)));
+            AbortSignal::send_aborted(This(instance.clone()), ctx.clone())?;
+            return Ok(instance.into_value());
+        }
+        entry.watchers.push(tx);
+    }
+
+    let rt_ptr = unsafe { qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
+    let loop_ref = EventLoopRef::new_unreferenced(event_loop::rt_key_from_ptr(rt_ptr as *mut _));
+    let ctx_clone = ctx.clone();
+    let sig_clone = instance.clone();
+    ctx.spawn(async move {
+        tokio::select! {
+            maybe = rx.recv() => {
+                if let Some(reason_opt) = maybe {
+                    if !sig_clone.borrow().aborted {
+                        if let Some(wire) = reason_opt {
+                            if let Ok(val) = deserialize(&ctx_clone, &wire) {
+                                sig_clone.borrow_mut().set_reason(Opt(Some(val)));
+                            }
+                        }
+                        let _ = AbortSignal::send_aborted(This(sig_clone), ctx_clone);
+                    }
+                }
+            }
+            _ = wait_until_io_unref(Arc::clone(&loop_ref)) => {}
+        }
+    });
+
+    Ok(instance.into_value())
+}
+
+fn throw_data_clone_err<'js>(ctx: &Ctx<'js>, msg: &str) -> Error {
+    if let Ok(dom_ctor) = ctx
+        .globals()
+        .get::<_, rquickjs::function::Constructor>("DOMException")
+    {
+        if let Ok(obj) = dom_ctor.construct::<_, rquickjs::Object<'js>>((msg, "DataCloneError")) {
+            return ctx.throw(obj.into_value());
+        }
+    }
+    Exception::throw_type(ctx, msg)
+}
+
+fn extract_abort_signal_handle<'js>(
+    ctx: &Ctx<'js>,
+    value: &Value<'js>,
+    for_wire: bool,
+) -> Result<Option<Arc<dyn Any + Send + Sync>>> {
+    let Ok(cls) = Class::<AbortSignal<'js>>::from_value(value) else {
+        return Ok(None);
+    };
+    if !for_wire {
+        return Ok(Some(Arc::new(TransferredAbortSignalHandle {
+            shared_id: 0,
+        })));
+    }
+    let (transferable, detached) = {
+        let borrow = cls.borrow();
+        (borrow.transferable, borrow.detached)
+    };
+    if !transferable || detached {
+        return Err(throw_data_clone_err(
+            ctx,
+            "AbortSignal could not be cloned.",
+        ));
+    }
+    let shared_id = ensure_shared_id(ctx, &cls);
+    cls.borrow_mut().detached = true;
+    Ok(Some(Arc::new(TransferredAbortSignalHandle { shared_id })))
+}
+
+fn rebuild_abort_signal_value<'js>(
+    ctx: &Ctx<'js>,
+    handle: &Arc<dyn Any + Send + Sync>,
+) -> Result<Option<Value<'js>>> {
+    let Some(transferred) = handle.downcast_ref::<TransferredAbortSignalHandle>() else {
+        return Ok(None);
+    };
+    Ok(Some(build_transferred_signal(ctx, transferred.shared_id)?))
+}
+
+fn transfer_abort_signal<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Result<Option<Value<'js>>> {
+    let Ok(cls) = Class::<AbortSignal<'js>>::from_value(value) else {
+        return Ok(None);
+    };
+    let (transferable, detached) = {
+        let borrow = cls.borrow();
+        (borrow.transferable, borrow.detached)
+    };
+    if !transferable {
+        return Err(throw_data_clone_err(
+            ctx,
+            "AbortSignal could not be cloned.",
+        ));
+    }
+    if detached {
+        return Err(throw_data_clone_err(
+            ctx,
+            "AbortSignal has already been detached.",
+        ));
+    }
+    let shared_id = ensure_shared_id(ctx, &cls);
+    cls.borrow_mut().detached = true;
+    Ok(Some(build_transferred_signal(ctx, shared_id)?))
+}
+
+pub fn register_codecs() {
+    register_native_codec(NativeCloneCodec {
+        name: "AbortSignal",
+        transfer_only: true,
+        try_extract: extract_abort_signal_handle,
+        try_rebuild: rebuild_abort_signal_value,
+    });
+    register_native_transfer_codec(NativeTransferCodec {
+        name: "AbortSignal",
+        try_transfer: transfer_abort_signal,
+    });
 }
 
 #[cfg(test)]

@@ -43,6 +43,16 @@ async fn run_worker_isolate_async(start: WorkerIsolateStart) -> Result<(), Strin
     .await
     .map_err(|e| e.to_string())?;
 
+    let alive_ref = vm
+        .ctx
+        .with(|ctx| {
+            let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
+            lexe_utils::event_loop::EventLoopRef::new_referenced(
+                lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void),
+            )
+        })
+        .await;
+
     let to_main = start.to_main.clone();
     let to_main_init = to_main.clone();
     let mut from_main = start.from_main;
@@ -134,7 +144,11 @@ delete globalThis.__lexeWorkerBootstrapData;
         .await;
 
     let run_result = match init_result {
-        Ok(true) => Ok(()),
+        Ok(true) => {
+            alive_ref.unreference();
+            drop(alive_ref);
+            Ok(())
+        },
         Ok(false) => {
             let mut has_pending_tasks = true;
             loop {
@@ -157,9 +171,15 @@ delete globalThis.__lexeWorkerBootstrapData;
                     has_pending_tasks = true;
                 }
             }
+            alive_ref.unreference();
+            drop(alive_ref);
             Ok(())
         },
-        Err(e) => Err(e),
+        Err(e) => {
+            alive_ref.unreference();
+            drop(alive_ref);
+            Err(e)
+        },
     };
 
     if run_result.is_ok() {

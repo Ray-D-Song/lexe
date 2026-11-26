@@ -216,3 +216,122 @@ describe("parseArgs", () => {
     ).toBe("ERR_INVALID_ARG_VALUE");
   });
 });
+
+describe("util.inspect options parity", () => {
+  it("supports showProxy", () => {
+    const target = { a: 1 };
+    const handler = { get: () => 2 };
+    const proxy = new Proxy(target, handler);
+    expect(inspect(proxy)).not.toContain("Proxy [");
+    const withProxy = inspect(proxy, { showProxy: true });
+    expect(withProxy).toContain("Proxy [");
+    expect(withProxy).toContain("a: 1");
+    expect(withProxy).toContain("get: [function: get]");
+  });
+
+  it("supports getters (true, 'get', 'set', throwing getter)", () => {
+    const obj = {
+      get onlyGet() {
+        return 42;
+      },
+      get both() {
+        return 7;
+      },
+      set both(_v: number) {},
+      get boom() {
+        throw new Error("bad getter");
+      },
+    };
+    const allOut = inspect(obj, { getters: true });
+    expect(allOut).toContain("onlyGet: [Getter: 42]");
+    expect(allOut).toContain("both: [Getter/Setter: 7]");
+    expect(allOut).toContain("boom: [Getter: <Inspection threw");
+
+    const getOut = inspect(obj, { getters: "get" });
+    expect(getOut).toContain("onlyGet: [Getter: 42]");
+    expect(getOut).toContain("both: [Getter/Setter]");
+
+    const setOut = inspect(obj, { getters: "set" });
+    expect(setOut).toContain("onlyGet: [Getter]");
+    expect(setOut).toContain("both: [Getter/Setter: 7]");
+  });
+
+  it("supports numericSeparator", () => {
+    expect(inspect(1234567, { numericSeparator: true })).toBe("1_234_567");
+    expect(inspect(-1234567.8901, { numericSeparator: true })).toBe("-1_234_567.890_1");
+    expect(inspect(1234567890n, { numericSeparator: true })).toBe("1_234_567_890n");
+    expect(inspect(123, { numericSeparator: true })).toBe("123");
+  });
+
+  it("supports breakLength", () => {
+    const obj = { alpha: "1234567890", beta: "1234567890", gamma: "1234567890" };
+    const single = inspect(obj, { breakLength: Infinity });
+    expect(single).not.toContain("\n");
+    const wrapped = inspect(obj, { breakLength: 30 });
+    expect(wrapped).toContain("\n");
+    expect(wrapped).toContain("  alpha:");
+  });
+});
+
+describe("transferableAbortController and transferableAbortSignal", () => {
+  it("transfers signal via structuredClone and propagates abort across Worker", async () => {
+    const { transferableAbortController, transferableAbortSignal } = defaultImport as any;
+    const { Worker } = await import("node:worker_threads");
+
+    expect(() => transferableAbortSignal({} as any)).toThrow();
+
+    const ac = transferableAbortController();
+    const clonedSig = structuredClone(ac.signal, { transfer: [ac.signal] });
+    expect(clonedSig).toBeInstanceOf(AbortSignal);
+    expect(clonedSig).not.toBe(ac.signal);
+    expect(clonedSig.aborted).toBe(false);
+
+    // Re-transferring detached signal throws DataCloneError; non-transferred AbortSignal throws DataCloneError.
+    let detachedErr: any;
+    try {
+      structuredClone(ac.signal, { transfer: [ac.signal] });
+    } catch (e) {
+      detachedErr = e;
+    }
+    expect(detachedErr?.name).toBe("DataCloneError");
+
+    const plain = new AbortController().signal;
+    let plainErr: any;
+    try {
+      structuredClone(plain);
+    } catch (e) {
+      plainErr = e;
+    }
+    expect(plainErr?.name).toBe("DataCloneError");
+
+    let fired = false;
+    clonedSig.addEventListener("abort", () => {
+      fired = true;
+    });
+    ac.abort("stop-now");
+    await new Promise((r) => setTimeout(r, 15));
+    expect(clonedSig.aborted).toBe(true);
+    expect(clonedSig.reason).toBe("stop-now");
+    expect(fired).toBe(true);
+
+    // Cross-worker propagation with transferableAbortSignal(new AbortController().signal)
+    const ac2 = new AbortController();
+    const tSig = transferableAbortSignal(ac2.signal);
+    const code = `
+      import { parentPort, workerData } from "node:worker_threads";
+      workerData.signal.addEventListener("abort", () => {
+        parentPort.postMessage({ aborted: true, reason: workerData.signal.reason });
+      });
+    `;
+    const worker = new Worker(
+      new URL("data:text/javascript;base64," + Buffer.from(code).toString("base64")),
+      { workerData: { signal: tSig }, transferList: [tSig] }
+    );
+    const workerReply = new Promise<any>((resolve) => worker.once("message", resolve));
+    await new Promise<void>((resolve) => worker.once("online", resolve));
+    ac2.abort("cross-worker-cancel");
+    const got = await workerReply;
+    expect(got).toEqual({ aborted: true, reason: "cross-worker-cancel" });
+    await worker.terminate();
+  });
+});
