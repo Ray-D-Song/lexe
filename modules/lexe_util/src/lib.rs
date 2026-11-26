@@ -1639,6 +1639,13 @@ fn format_export<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<String> {
     Ok(formatted)
 }
 
+/// `util.parseArgs` implementation aligned with Node 24 CLI argument parsing.
+const PARSE_ARGS_JS: &str = include_str!("parse_args.js");
+
+fn create_parse_args<'js>(ctx: &Ctx<'js>) -> Result<Function<'js>> {
+    ctx.eval(PARSE_ARGS_JS)
+}
+
 /// Install `util.inspect.custom` on the five built-ins that define one in Node.
 const INSPECT_CUSTOM_JS: &str = include_str!("inspect_custom.js");
 
@@ -1694,6 +1701,7 @@ impl ModuleDef for UtilModule {
         declare.declare("styleText")?;
         declare.declare("stripVTControlCharacters")?;
         declare.declare("isDeepStrictEqual")?;
+        declare.declare("parseArgs")?;
         declare.declare("parseEnv")?;
         declare.declare("default")?;
         Ok(())
@@ -1714,6 +1722,7 @@ impl ModuleDef for UtilModule {
             let style_text = create_style_text(ctx)?;
             let strip_vt = create_strip_vt_control_characters(ctx)?;
             let is_deep_strict_equal = create_is_deep_strict_equal(ctx)?;
+            let parse_args = create_parse_args(ctx)?;
 
             default.set(stringify!(TextEncoder), encoder)?;
             default.set(stringify!(TextDecoder), decoder)?;
@@ -1734,6 +1743,7 @@ impl ModuleDef for UtilModule {
             default.set("styleText", style_text)?;
             default.set("stripVTControlCharacters", strip_vt)?;
             default.set("isDeepStrictEqual", is_deep_strict_equal)?;
+            default.set("parseArgs", parse_args)?;
             default.set("parseEnv", Func::from(parse_env_js))?;
             let inspect_symbol =
                 Symbol::new_global(ctx.clone(), CUSTOM_INSPECT_SYMBOL_DESCRIPTION)?;

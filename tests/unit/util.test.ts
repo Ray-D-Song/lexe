@@ -138,3 +138,81 @@ describe("promisify", () => {
     );
   });
 });
+
+describe("parseArgs", () => {
+  const { parseArgs } = defaultImport;
+
+  it("parses flags, short clusters, inline values, negative flags, defaults, and tokens", () => {
+    const res = parseArgs({
+      args: ["-fbval", "--bar=1", "--bar", "2", "--no-flag", "pos", "--", "-x"],
+      options: {
+        foo: { type: "boolean", short: "f" },
+        bar: { type: "string", short: "b", multiple: true, default: ["0"] },
+        flag: { type: "boolean", multiple: true },
+        keep: { type: "boolean", default: true },
+      },
+      allowPositionals: true,
+      allowNegative: true,
+      tokens: true,
+    });
+
+    expect(Object.getPrototypeOf(res.values)).toBeNull();
+    expect(res.values.foo).toBe(true);
+    expect(res.values.bar).toEqual(["val", "1", "2"]);
+    expect(res.values.flag).toEqual([false]);
+    expect(res.values.keep).toBe(true);
+    expect(res.positionals).toEqual(["pos", "-x"]);
+    expect(res.tokens).toEqual([
+      { kind: "option", name: "foo", rawName: "-f", index: 0, value: undefined, inlineValue: undefined },
+      { kind: "option", name: "bar", rawName: "-b", index: 0, value: "val", inlineValue: true },
+      { kind: "option", name: "bar", rawName: "--bar", index: 1, value: "1", inlineValue: true },
+      { kind: "option", name: "bar", rawName: "--bar", index: 2, value: "2", inlineValue: false },
+      { kind: "option", name: "flag", rawName: "--no-flag", index: 4, value: undefined, inlineValue: undefined },
+      { kind: "positional", index: 5, value: "pos" },
+      { kind: "option-terminator", index: 6 },
+      { kind: "positional", index: 7, value: "-x" },
+    ]);
+  });
+
+  it("supports non-strict unknown options and treats '-' as positional", () => {
+    const res = parseArgs({
+      args: ["--unk=1", "--flag", "-xy", "-", "pos"],
+      strict: false,
+      tokens: true,
+    });
+    expect(res.values).toEqual({ unk: "1", flag: true, x: true, y: true });
+    expect(res.positionals).toEqual(["-", "pos"]);
+  });
+
+  it("throws Node-compatible errors on invalid config, unknown options, ambiguous values, and positionals", () => {
+    const catchCode = (fn: () => unknown) => {
+      try {
+        fn();
+        return null;
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+
+    expect(catchCode(() => parseArgs({ args: ["--unk"] }))).toBe("ERR_PARSE_ARGS_UNKNOWN_OPTION");
+    expect(catchCode(() => parseArgs({ args: ["-x"] }))).toBe("ERR_PARSE_ARGS_UNKNOWN_OPTION");
+    expect(catchCode(() => parseArgs({ args: ["--name"], options: { name: { type: "string" } } }))).toBe(
+      "ERR_PARSE_ARGS_INVALID_OPTION_VALUE"
+    );
+    expect(
+      catchCode(() =>
+        parseArgs({ args: ["--name", "--other"], options: { name: { type: "string" }, other: { type: "boolean" } } })
+      )
+    ).toBe("ERR_PARSE_ARGS_INVALID_OPTION_VALUE");
+    expect(catchCode(() => parseArgs({ args: ["--flag=1"], options: { flag: { type: "boolean" } } }))).toBe(
+      "ERR_PARSE_ARGS_INVALID_OPTION_VALUE"
+    );
+    expect(catchCode(() => parseArgs({ args: ["pos"] }))).toBe("ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL");
+    expect(
+      catchCode(() => parseArgs({ args: [], options: { bad: { type: "number" as any } } }))
+    ).toBe("ERR_INVALID_ARG_TYPE");
+    expect(
+      catchCode(() => parseArgs({ args: [], options: { bad: { type: "boolean", short: "ab" } } }))
+    ).toBe("ERR_INVALID_ARG_VALUE");
+  });
+});
