@@ -1,4 +1,4 @@
-// Copy the release Linux binaries into the matching @lexe/linux-* subpackages.
+// Copy the release Linux binaries into the matching lexe-linux-* subpackages.
 //
 // Usage: node scripts/stage-linux-packages.mjs <dir-with-release-assets> <version>
 //
@@ -50,7 +50,7 @@ for (const [asset, dirName] of SUBPACKAGES) {
 const mainPath = path.join(npmDir, "package.json");
 const main = JSON.parse(readFileSync(mainPath, "utf8"));
 for (const [, dirName] of SUBPACKAGES) {
-  const name = `@lexe/${dirName}`;
+  const name = `lexe-${dirName}`;
   main.optionalDependencies[name] = version;
 }
 writeFileSync(mainPath, `${JSON.stringify(main, null, 2)}\n`);

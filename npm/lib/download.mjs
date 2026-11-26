@@ -57,7 +57,7 @@ export function detectLinuxLibc(env = process.env, fsExists = existsSync) {
 
 /** Return the npm subpackage name that carries the Linux binary for `arch` and `libc`. */
 export function getLinuxSubpackageName(arch, libc) {
-  return `@lexe/linux-${arch}-${libc}`;
+  return `lexe-linux-${arch}-${libc}`;
 }
 
 /** Resolve the GitHub Release asset name for a given Node `platform`, `arch` and (Linux only) `libc`. */
@@ -85,7 +85,7 @@ export function resolvePlatformAsset(
 }
 
 /**
- * Locate the binary shipped in the matching `@lexe/linux-<arch>-<libc>` subpackage.
+ * Locate the binary shipped in the matching `lexe-linux-<arch>-<libc>` subpackage.
  * Returns `undefined` when the subpackage is not installed (e.g. `--omit=optional`).
  */
 export function resolveSubpackageBinary(
@@ -235,7 +235,7 @@ async function atomicWriteBinary(targetPath, bytes, platform) {
  * Locate or download and SHA256-verify the Lexe native binary for the host platform.
  * Precedence:
  * 1. `LEXE_BINARY_PATH` (explicit file path, must exist)
- * 2. Linux only: the `@lexe/linux-<arch>-<libc>` subpackage installed by npm
+ * 2. Linux only: the `lexe-linux-<arch>-<libc>` subpackage installed by npm
  * 3. Package-local `<pkgRoot>/vendor/<asset>`
  * 4. User cache `<cacheDir>/v<version>/<asset>`
  * 5. Download `<asset>` + `SHA256SUMS` from GitHub Releases and verify SHA256

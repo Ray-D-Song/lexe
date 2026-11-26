@@ -14,7 +14,7 @@ Or run directly with `npx`:
 npx lexe --version
 ```
 
-Installing via npm installs the matching native `lexe` binary. On Linux, npm picks one of the `@lexe/linux-<arch>-<libc>` optional subpackages: `gnu` (glibc, supports native `.node` addons) or `musl` (static, no native addons). On macOS and Windows the binary is fetched during install. Each download is SHA256-verified against the GitHub Release. If the pre-download during install is skipped or offline, Lexe downloads and caches the binary on first invocation.
+Installing via npm installs the matching native `lexe` binary. On Linux, npm picks one of the `lexe-linux-<arch>-<libc>` optional subpackages: `gnu` (glibc, supports native `.node` addons) or `musl` (static, no native addons). On macOS and Windows the binary is fetched during install. Each download is SHA256-verified against the GitHub Release. If the pre-download during install is skipped or offline, Lexe downloads and caches the binary on first invocation.
 
 ## Quick start
 

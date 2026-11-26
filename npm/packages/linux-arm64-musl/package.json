@@ -1,5 +1,5 @@
 {
-  "name": "@lexe/linux-arm64-musl",
+  "name": "lexe-linux-arm64-musl",
   "version": "0.1.5",
   "description": "Lexe native runtime binary for Linux arm64 (musl). Installed automatically by the lexe package; do not depend on it directly.",
   "license": "Apache-2.0",

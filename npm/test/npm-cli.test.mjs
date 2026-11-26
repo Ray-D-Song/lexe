@@ -116,8 +116,8 @@ test("detectLinuxLibc honors LEXE_LIBC and falls back to musl loader probing", (
 });
 
 test("Linux subpackages are named per arch and libc", () => {
-  assert.equal(getLinuxSubpackageName("x64", "gnu"), "@lexe/linux-x64-gnu");
-  assert.equal(getLinuxSubpackageName("arm64", "musl"), "@lexe/linux-arm64-musl");
+  assert.equal(getLinuxSubpackageName("x64", "gnu"), "lexe-linux-x64-gnu");
+  assert.equal(getLinuxSubpackageName("arm64", "musl"), "lexe-linux-arm64-musl");
   assert.equal(resolveSubpackageBinary("darwin", "arm64"), undefined);
 });
 
@@ -134,12 +134,12 @@ test("subpackage manifests declare os/cpu/libc so npm installs only the matching
     const manifest = JSON.parse(
       await (await import("node:fs/promises")).readFile(path.join(pkgRoot, dir, "package.json"), "utf8")
     );
-    assert.equal(manifest.name, `@lexe/${dir}`);
+    assert.equal(manifest.name, `lexe-${dir}`);
     assert.deepEqual(manifest.os, ["linux"]);
     assert.deepEqual(manifest.cpu, [cpu]);
     assert.deepEqual(manifest.libc, [libc]);
     assert.equal(manifest.version, main.version);
-    assert.equal(main.optionalDependencies[`@lexe/${dir}`], main.version);
+    assert.equal(main.optionalDependencies[`lexe-${dir}`], main.version);
   }
 });
 
