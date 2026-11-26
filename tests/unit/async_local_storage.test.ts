@@ -1,7 +1,11 @@
 import {
   AsyncLocalStorage,
+  AsyncResource,
+  asyncWrapProviders,
   createHook,
+  currentId,
   executionAsyncId,
+  executionAsyncResource,
 } from "node:async_hooks";
 import defaultImport from "node:async_hooks";
 import legacyImport from "async_hooks";
@@ -202,4 +206,62 @@ it("works without relying on user createHook events", async () => {
   });
   hook.disable();
   expect(executionAsyncId()).toBeGreaterThanOrEqual(1);
+});
+
+it("supports AsyncLocalStorage({ defaultValue, name }) options", async () => {
+  expect(() => new AsyncLocalStorage("bad" as unknown as object)).toThrow(TypeError);
+  expect(() => new AsyncLocalStorage(null as unknown as object)).toThrow(TypeError);
+
+  const plain = new AsyncLocalStorage<number>();
+  expect(plain.name).toBe("");
+  expect(plain.getStore()).toBeUndefined();
+
+  const als = new AsyncLocalStorage<number>({ defaultValue: 42, name: "req-ctx" });
+  expect(als.name).toBe("req-ctx");
+  expect(als.getStore()).toBe(42);
+
+  await als.run(99, async () => {
+    expect(als.getStore()).toBe(99);
+    await Promise.resolve();
+    expect(als.getStore()).toBe(99);
+    expect(als.exit(() => als.getStore())).toBeUndefined();
+    expect(als.getStore()).toBe(99);
+  });
+  expect(als.getStore()).toBe(42);
+  expect(als.exit(() => als.getStore())).toBeUndefined();
+  expect(als.getStore()).toBe(42);
+
+  als.enterWith(7);
+  expect(als.getStore()).toBe(7);
+  als.disable();
+  expect(als.getStore()).toBe(42);
+});
+
+it("exposes executionAsyncResource(), asyncWrapProviders, and currentId()", async () => {
+  expect(currentId()).toBe(executionAsyncId());
+
+  const rootRes = executionAsyncResource();
+  expect(typeof rootRes).toBe("object");
+  expect(rootRes).not.toBeNull();
+  expect(executionAsyncResource()).toBe(rootRes);
+
+  const customRes = new AsyncResource("CustomOp");
+  customRes.runInAsyncScope(() => {
+    expect(executionAsyncResource()).toBe(customRes);
+    expect(currentId()).toBe(customRes.asyncId());
+  });
+  expect(executionAsyncResource()).toBe(rootRes);
+
+  await Promise.resolve();
+  const promiseRes = executionAsyncResource() as Record<string, unknown>;
+  expect(typeof promiseRes).toBe("object");
+  promiseRes.tag = "promise-scope";
+  expect((executionAsyncResource() as Record<string, unknown>).tag).toBe("promise-scope");
+
+  expect(Object.getPrototypeOf(asyncWrapProviders)).toBeNull();
+  expect(Object.isFrozen(asyncWrapProviders)).toBe(true);
+  expect(asyncWrapProviders.NONE).toBe(0);
+  expect(asyncWrapProviders.PROMISE).toBe(26);
+  expect(asyncWrapProviders.WORKER).toBe(45);
+  expect(asyncWrapProviders.VERIFYREQUEST).toBe(63);
 });

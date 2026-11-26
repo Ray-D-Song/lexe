@@ -4,6 +4,10 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Improved `node:async_hooks` compatibility (`docs/compatibility.md`):
+  - Added `executionAsyncResource()`, `asyncWrapProviders`, and `AsyncLocalStorage({ defaultValue, name })` constructor options plus `AsyncLocalStorage.prototype.name`.
+  - Updated `currentId()` to return the active `executionAsyncId()` instead of hardcoded `0`.
+
 - Improved `node:worker_threads` compatibility (`docs/compatibility.md`):
   - Added shared `EnvStoreHandle` (`lexe_utils::env_store`) backing `process.env` so `SHARE_ENV` synchronizes live mutations across main and worker threads while keeping isolated snapshots and default worker environments scoped per isolate.
   - Added `postMessageToThread()` and `process` `"workerMessage"` cross-thread messaging (`THREAD_HUB`) with `ERR_WORKER_MESSAGING_FAILED` on exited/unknown targets.

@@ -27,6 +27,10 @@
 
 [executionAsyncId](https://nodejs.org/api/async_hooks.html#async_hooksexecutionasyncid)
 
+[executionAsyncResource](https://nodejs.org/api/async_hooks.html#async_hooksexecutionasyncresource)
+
+[asyncWrapProviders](https://nodejs.org/api/async_hooks.html#async_hooksasyncwrapproviders)
+
 [triggerAsyncId](https://nodejs.org/api/async_hooks.html#async_hookstriggerasyncid)
 
 [AsyncResource.bind](https://nodejs.org/api/async_context.html#static-method-asyncresourcebindfn-type-thisarg)
@@ -65,7 +69,7 @@
 
 ### Class: AsyncLocalStorage
 
-[constructor](https://nodejs.org/api/async_context.html#new-asynclocalstoraget)
+[constructor](https://nodejs.org/api/async_context.html#new-asynclocalstorageoptions) (`{ defaultValue, name }`, `name` getter)
 
 [run](https://nodejs.org/api/async_context.html#asynclocalstoragerunstore-callback-args)
 

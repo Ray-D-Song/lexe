@@ -6,7 +6,7 @@
 | [Node.js API](https://nodejs.org/api/index.html) | Node.js | lexe | Key differences from Node.js |
 | --- | --- | --- | --- |
 | node:assert | ✔︎ | ✔︎ | — |
-| node:async_hooks | ✔︎ | ✔︎⚠️ | Public `createHook()` disabled by default (`LEXE_ASYNC_HOOKS=1`); missing `executionAsyncResource`, `asyncWrapProviders`, and `AsyncLocalStorage` Node 24 options ([details](#nodeasync_hooks)) |
+| node:async_hooks | ✔︎ | ✔︎⚠️ | Public `createHook()` disabled by default (`LEXE_ASYNC_HOOKS=1`) ([details](#nodeasync_hooks)) |
 | node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`) due to QuickJS-ng `ArrayBuffer` limit ([details](#nodebuffer)) |
 | node:child_process | ✔︎ | — |
 | node:cluster | ✔︎ | ✘ | Not implemented |
@@ -112,9 +112,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 #### `node:async_hooks`
 
 - User `createHook()` callbacks are disabled by default and only run when `LEXE_ASYNC_HOOKS=1` is set; by default only internal `AsyncLocalStorage` propagation is active.
-- Missing `executionAsyncResource()` and `asyncWrapProviders`.
-- `currentId()` is a deprecated stub that always returns `0`.
-- `AsyncLocalStorage` does not support newer Node options such as `defaultValue` or `name` in its constructor.
 
 #### `node:buffer`
 

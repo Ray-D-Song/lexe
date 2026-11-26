@@ -83,7 +83,10 @@ struct AsyncHookIds<'js> {
     next_async_id: AsyncId,
     id_map: HashMap<usize, (AsyncId, TriggerAsyncId)>,
     current_id: (AsyncId, TriggerAsyncId),
-    scope_stack: Vec<(AsyncId, TriggerAsyncId)>,
+    scope_stack: Vec<(AsyncId, TriggerAsyncId, Option<Object<'js>>)>,
+    current_resource: Option<Object<'js>>,
+    bootstrap_resource: Option<Object<'js>>,
+    fallback_resources: HashMap<AsyncId, Object<'js>>,
     _marker: PhantomData<&'js ()>,
 }
 
@@ -100,6 +103,9 @@ impl AsyncHookIds<'_> {
             id_map: HashMap::new(),
             current_id: BOOTSTRAP_CONTEXT,
             scope_stack: Vec::new(),
+            current_resource: None,
+            bootstrap_resource: None,
+            fallback_resources: HashMap::new(),
             _marker: PhantomData,
         }
     }
@@ -220,16 +226,39 @@ fn set_internal_consumer_count(ctx: Ctx<'_>, count: usize) -> Result<()> {
     Ok(())
 }
 
-fn current_id() -> u64 {
-    // NOTE: This method is now obsolete. Therefore, it does not return a valid value.
-    // But we will define it because it is used by cls-hooked.
-    0
+fn current_id(ctx: Ctx<'_>) -> Result<u64> {
+    execution_async_id(ctx)
 }
 
 fn execution_async_id(ctx: Ctx<'_>) -> Result<u64> {
     let bind_ids = ctx.userdata::<RefCell<AsyncHookIds>>().or_throw(&ctx)?;
     let ids = bind_ids.borrow();
     Ok(ids.current_id.0)
+}
+
+fn execution_async_resource<'js>(ctx: Ctx<'js>) -> Result<Object<'js>> {
+    let bind_ids = ctx
+        .userdata::<RefCell<AsyncHookIds<'js>>>()
+        .or_throw(&ctx)?;
+    let mut ids = bind_ids.borrow_mut();
+    if let Some(res) = ids.current_resource.as_ref() {
+        return Ok(res.clone());
+    }
+    let async_id = ids.current_id.0;
+    if async_id <= 1 {
+        if let Some(res) = ids.bootstrap_resource.as_ref() {
+            return Ok(res.clone());
+        }
+        let res = Object::new(ctx.clone())?;
+        ids.bootstrap_resource = Some(res.clone());
+        return Ok(res);
+    }
+    if let Some(res) = ids.fallback_resources.get(&async_id) {
+        return Ok(res.clone());
+    }
+    let res = Object::new(ctx.clone())?;
+    ids.fallback_resources.insert(async_id, res.clone());
+    Ok(res)
 }
 
 fn trigger_async_id(ctx: Ctx<'_>) -> Result<i64> {
@@ -319,19 +348,31 @@ fn has_enabled_init_hooks(ctx: &Ctx<'_>) -> Result<bool> {
         .any(|hook| *hook.enabled.as_ref().borrow() && hook.init.is_some()))
 }
 
-fn push_async_context(ctx: &Ctx<'_>, id: (AsyncId, TriggerAsyncId)) -> Result<()> {
-    let bind_ids = ctx.userdata::<RefCell<AsyncHookIds>>().or_throw(ctx)?;
+fn push_async_context<'js>(
+    ctx: &Ctx<'js>,
+    id: (AsyncId, TriggerAsyncId),
+    resource: Option<Object<'js>>,
+) -> Result<()> {
+    let bind_ids = ctx.userdata::<RefCell<AsyncHookIds<'js>>>().or_throw(ctx)?;
     let mut ids = bind_ids.borrow_mut();
-    let previous = ids.current_id;
-    ids.scope_stack.push(previous);
+    let prev_id = ids.current_id;
+    let prev_res = ids.current_resource.take();
+    ids.scope_stack.push((prev_id.0, prev_id.1, prev_res));
     ids.current_id = id;
+    ids.current_resource = resource;
     Ok(())
 }
 
-fn pop_async_context(ctx: &Ctx<'_>) -> Result<()> {
-    let bind_ids = ctx.userdata::<RefCell<AsyncHookIds>>().or_throw(ctx)?;
+fn pop_async_context<'js>(ctx: &Ctx<'js>) -> Result<()> {
+    let bind_ids = ctx.userdata::<RefCell<AsyncHookIds<'js>>>().or_throw(ctx)?;
     let mut ids = bind_ids.borrow_mut();
-    ids.current_id = ids.scope_stack.pop().unwrap_or(BOOTSTRAP_CONTEXT);
+    if let Some((pid, ptid, pres)) = ids.scope_stack.pop() {
+        ids.current_id = (pid, ptid);
+        ids.current_resource = pres;
+    } else {
+        ids.current_id = BOOTSTRAP_CONTEXT;
+        ids.current_resource = None;
+    }
     Ok(())
 }
 
@@ -407,8 +448,13 @@ fn async_resource_emit_init<'js>(
     has_enabled_destroy_hooks(&ctx)
 }
 
-fn async_resource_before(ctx: Ctx<'_>, async_id: u64, trigger_async_id: i64) -> Result<()> {
-    push_async_context(&ctx, (async_id, trigger_async_id))?;
+fn async_resource_before<'js>(
+    ctx: Ctx<'js>,
+    async_id: u64,
+    trigger_async_id: i64,
+    resource: Option<Object<'js>>,
+) -> Result<()> {
+    push_async_context(&ctx, (async_id, trigger_async_id), resource)?;
 
     let (internal_fns, user_fns) = {
         let bind_state = ctx.userdata::<RefCell<AsyncHookState>>().or_throw(&ctx)?;
@@ -474,12 +520,12 @@ pub fn begin_http_incoming_message_scope<'js>(
 
     let needs_destroy = async_resource_emit_init(
         ctx.clone(),
-        incoming,
+        incoming.clone(),
         "HTTPINCOMINGMESSAGE".into(),
         async_id,
         trigger_async_id,
     )?;
-    async_resource_before(ctx.clone(), async_id, trigger_async_id)?;
+    async_resource_before(ctx.clone(), async_id, trigger_async_id, Some(incoming))?;
 
     Ok(HttpIncomingMessageScope {
         ctx,
@@ -610,7 +656,7 @@ const ASYNC_RESOURCE_FACTORY_JS: &str = r#"(function (
     runInAsyncScope(fn, thisArg, ...args) {
       validateFunction(fn, "fn");
 
-      beforeNative(this[kAsyncId], this[kTriggerAsyncId]);
+      beforeNative(this[kAsyncId], this[kTriggerAsyncId], this);
 
       try {
         return Reflect.apply(fn, thisArg, args);
@@ -740,10 +786,9 @@ const ASYNC_LOCAL_STORAGE_FACTORY_JS: &str = r#"(function (
   }
 
   function readStore(als) {
-    if (!als.enabled) return undefined;
     const scope = als.storeMap.get(executionAsyncId());
     if (scope && scope.active) return scope.store;
-    return undefined;
+    return als._defaultValue;
   }
 
   function writeScope(als, store) {
@@ -753,10 +798,22 @@ const ASYNC_LOCAL_STORAGE_FACTORY_JS: &str = r#"(function (
   }
 
   class AsyncLocalStorage {
-    constructor() {
+    constructor(options) {
+      if (options !== undefined && (options === null || typeof options !== "object")) {
+        throw new TypeError(
+          'The "options" argument must be of type object. Received type ' + typeof options
+        );
+      }
       this.enabled = false;
+      this._defaultValue = options !== undefined ? options.defaultValue : undefined;
+      this._name =
+        options !== undefined && options.name !== undefined ? String(options.name) : "";
       // asyncId -> { store, active }
       this.storeMap = new Map();
+    }
+
+    get name() {
+      return this._name;
     }
 
     _enable() {
@@ -807,18 +864,20 @@ const ASYNC_LOCAL_STORAGE_FACTORY_JS: &str = r#"(function (
 
     exit(callback, ...args) {
       validateFunction(callback, "callback");
-      if (!this.enabled) {
+      if (!this.enabled && this._defaultValue === undefined) {
         return Reflect.apply(callback, null, args);
       }
       const id = executionAsyncId();
       const had = this.storeMap.has(id);
       const previous = this.storeMap.get(id);
-      this.storeMap.delete(id);
+      this.storeMap.set(id, { store: undefined, active: true });
       try {
         return Reflect.apply(callback, null, args);
       } finally {
         if (had) {
           this.storeMap.set(id, previous);
+        } else {
+          this.storeMap.delete(id);
         }
       }
     }
@@ -924,13 +983,94 @@ fn create_async_local_storage_constructor<'js>(ctx: &Ctx<'js>) -> Result<Value<'
     factory.call((execution_fn, register_fn, consumer_fn))
 }
 
+const ASYNC_WRAP_PROVIDERS: &[(&str, i32)] = &[
+    ("NONE", 0),
+    ("DIRHANDLE", 1),
+    ("DNSCHANNEL", 2),
+    ("ELDHISTOGRAM", 3),
+    ("FILEHANDLE", 4),
+    ("FILEHANDLECLOSEREQ", 5),
+    ("BLOBREADER", 6),
+    ("FSEVENTWRAP", 7),
+    ("FSREQCALLBACK", 8),
+    ("FSREQPROMISE", 9),
+    ("GETADDRINFOREQWRAP", 10),
+    ("GETNAMEINFOREQWRAP", 11),
+    ("HEAPSNAPSHOT", 12),
+    ("HTTP2SESSION", 13),
+    ("HTTP2STREAM", 14),
+    ("HTTP2PING", 15),
+    ("HTTP2SETTINGS", 16),
+    ("HTTPINCOMINGMESSAGE", 17),
+    ("HTTPCLIENTREQUEST", 18),
+    ("JSSTREAM", 19),
+    ("JSUDPWRAP", 20),
+    ("MESSAGEPORT", 21),
+    ("PIPECONNECTWRAP", 22),
+    ("PIPESERVERWRAP", 23),
+    ("PIPEWRAP", 24),
+    ("PROCESSWRAP", 25),
+    ("PROMISE", 26),
+    ("QUERYWRAP", 27),
+    ("QUIC_ENDPOINT", 28),
+    ("QUIC_LOGSTREAM", 29),
+    ("QUIC_PACKET", 30),
+    ("QUIC_SESSION", 31),
+    ("QUIC_STREAM", 32),
+    ("QUIC_UDP", 33),
+    ("SHUTDOWNWRAP", 34),
+    ("SIGNALWRAP", 35),
+    ("STATWATCHER", 36),
+    ("STREAMPIPE", 37),
+    ("TCPCONNECTWRAP", 38),
+    ("TCPSERVERWRAP", 39),
+    ("TCPWRAP", 40),
+    ("TTYWRAP", 41),
+    ("UDPSENDWRAP", 42),
+    ("UDPWRAP", 43),
+    ("SIGINTWATCHDOG", 44),
+    ("WORKER", 45),
+    ("WORKERHEAPSNAPSHOT", 46),
+    ("WORKERHEAPSTATISTICS", 47),
+    ("WRITEWRAP", 48),
+    ("ZLIB", 49),
+    ("CHECKPRIMEREQUEST", 50),
+    ("PBKDF2REQUEST", 51),
+    ("KEYPAIRGENREQUEST", 52),
+    ("KEYGENREQUEST", 53),
+    ("KEYEXPORTREQUEST", 54),
+    ("CIPHERREQUEST", 55),
+    ("DERIVEBITSREQUEST", 56),
+    ("HASHREQUEST", 57),
+    ("RANDOMBYTESREQUEST", 58),
+    ("RANDOMPRIMEREQUEST", 59),
+    ("SCRYPTREQUEST", 60),
+    ("SIGNREQUEST", 61),
+    ("TLSWRAP", 62),
+    ("VERIFYREQUEST", 63),
+];
+
+fn create_async_wrap_providers<'js>(ctx: &Ctx<'js>) -> Result<Value<'js>> {
+    let entries: Vec<String> = ASYNC_WRAP_PROVIDERS
+        .iter()
+        .map(|(k, v)| format!("{k}: {v}"))
+        .collect();
+    let script = format!(
+        "Object.freeze(Object.assign(Object.create(null), {{ {} }}))",
+        entries.join(", ")
+    );
+    ctx.eval(script)
+}
+
 pub struct AsyncHooksModule;
 
 impl ModuleDef for AsyncHooksModule {
     fn declare(declare: &Declarations) -> Result<()> {
+        declare.declare("asyncWrapProviders")?;
         declare.declare("createHook")?;
         declare.declare("currentId")?;
         declare.declare("executionAsyncId")?;
+        declare.declare("executionAsyncResource")?;
         declare.declare("triggerAsyncId")?;
         declare.declare("AsyncResource")?;
         declare.declare("AsyncLocalStorage")?;
@@ -942,13 +1082,19 @@ impl ModuleDef for AsyncHooksModule {
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         let async_resource = create_async_resource_constructor(ctx)?;
         let async_local_storage = create_async_local_storage_constructor(ctx)?;
+        let wrap_providers = create_async_wrap_providers(ctx)?;
 
         export_default(ctx, exports, |default| {
+            default.set("asyncWrapProviders", wrap_providers)?;
             default.set("AsyncResource", async_resource)?;
             default.set("AsyncLocalStorage", async_local_storage)?;
             default.set("createHook", Func::from(create_hook))?;
             default.set("currentId", Func::from(current_id))?;
             default.set("executionAsyncId", Func::from(execution_async_id))?;
+            default.set(
+                "executionAsyncResource",
+                Func::from(execution_async_resource),
+            )?;
             default.set("triggerAsyncId", Func::from(trigger_async_id))?;
 
             Ok(())
@@ -1137,7 +1283,7 @@ fn invoke_async_hook<'js>(
             }
 
             trace!("Before(async_id, trigger_id): {:?}", resource_id);
-            push_async_context(ctx, resource_id)?;
+            push_async_context(ctx, resource_id, None)?;
 
             for func in internal_before {
                 let _ = func.call::<_, ()>((resource_id.0,));
@@ -1203,11 +1349,15 @@ fn get_id_map(ctx: &Ctx<'_>, target: usize) -> Result<(AsyncId, TriggerAsyncId)>
 pub(crate) fn remove_id_map(ctx: &Ctx<'_>, target: usize) -> Result<(AsyncId, TriggerAsyncId)> {
     let bind_ids = ctx.userdata::<RefCell<AsyncHookIds>>().or_throw(ctx)?;
     let mut ids = bind_ids.borrow_mut();
-    Ok(ids
+    let removed = ids
         .id_map
         .remove_entry(&target)
         .map(|(_, (async_id, trigger_id))| (async_id, trigger_id))
-        .unwrap_or((0, 0)))
+        .unwrap_or((0, 0));
+    if removed.0 != 0 {
+        ids.fallback_resources.remove(&removed.0);
+    }
+    Ok(removed)
 }
 
 /// Like `remove_id_map`, but only removes the entry when it still maps to
@@ -1228,14 +1378,21 @@ pub(crate) fn remove_id_map_if_matches(
     if !matches {
         return Ok((0, 0));
     }
-    Ok(ids
+    let removed = ids
         .id_map
         .remove_entry(&target)
         .map(|(_, (async_id, trigger_id))| (async_id, trigger_id))
-        .unwrap_or((0, 0)))
+        .unwrap_or((0, 0));
+    if removed.0 != 0 {
+        ids.fallback_resources.remove(&removed.0);
+    }
+    Ok(removed)
 }
 
 pub(crate) fn dispatch_destroy_hooks(ctx: &Ctx<'_>, async_id: AsyncId) -> Result<()> {
+    if let Some(bind_ids) = ctx.userdata::<RefCell<AsyncHookIds>>() {
+        bind_ids.borrow_mut().fallback_resources.remove(&async_id);
+    }
     let (internal_fns, user_fns) = {
         let bind_state = ctx.userdata::<RefCell<AsyncHookState>>().or_throw(ctx)?;
         let state = bind_state.borrow();
