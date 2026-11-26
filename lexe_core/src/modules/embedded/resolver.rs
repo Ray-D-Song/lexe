@@ -43,6 +43,7 @@ fn is_path_or_url_specifier(x: &str) -> bool {
         || x.starts_with("../")
         || x.starts_with('/')
         || x.starts_with("file:")
+        || (x.len() >= 5 && x[..5].eq_ignore_ascii_case("data:"))
         || (cfg!(windows)
             && x.len() >= 3
             && x.as_bytes()[1] == b':'

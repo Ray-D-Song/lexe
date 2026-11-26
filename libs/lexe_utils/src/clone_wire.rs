@@ -3,8 +3,10 @@
 //
 // Structured-clone wire encoding for cross-isolate worker IPC (binary, not JSON).
 
+use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 use rquickjs::{
     atom::PredefinedAtom,
@@ -49,12 +51,50 @@ enum WireNode {
     },
     Map(Vec<(u32, u32)>),
     Set(Vec<u32>),
+    SharedHandle(u32),
+}
+
+#[derive(Clone, Copy)]
+pub struct NativeCloneCodec {
+    pub try_extract: for<'js> fn(&Ctx<'js>, &Value<'js>) -> Option<Arc<dyn Any + Send + Sync>>,
+    pub try_rebuild:
+        for<'js> fn(&Ctx<'js>, &Arc<dyn Any + Send + Sync>) -> Result<Value<'js>>,
+}
+
+static NATIVE_CLONE_CODEC: OnceLock<NativeCloneCodec> = OnceLock::new();
+
+pub fn register_native_codec(codec: NativeCloneCodec) {
+    let _ = NATIVE_CLONE_CODEC.set(codec);
+}
+
+pub(crate) fn try_clone_native<'js>(
+    ctx: &Ctx<'js>,
+    value: &Value<'js>,
+) -> Result<Option<Value<'js>>> {
+    let Some(codec) = NATIVE_CLONE_CODEC.get() else {
+        return Ok(None);
+    };
+    let Some(handle) = (codec.try_extract)(ctx, value) else {
+        return Ok(None);
+    };
+    Ok(Some((codec.try_rebuild)(ctx, &handle)?))
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct CloneWirePayload {
     pub body: Vec<u8>,
     pub transfers: Vec<Vec<u8>>,
+    pub handles: Vec<Arc<dyn Any + Send + Sync>>,
+}
+
+impl CloneWirePayload {
+    pub fn from_wire(body: Vec<u8>, transfers: Vec<Vec<u8>>) -> Self {
+        Self {
+            body,
+            transfers,
+            handles: Vec::new(),
+        }
+    }
 }
 
 pub fn serialize<'js>(
@@ -66,7 +106,8 @@ pub fn serialize<'js>(
     let nodes: RefCell<Vec<WireNode>> = RefCell::new(Vec::new());
     let mut memo: HashMap<usize, u32> = HashMap::new();
     let mut transfers = Vec::new();
-    let root = encode_index(ctx, &cloned, &nodes, &mut memo, &mut transfers)?;
+    let mut handles = Vec::new();
+    let root = encode_index(ctx, &cloned, &nodes, &mut memo, &mut transfers, &mut handles)?;
     let nodes = nodes.into_inner();
     let mut body = Vec::new();
     body.extend_from_slice(MAGIC);
@@ -75,7 +116,11 @@ pub fn serialize<'js>(
     for node in &nodes {
         write_node(&mut body, node);
     }
-    Ok(CloneWirePayload { body, transfers })
+    Ok(CloneWirePayload {
+        body,
+        transfers,
+        handles,
+    })
 }
 
 pub fn deserialize<'js>(ctx: &Ctx<'js>, payload: &CloneWirePayload) -> Result<Value<'js>> {
@@ -92,7 +137,7 @@ pub fn deserialize<'js>(ctx: &Ctx<'js>, payload: &CloneWirePayload) -> Result<Va
     for _ in 0..count {
         nodes.push(read_node(&payload.body, &mut pos)?);
     }
-    decode_index(ctx, &nodes, &payload.transfers, root)
+    decode_index(ctx, &nodes, &payload.transfers, &payload.handles, root)
 }
 
 fn object_ptr(value: &Value<'_>) -> Option<usize> {
@@ -108,6 +153,7 @@ fn encode_index<'js>(
     nodes: &RefCell<Vec<WireNode>>,
     memo: &mut HashMap<usize, u32>,
     transfers: &mut Vec<Vec<u8>>,
+    handles: &mut Vec<Arc<dyn Any + Send + Sync>>,
 ) -> Result<u32> {
     if let Some(ptr) = object_ptr(value) {
         if let Some(id) = memo.get(&ptr) {
@@ -116,14 +162,14 @@ fn encode_index<'js>(
         let idx = nodes.borrow().len() as u32;
         memo.insert(ptr, idx);
         nodes.borrow_mut().push(WireNode::Null); // placeholder for cycles
-        let node = encode_node_inner(ctx, value, nodes, memo, transfers)?;
+        let node = encode_node_inner(ctx, value, nodes, memo, transfers, handles)?;
         nodes.borrow_mut()[idx as usize] = node;
         return Ok(idx);
     }
     let idx = nodes.borrow().len() as u32;
     nodes
         .borrow_mut()
-        .push(encode_node_inner(ctx, value, nodes, memo, transfers)?);
+        .push(encode_node_inner(ctx, value, nodes, memo, transfers, handles)?);
     Ok(idx)
 }
 
@@ -133,6 +179,7 @@ fn encode_node_inner<'js>(
     nodes: &RefCell<Vec<WireNode>>,
     memo: &mut HashMap<usize, u32>,
     transfers: &mut Vec<Vec<u8>>,
+    handles: &mut Vec<Arc<dyn Any + Send + Sync>>,
 ) -> Result<WireNode> {
     let primordials = BasePrimordials::get(ctx)?;
     match value.type_of() {
@@ -150,7 +197,7 @@ fn encode_node_inner<'js>(
             let mut items = Vec::with_capacity(array.len());
             for i in 0..array.len() {
                 let child = array.get(i)?;
-                let id = encode_index(ctx, &child, nodes, memo, transfers)?;
+                let id = encode_index(ctx, &child, nodes, memo, transfers, handles)?;
                 items.push(id);
             }
             Ok(WireNode::Array(items))
@@ -195,8 +242,8 @@ fn encode_node_inner<'js>(
                 let mut pairs = Vec::new();
                 for entry in entries.iter::<Array>() {
                     let entry = entry?;
-                    let k = encode_index(ctx, &entry.get(0)?, nodes, memo, transfers)?;
-                    let v = encode_index(ctx, &entry.get(1)?, nodes, memo, transfers)?;
+                    let k = encode_index(ctx, &entry.get(0)?, nodes, memo, transfers, handles)?;
+                    let v = encode_index(ctx, &entry.get(1)?, nodes, memo, transfers, handles)?;
                     pairs.push((k, v));
                 }
                 return Ok(WireNode::Map(pairs));
@@ -205,7 +252,7 @@ fn encode_node_inner<'js>(
                 let entries: Array = primordials.function_array_from.call((object.clone(),))?;
                 let mut items = Vec::new();
                 for item in entries.iter::<Value>() {
-                    items.push(encode_index(ctx, &item?, nodes, memo, transfers)?);
+                    items.push(encode_index(ctx, &item?, nodes, memo, transfers, handles)?);
                 }
                 return Ok(WireNode::Set(items));
             }
@@ -233,11 +280,18 @@ fn encode_node_inner<'js>(
                 transfers.push(bytes.clone());
                 return Ok(WireNode::ArrayBufferCopy(bytes));
             }
+            if let Some(codec) = NATIVE_CLONE_CODEC.get() {
+                if let Some(handle) = (codec.try_extract)(ctx, value) {
+                    let id = handles.len() as u32;
+                    handles.push(handle);
+                    return Ok(WireNode::SharedHandle(id));
+                }
+            }
             let keys: Vec<String> = object.keys().collect::<Result<_>>()?;
             let mut props = Vec::with_capacity(keys.len());
             for key in keys {
                 let v: Value = object.get(&key)?;
-                props.push((key, encode_index(ctx, &v, nodes, memo, transfers)?));
+                props.push((key, encode_index(ctx, &v, nodes, memo, transfers, handles)?));
             }
             Ok(WireNode::Object(props))
         },
@@ -253,16 +307,18 @@ fn decode_index<'js>(
     ctx: &Ctx<'js>,
     nodes: &[WireNode],
     transfers: &[Vec<u8>],
+    handles: &[Arc<dyn Any + Send + Sync>],
     idx: u32,
 ) -> Result<Value<'js>> {
     let mut cache: Vec<Option<Value<'js>>> = vec![None; nodes.len()];
-    decode_at(ctx, nodes, transfers, idx as usize, &mut cache)
+    decode_at(ctx, nodes, transfers, handles, idx as usize, &mut cache)
 }
 
 fn decode_at<'js>(
     ctx: &Ctx<'js>,
     nodes: &[WireNode],
     transfers: &[Vec<u8>],
+    handles: &[Arc<dyn Any + Send + Sync>],
     idx: usize,
     cache: &mut [Option<Value<'js>>],
 ) -> Result<Value<'js>> {
@@ -270,7 +326,7 @@ fn decode_at<'js>(
         return Ok(v.clone());
     }
     let value = match &nodes[idx] {
-        WireNode::Ref(id) => return decode_at(ctx, nodes, transfers, *id as usize, cache),
+        WireNode::Ref(id) => return decode_at(ctx, nodes, transfers, handles, *id as usize, cache),
         WireNode::Undefined => Undefined.into_value(ctx.clone()),
         WireNode::Null => Null.into_value(ctx.clone()),
         WireNode::Bool(b) => b.into_js(ctx)?,
@@ -327,7 +383,7 @@ fn decode_at<'js>(
             let array = Array::new(ctx.clone())?;
             cache[idx] = Some(array.clone().into_js(ctx)?);
             for (i, child) in indices.iter().enumerate() {
-                let v = decode_at(ctx, nodes, transfers, *child as usize, cache)?;
+                let v = decode_at(ctx, nodes, transfers, handles, *child as usize, cache)?;
                 array.set(i, v)?;
             }
             array.into_js(ctx)?
@@ -336,7 +392,7 @@ fn decode_at<'js>(
             let object = Object::new(ctx.clone())?;
             cache[idx] = Some(object.clone().into_js(ctx)?);
             for (key, child) in props {
-                let v = decode_at(ctx, nodes, transfers, *child as usize, cache)?;
+                let v = decode_at(ctx, nodes, transfers, handles, *child as usize, cache)?;
                 object.set(key.clone(), v)?;
             }
             object.into_js(ctx)?
@@ -346,8 +402,14 @@ fn decode_at<'js>(
             let entries = Array::new(ctx.clone())?;
             for (k, v) in pairs {
                 let pair = Array::new(ctx.clone())?;
-                pair.set(0, decode_at(ctx, nodes, transfers, *k as usize, cache)?)?;
-                pair.set(1, decode_at(ctx, nodes, transfers, *v as usize, cache)?)?;
+                pair.set(
+                    0,
+                    decode_at(ctx, nodes, transfers, handles, *k as usize, cache)?,
+                )?;
+                pair.set(
+                    1,
+                    decode_at(ctx, nodes, transfers, handles, *v as usize, cache)?,
+                )?;
                 entries.set(entries.len(), pair)?;
             }
             let obj: Object = primordials.constructor_map.construct((entries,))?;
@@ -359,11 +421,20 @@ fn decode_at<'js>(
             for child in items {
                 entries.set(
                     entries.len(),
-                    decode_at(ctx, nodes, transfers, *child as usize, cache)?,
+                    decode_at(ctx, nodes, transfers, handles, *child as usize, cache)?,
                 )?;
             }
             let obj: Object = primordials.constructor_set.construct((entries,))?;
             obj.into_js(ctx)?
+        },
+        WireNode::SharedHandle(handle_idx) => {
+            let codec = NATIVE_CLONE_CODEC.get().ok_or_else(|| {
+                Exception::throw_type(ctx, "Native structured clone codec unavailable")
+            })?;
+            let handle = handles.get(*handle_idx as usize).ok_or_else(|| {
+                Exception::throw_type(ctx, "Missing shared handle in structured-clone payload")
+            })?;
+            (codec.try_rebuild)(ctx, handle)?
         },
     };
     if cache[idx].is_none() {
@@ -494,6 +565,10 @@ fn write_node(out: &mut Vec<u8>, node: &WireNode) {
             write_u32(out, *byte_length);
             write_bytes(out, view_name.as_bytes());
         },
+        WireNode::SharedHandle(id) => {
+            out.push(18);
+            write_u32(out, *id);
+        },
     }
 }
 
@@ -555,6 +630,7 @@ fn read_node(data: &[u8], pos: &mut usize) -> Result<WireNode> {
             byte_length: read_u32(data, pos)?,
             view_name: read_string(data, pos)?,
         },
+        18 => WireNode::SharedHandle(read_u32(data, pos)?),
         _ => {
             return Err(rquickjs::Error::new_from_js_message(
                 "clone_wire",

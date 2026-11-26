@@ -31,7 +31,9 @@ mod table;
 mod top_level;
 mod value_conv;
 
-use rquickjs::{atom::PredefinedAtom, class::Class, object::Property, Ctx, Object, Result};
+use std::{any::Any, sync::Arc};
+
+use rquickjs::{atom::PredefinedAtom, class::Class, object::Property, Ctx, IntoJs, Object, Result, Value};
 
 use global::WasmGlobal;
 use instance::WasmInstance;
@@ -64,7 +66,41 @@ fn install_class<'js, C: rquickjs::class::JsClass<'js> + 'js>(
 /// through the resulting `WebAssembly` is scoped to (and only usable
 /// within) this one context; using one from a *different* context throws a
 /// `LinkError` (see `realm::WasmRealm`'s per-object `realm_id` checks).
+fn extract_wasm_module_handle(
+    _ctx: &Ctx<'_>,
+    value: &Value<'_>,
+) -> Option<Arc<dyn Any + Send + Sync>> {
+    let cls = Class::<WasmModule>::from_value(value).ok()?;
+    let borrow = cls.borrow();
+    Some(Arc::new((
+        Arc::clone(&borrow.inner),
+        Arc::clone(&borrow.metadata),
+    )))
+}
+
+fn rebuild_wasm_module_value<'js>(
+    ctx: &Ctx<'js>,
+    handle: &Arc<dyn Any + Send + Sync>,
+) -> Result<Value<'js>> {
+    let pair = handle
+        .downcast_ref::<(Arc<wasmi::Module>, Arc<module::ModuleMetadata>)>()
+        .ok_or(rquickjs::Error::Unknown)?;
+    let instance = Class::instance(
+        ctx.clone(),
+        WasmModule {
+            inner: Arc::clone(&pair.0),
+            metadata: Arc::clone(&pair.1),
+        },
+    )?;
+    instance.into_js(ctx)
+}
+
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
+    lexe_utils::clone_wire::register_native_codec(lexe_utils::clone_wire::NativeCloneCodec {
+        try_extract: extract_wasm_module_handle,
+        try_rebuild: rebuild_wasm_module_value,
+    });
+
     let namespace = Object::new(ctx.clone())?;
 
     let error_constructors = errors::install(ctx, &namespace)?;

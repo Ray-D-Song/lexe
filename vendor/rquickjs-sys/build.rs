@@ -133,6 +133,7 @@ fn main() {
         "dtoa.h",
         "libregexp-opcode.h",
         "libregexp.h",
+        "libunicode-emoji-table.h",
         "libunicode-table.h",
         "libunicode.h",
         "list.h",

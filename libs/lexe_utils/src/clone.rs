@@ -195,6 +195,17 @@ pub fn structured_clone<'js>(
                             }
                         }
 
+                        if let Some(cloned) = crate::clone_wire::try_clone_native(ctx, &value)? {
+                            tape.push(TapeItem {
+                                parent,
+                                object_key,
+                                array_index,
+                                value: TapeValue::Value(cloned),
+                            });
+                            index += 1;
+                            continue;
+                        }
+
                         let new: Object<'_> =
                             if object.is_instance_of(&primordials.constructor_error) {
                                 primordials.constructor_error.construct(("",))

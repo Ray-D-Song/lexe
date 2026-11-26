@@ -135,6 +135,7 @@ export class MessagePort {
   onmessageerror: ((ev: unknown) => void) | null = null;
   #peer: MessagePort | null = null;
   #listeners = new Map<string, Set<MessageListener>>();
+  #onceWrappers = new WeakMap<MessageListener, MessageListener>();
   #closed = false;
   readonly #loopRef: LoopRefController;
 
@@ -222,7 +223,13 @@ export class MessagePort {
   }
 
   removeEventListener(type: string, listener: MessageListener): void {
-    this.#listeners.get(type)?.delete(listener);
+    const set = this.#listeners.get(type);
+    if (!set) return;
+    set.delete(listener);
+    const wrapped = this.#onceWrappers.get(listener);
+    if (wrapped) {
+      set.delete(wrapped);
+    }
   }
 
   on(type: string, listener: MessageListener): this {
@@ -230,8 +237,35 @@ export class MessagePort {
     return this;
   }
 
+  once(type: string, listener: MessageListener): this {
+    const wrapped: MessageListener = (data: unknown) => {
+      this.removeEventListener(type, wrapped);
+      listener(data);
+    };
+    this.#onceWrappers.set(listener, wrapped);
+    this.addEventListener(type, wrapped);
+    return this;
+  }
+
+  addListener(type: string, listener: MessageListener): this {
+    return this.on(type, listener);
+  }
+
   off(type: string, listener: MessageListener): this {
     this.removeEventListener(type, listener);
+    return this;
+  }
+
+  removeListener(type: string, listener: MessageListener): this {
+    return this.off(type, listener);
+  }
+
+  removeAllListeners(type?: string): this {
+    if (type === undefined) {
+      this.#listeners.clear();
+    } else {
+      this.#listeners.delete(type);
+    }
     return this;
   }
 

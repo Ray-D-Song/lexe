@@ -84,6 +84,9 @@ struct WorkerState {
 }
 
 fn resolve_worker_filename(ctx: &Ctx<'_>, filename: String) -> Result<String> {
+    if filename.len() >= 5 && filename[..5].eq_ignore_ascii_case("data:") {
+        return Ok(filename);
+    }
     if let Some(path) = filename.strip_prefix("file://") {
         return Ok(path.to_string());
     }

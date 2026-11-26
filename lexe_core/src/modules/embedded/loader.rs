@@ -130,7 +130,10 @@ impl EmbeddedLoader {
             ));
         }
 
-        if path.starts_with("file:") || path.starts_with("node:") {
+        if path.starts_with("file:")
+            || path.starts_with("node:")
+            || (path.len() >= 5 && path[..5].eq_ignore_ascii_case("data:"))
+        {
             return Err(Error::new_loading_message(path, "unable to load"));
         }
 

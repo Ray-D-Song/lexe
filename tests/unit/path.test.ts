@@ -426,3 +426,15 @@ describe("matchesGlob", () => {
     }
   });
 });
+
+describe("named ESM exports for path constants", () => {
+  it("exports sep and delimiter as named ESM bindings", async () => {
+    const mod = await import("node:path");
+    expect(mod.sep).toBe(path.sep);
+    expect(mod.delimiter).toBe(path.delimiter);
+    expect(mod.posix.sep).toBe("/");
+    expect(mod.posix.delimiter).toBe(":");
+    expect(mod.win32.sep).toBe("\\");
+    expect(mod.win32.delimiter).toBe(";");
+  });
+});

@@ -990,8 +990,38 @@ impl<'js> ReadStream<'js> {
                 loop_ref,
             },
         )?;
-        ReadStream::add_event_emitter_prototype(&ctx)?;
+        ReadStream::ensure_prototype(&ctx)?;
         Ok(instance)
+    }
+
+    fn ensure_prototype(ctx: &Ctx<'js>) -> Result<()> {
+        let _ = BasePrimordials::init(ctx);
+        let Some(proto) = Class::<ReadStream>::prototype(ctx)? else {
+            return Ok(());
+        };
+        if proto
+            .get::<_, Option<bool>>("__lexeTtyDataHooked")?
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        ReadStream::add_event_emitter_prototype(ctx)?;
+        let install: rquickjs::Function = ctx.eval(
+            r#"(function (proto) {
+  Object.defineProperty(proto, "__lexeTtyDataHooked", { value: true });
+  for (const m of ["on", "once", "addListener", "prependListener", "prependOnceListener"]) {
+    const orig = proto[m];
+    if (typeof orig === "function") {
+      proto[m] = function (ev) {
+        const ret = orig.apply(this, arguments);
+        if (ev === "data" && typeof this.resume === "function") this.resume();
+        return ret;
+      };
+    }
+  }
+})"#,
+        )?;
+        install.call::<_, ()>((proto,))
     }
 
     fn resume_inner(this: Class<'js, Self>, ctx: Ctx<'js>) -> Result<()> {
@@ -2002,7 +2032,7 @@ impl ModuleDef for TtyModule {
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         let _ = Class::<ReadStream>::create_constructor(ctx)?;
         let _ = Class::<WriteStream>::create_constructor(ctx)?;
-        ReadStream::add_event_emitter_prototype(ctx)?;
+        ReadStream::ensure_prototype(ctx)?;
         WriteStream::ensure_prototype(ctx)?;
 
         export_default(ctx, exports, |default| {
@@ -2477,5 +2507,71 @@ mod tests {
             })
         })
         .await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn read_stream_on_data_resumes_and_reads_pipe() {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let (r, w) = (fds[0], fds[1]);
+
+        test_async_with(|ctx| {
+            Box::pin(async move {
+                ModuleEvaluator::eval_rust::<TtyModule>(ctx.clone(), "tty")
+                    .await
+                    .unwrap();
+                ctx.globals().set("__pipeReadFd", r).unwrap();
+                ctx.globals().set("__pipeWriteFd", w).unwrap();
+                let write_and_close = rquickjs::Function::new(ctx.clone(), |fd: i32| {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        unsafe {
+                            libc::write(fd as libc::c_int, b"ping\n".as_ptr() as *const _, 5);
+                            libc::close(fd as libc::c_int);
+                        }
+                    });
+                })
+                .unwrap();
+                ctx.globals()
+                    .set("__writePipeAndClose", write_and_close)
+                    .unwrap();
+
+                let module = ModuleEvaluator::eval_js(
+                    ctx.clone(),
+                    "test",
+                    r#"
+                        import tty from "tty";
+                        export async function test() {
+                            const rs = new tty.ReadStream(globalThis.__pipeReadFd);
+                            rs.setEncoding("utf8");
+                            const pausedBefore = rs.isPaused();
+                            return await new Promise((resolve) => {
+                                let out = "";
+                                rs.on("data", (chunk) => { out += chunk; });
+                                const pausedAfter = rs.isPaused();
+                                rs.on("end", () => resolve({ out, pausedBefore, pausedAfter }));
+                                globalThis.__writePipeAndClose(globalThis.__pipeWriteFd);
+                            });
+                        }
+                    "#,
+                )
+                .await
+                .unwrap();
+
+                let res: Object = call_test(&ctx, &module, ()).await;
+                let out: String = res.get("out").unwrap();
+                let paused_before: bool = res.get("pausedBefore").unwrap();
+                let paused_after: bool = res.get("pausedAfter").unwrap();
+                assert_eq!(out, "ping\n");
+                assert!(paused_before);
+                assert!(!paused_after);
+            })
+        })
+        .await;
+
+        unsafe {
+            libc::close(r);
+        }
     }
 }

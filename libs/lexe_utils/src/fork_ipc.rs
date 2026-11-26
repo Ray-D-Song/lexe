@@ -16,6 +16,12 @@ pub fn write_frame_sync(
     tag: u8,
     payload: &CloneWirePayload,
 ) -> std::io::Result<()> {
+    if !payload.handles.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "In-memory shared handles cannot be serialized across process IPC",
+        ));
+    }
     writer.write_all(&[tag])?;
     write_u32(writer, payload.body.len() as u32)?;
     writer.write_all(&payload.body)?;
@@ -51,7 +57,7 @@ pub fn read_frame_sync(reader: &mut impl Read) -> std::io::Result<(u8, CloneWire
         reader.read_exact(&mut bytes)?;
         transfers.push(bytes);
     }
-    Ok((tag[0], CloneWirePayload { body, transfers }))
+    Ok((tag[0], CloneWirePayload::from_wire(body, transfers)))
 }
 
 pub async fn read_frame_async(
@@ -70,7 +76,7 @@ pub async fn read_frame_async(
         reader.read_exact(&mut bytes).await?;
         transfers.push(bytes);
     }
-    Ok((tag[0], CloneWirePayload { body, transfers }))
+    Ok((tag[0], CloneWirePayload::from_wire(body, transfers)))
 }
 
 fn write_u32(writer: &mut impl Write, v: u32) -> std::io::Result<()> {

@@ -43,7 +43,11 @@ impl Resolver for ModuleResolver {
         _attr: Option<ImportAttributes<'_>>,
     ) -> Result<String> {
         let name = name.trim_start_matches(CJS_IMPORT_PREFIX);
-        let name = name.trim_end_matches('/');
+        let name = if name.len() >= 5 && name[..5].eq_ignore_ascii_case("data:") {
+            name
+        } else {
+            name.trim_end_matches('/')
+        };
 
         let base = base.trim_start_matches(CJS_IMPORT_PREFIX);
 
