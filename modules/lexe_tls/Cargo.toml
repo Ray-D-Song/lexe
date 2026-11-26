@@ -12,7 +12,7 @@ name = "lexe_tls"
 path = "src/lib.rs"
 
 [features]
-default = ["webpki-roots", "tls-ring"]
+default = ["native-roots", "tls-ring"]
 
 webpki-roots = ["dep:webpki-roots"]
 native-roots = ["dep:rustls-native-certs"]
