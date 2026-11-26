@@ -53,6 +53,22 @@ describe("import", () => {
     ).toEqual(true);
   });
 
+  it("keeps import.meta properties writable, enumerable, and configurable", () => {
+    for (const key of ["url", "filename", "dirname", "resolve"]) {
+      const descriptor = Object.getOwnPropertyDescriptor(import.meta, key)!;
+      expect(descriptor.writable).toBe(true);
+      expect(descriptor.enumerable).toBe(true);
+      expect(descriptor.configurable).toBe(true);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(import.meta, "resolve")!;
+    try {
+      Object.defineProperty(import.meta, "resolve", { value: () => "patched" });
+      expect(import.meta.resolve("node:fs")).toBe("patched");
+    } finally {
+      Object.defineProperty(import.meta, "resolve", descriptor);
+    }
+  });
+
   it("regression testing for issue #1492", async () => {
     await import(`${CWD}/fixtures/test1492/index.js`);
   });

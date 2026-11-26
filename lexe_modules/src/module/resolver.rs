@@ -227,20 +227,20 @@ pub fn resolve_import_meta(ctx: &Ctx<'_>, parent_url: &str, spec: &str) -> Resul
 }
 
 pub fn populate_import_meta<'js>(_ctx: &Ctx<'js>, meta: &Object<'js>, url: &str) -> Result<()> {
-    meta.prop("url", url)?;
+    meta.set("url", url)?;
     if let Some((fs_path, _)) = file_url_to_path_and_query(url) {
         let dirname = path::dirname(&fs_path);
-        meta.prop("dirname", dirname)?;
-        meta.prop("filename", fs_path)?;
+        meta.set("dirname", dirname)?;
+        meta.set("filename", fs_path)?;
     } else if !url.contains("://") && !url.starts_with("node:") {
         if let Some(parent) = Path::new(url).parent() {
-            meta.prop("dirname", parent.to_string_lossy().as_ref())?;
+            meta.set("dirname", parent.to_string_lossy().as_ref())?;
         }
-        meta.prop("filename", url)?;
+        meta.set("filename", url)?;
     }
 
     let parent_url = path_or_url_to_file_url(url);
-    meta.prop(
+    meta.set(
         "resolve",
         Func::from(move |ctx: Ctx<'_>, spec: String| -> Result<String> {
             resolve_import_meta(&ctx, &parent_url, &spec)
