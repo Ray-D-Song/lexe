@@ -46,7 +46,8 @@ async fn run_worker_isolate_async(start: WorkerIsolateStart) -> Result<(), Strin
     let to_main = start.to_main.clone();
     let from_main = start.from_main;
 
-    vm.ctx
+    let run_result: Result<(), String> = vm
+        .ctx
         .async_with(async move |ctx| {
             lexe_worker_threads::init(&ctx).map_err(|e| e.to_string())?;
 
@@ -157,11 +158,13 @@ delete globalThis.__lexeWorkerBootstrapData;
             Ok(())
         })
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string());
 
-    vm.idle().await.map_err(|e| e.to_string())?;
+    if run_result.is_ok() {
+        let _ = vm.idle().await;
+    }
     vm.shutdown().await;
-    Ok(())
+    run_result
 }
 
 fn resolve_script(_ctx: &Ctx<'_>, script: &str) -> Result<String, String> {

@@ -345,4 +345,36 @@ describe("worker_threads Worker spawn", () => {
     worker.terminate();
     await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
   });
+
+  it("supports MessagePort.once() / parentPort.once() and handles uncaught worker errors cleanly", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: unknown[] = [];
+    port2.once("message", (v) => seen.push(v));
+    port1.postMessage("first");
+    port1.postMessage("second");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(seen).toEqual(["first"]);
+    port1.close();
+    port2.close();
+
+    const { Worker } = await import("node:worker_threads");
+    const echoOnce = `import { parentPort } from "node:worker_threads";
+      parentPort.once("message", (v) => parentPort.postMessage({ got: v }));`;
+    const w1 = new Worker(
+      new URL("data:text/javascript;base64," + Buffer.from(echoOnce).toString("base64"))
+    );
+    await new Promise<void>((resolve) => w1.once("online", resolve));
+    const reply = new Promise<unknown>((resolve) => w1.once("message", resolve));
+    w1.postMessage("ping");
+    expect(await reply).toEqual({ got: "ping" });
+    await w1.terminate();
+
+    const throwing = `throw new Error("boom-worker");`;
+    const w2 = new Worker(
+      new URL("data:text/javascript;base64," + Buffer.from(throwing).toString("base64"))
+    );
+    const err = await new Promise<unknown>((resolve) => w2.once("error", resolve));
+    expect(String((err as { message?: string })?.message ?? err)).toContain("boom-worker");
+  });
 });
