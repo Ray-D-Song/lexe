@@ -209,12 +209,13 @@ impl<'js> AbortSignal<'js> {
 
         #[cfg(feature = "sleep-timers")]
         {
+            // AbortSignal.timeout() must not keep the event loop alive on its own.
             lexe_timers::set_timeout_interval(
                 &ctx,
                 cb,
                 milliseconds,
                 lexe_utils::provider::ProviderType::Timeout,
-                true,
+                false,
             )?;
         }
         #[cfg(all(not(feature = "sleep-timers"), feature = "sleep-tokio"))]
@@ -264,8 +265,17 @@ mod tests {
             crate::init(&ctx).unwrap();
             lexe_timers::init(&ctx).unwrap();
             Box::pin(async move {
-                let signal = AbortSignal::timeout(ctx, 5).unwrap();
+                // Keep a referenced timer alive so the timer loop runs while testing unref'd AbortSignal.timeout.
+                let keep_alive = lexe_timers::set_timeout_interval(
+                    &ctx,
+                    Function::new(ctx.clone(), || Ok::<_, Error>(())).unwrap(),
+                    500,
+                    lexe_utils::provider::ProviderType::Timeout,
+                    true,
+                )
+                .unwrap();
 
+                let signal = AbortSignal::timeout(ctx.clone(), 5).unwrap();
                 assert!(!signal.borrow().aborted());
 
                 tokio::time::sleep(Duration::from_millis(50)).await;
@@ -274,6 +284,15 @@ mod tests {
                 let reason = signal.borrow().reason().unwrap();
                 let reason = Class::<DOMException>::from_value(&reason).unwrap();
                 assert_eq!(reason.borrow().name(), "TimeoutError");
+
+                let clear_timeout: Function = ctx.globals().get("clearTimeout").unwrap();
+                clear_timeout.call::<_, ()>((keep_alive,)).unwrap();
+                let unref_only = AbortSignal::timeout(ctx.clone(), 10_000).unwrap();
+                let _ = unref_only;
+                let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
+                let rt_key = lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
+                assert!(!lexe_utils::event_loop::has_refed_handles(rt_key));
+                lexe_timers::discard_all_timers_on_process_exit(&ctx, rt_ptr).unwrap();
             })
         })
         .await;

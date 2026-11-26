@@ -492,17 +492,24 @@ pub fn set_timeout_interval<'js>(
     let mut rt_timer = RT_TIMER_STATE.lock().unwrap();
     let state = get_timer_state(&mut rt_timer, rt_ptr);
     state.timers.push(timeout);
+    if deadline < state.deadline {
+        state.deadline = deadline;
+    }
+    let next_deadline = earliest_timer_deadline(state).unwrap_or(deadline);
     let task_running = state.running;
     if task_running {
-        if deadline < state.deadline {
-            state.deadline = deadline;
+        if next_deadline < state.deadline {
+            state.deadline = next_deadline;
+        }
+        if deadline <= state.deadline {
             state.notify.notify_one();
         }
     } else if should_keep_timer_loop(state, rt_key) {
         state.running = true;
+        state.deadline = next_deadline;
         let timer_abort = state.notify.clone();
         drop(rt_timer);
-        create_spawn_loop(rt_ptr, ctx, timer_abort, deadline)?;
+        create_spawn_loop(rt_ptr, ctx, timer_abort, next_deadline)?;
     } else {
         drop(rt_timer);
     }
@@ -543,6 +550,15 @@ fn get_timer_state<'a>(
 
     //save a branch
     unsafe { rt_timers.unwrap_unchecked() }
+}
+
+fn earliest_timer_deadline(state: &RuntimeTimerState) -> Option<Instant> {
+    state
+        .timers
+        .iter()
+        .filter(|t| t.callback.is_some() && !t.pending_destroy)
+        .map(|t| t.deadline)
+        .min()
 }
 
 fn should_keep_timer_loop(state: &RuntimeTimerState, rt_key: RtKey) -> bool {
@@ -1187,8 +1203,10 @@ pub fn resume_timer_loop_if_idle(ctx: &Ctx<'_>) -> Result<()> {
         if !should_keep_timer_loop(state, rt_key) {
             return Ok(());
         }
+        let next_deadline = earliest_timer_deadline(state).unwrap_or(state.deadline);
+        state.deadline = next_deadline;
         state.running = true;
-        (true, state.deadline, state.notify.clone())
+        (true, next_deadline, state.notify.clone())
     };
     if should_run {
         create_spawn_loop(rt_ptr, ctx, notify, deadline)?;
