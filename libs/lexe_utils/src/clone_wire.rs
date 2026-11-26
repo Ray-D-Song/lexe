@@ -57,8 +57,7 @@ enum WireNode {
 #[derive(Clone, Copy)]
 pub struct NativeCloneCodec {
     pub try_extract: for<'js> fn(&Ctx<'js>, &Value<'js>) -> Option<Arc<dyn Any + Send + Sync>>,
-    pub try_rebuild:
-        for<'js> fn(&Ctx<'js>, &Arc<dyn Any + Send + Sync>) -> Result<Value<'js>>,
+    pub try_rebuild: for<'js> fn(&Ctx<'js>, &Arc<dyn Any + Send + Sync>) -> Result<Value<'js>>,
 }
 
 static NATIVE_CLONE_CODEC: OnceLock<NativeCloneCodec> = OnceLock::new();
@@ -107,7 +106,14 @@ pub fn serialize<'js>(
     let mut memo: HashMap<usize, u32> = HashMap::new();
     let mut transfers = Vec::new();
     let mut handles = Vec::new();
-    let root = encode_index(ctx, &cloned, &nodes, &mut memo, &mut transfers, &mut handles)?;
+    let root = encode_index(
+        ctx,
+        &cloned,
+        &nodes,
+        &mut memo,
+        &mut transfers,
+        &mut handles,
+    )?;
     let nodes = nodes.into_inner();
     let mut body = Vec::new();
     body.extend_from_slice(MAGIC);
@@ -167,9 +173,9 @@ fn encode_index<'js>(
         return Ok(idx);
     }
     let idx = nodes.borrow().len() as u32;
-    nodes
-        .borrow_mut()
-        .push(encode_node_inner(ctx, value, nodes, memo, transfers, handles)?);
+    nodes.borrow_mut().push(encode_node_inner(
+        ctx, value, nodes, memo, transfers, handles,
+    )?);
     Ok(idx)
 }
 

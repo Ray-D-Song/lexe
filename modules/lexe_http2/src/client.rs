@@ -6,10 +6,7 @@ use std::{
     future::poll_fn,
     io,
     pin::Pin,
-    sync::{
-        atomic::Ordering,
-        Arc,
-    },
+    sync::{atomic::Ordering, Arc},
     task::{Context, Poll},
     time::Instant,
 };
@@ -230,10 +227,8 @@ impl<'js> ClientHttp2Session<'js> {
             if arg.is_function() {
                 callback = arg.into_function();
             } else if payload_bytes.is_none() && !arg.is_undefined() && !arg.is_null() {
-                payload_bytes = Some(
-                    lexe_utils::bytes::ObjectBytes::from(&ctx, &arg)?
-                        .into_bytes(&ctx)?,
-                );
+                payload_bytes =
+                    Some(lexe_utils::bytes::ObjectBytes::from(&ctx, &arg)?.into_bytes(&ctx)?);
             }
         }
         let cmd_tx = {
@@ -334,8 +329,14 @@ impl<'js> ClientHttp2Session<'js> {
         }
 
         let (write_tx, mut write_rx) = mpsc::unbounded_channel::<ClientStreamMsg>();
-        let (req_stream, paused, resume_notify) =
-            Http2Stream::new_client_request(&ctx, method.clone(), path.clone(), scheme.clone(), authority.clone(), write_tx)?;
+        let (req_stream, paused, resume_notify) = Http2Stream::new_client_request(
+            &ctx,
+            method.clone(),
+            path.clone(),
+            scheme.clone(),
+            authority.clone(),
+            write_tx,
+        )?;
 
         let ctx2 = ctx.clone();
         let stream = req_stream.clone();
@@ -623,7 +624,8 @@ fn emit_stream_error_and_close<'js>(
     }
     if stream.borrow().has_listener_str("error") {
         if let Ok(err) = Exception::from_message(ctx.clone(), message) {
-            let _ = Http2Stream::emit_str(stream.clone(), ctx, "error", vec![err.into_value()], false);
+            let _ =
+                Http2Stream::emit_str(stream.clone(), ctx, "error", vec![err.into_value()], false);
         }
     }
     let already = {
@@ -912,9 +914,11 @@ pub fn connect<'js>(
         authority.ok_or_else(|| Exception::throw_type(&ctx, "authority required"))?;
     let (host, port, secure) = parse_authority(&ctx, authority_val.clone())?;
 
-    let create_connection = options
-        .as_ref()
-        .and_then(|o| o.get::<_, Option<Function>>("createConnection").ok().flatten());
+    let create_connection = options.as_ref().and_then(|o| {
+        o.get::<_, Option<Function>>("createConnection")
+            .ok()
+            .flatten()
+    });
     let max_concurrent_cap = options
         .as_ref()
         .and_then(|o| {
@@ -943,7 +947,8 @@ pub fn connect<'js>(
             .and_then(|o| o.get::<_, Option<Value>>("_handle").ok().flatten())
             .unwrap_or_else(|| sock_val.clone());
 
-        let (target, wait_event) = if let Ok(tls_cls) = Class::<TlsSocket>::from_value(&handle_val) {
+        let (target, wait_event) = if let Ok(tls_cls) = Class::<TlsSocket>::from_value(&handle_val)
+        {
             session_encrypted = true;
             let wait = tls_cls
                 .borrow()
@@ -975,7 +980,10 @@ pub fn connect<'js>(
                     let on_err = Function::new(ctx.clone(), move |err: Opt<Value<'js>>| {
                         let msg = err
                             .0
-                            .and_then(|v| v.as_object().and_then(|o| o.get::<_, String>("message").ok()))
+                            .and_then(|v| {
+                                v.as_object()
+                                    .and_then(|o| o.get::<_, String>("message").ok())
+                            })
                             .unwrap_or_else(|| "createConnection socket error".to_string());
                         if let Some(tx) = slot_err.lock().unwrap().take() {
                             let _ = tx.send(Err(msg));
@@ -992,7 +1000,8 @@ pub fn connect<'js>(
         custom_socket_val = Some(sock_val);
     }
 
-    let session = ClientHttp2Session::new_pending(ctx.clone(), session_encrypted, handshake_rx, cmd_tx)?;
+    let session =
+        ClientHttp2Session::new_pending(ctx.clone(), session_encrypted, handshake_rx, cmd_tx)?;
     if let Some(listener) = listener {
         ClientHttp2Session::add_event_listener_str(
             session.clone(),

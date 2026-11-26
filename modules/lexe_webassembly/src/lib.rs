@@ -33,7 +33,9 @@ mod value_conv;
 
 use std::{any::Any, sync::Arc};
 
-use rquickjs::{atom::PredefinedAtom, class::Class, object::Property, Ctx, IntoJs, Object, Result, Value};
+use rquickjs::{
+    atom::PredefinedAtom, class::Class, object::Property, Ctx, IntoJs, Object, Result, Value,
+};
 
 use global::WasmGlobal;
 use instance::WasmInstance;

@@ -290,7 +290,8 @@ mod tests {
                 let unref_only = AbortSignal::timeout(ctx.clone(), 10_000).unwrap();
                 let _ = unref_only;
                 let rt_ptr = unsafe { rquickjs::qjs::JS_GetRuntime(ctx.as_raw().as_ptr()) };
-                let rt_key = lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
+                let rt_key =
+                    lexe_utils::event_loop::rt_key_from_ptr(rt_ptr as *mut std::ffi::c_void);
                 assert!(!lexe_utils::event_loop::has_refed_handles(rt_key));
                 lexe_timers::discard_all_timers_on_process_exit(&ctx, rt_ptr).unwrap();
             })

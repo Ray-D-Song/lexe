@@ -626,7 +626,8 @@ fn decode_utf8_streaming(pending: &mut Vec<u8>, chunk: &[u8], flush: bool) -> St
                 let valid_len = err.valid_up_to();
                 if valid_len > 0 {
                     // SAFETY: `valid_up_to()` guarantees valid UTF-8 prefix.
-                    let valid = unsafe { std::str::from_utf8_unchecked(&pending[i..i + valid_len]) };
+                    let valid =
+                        unsafe { std::str::from_utf8_unchecked(&pending[i..i + valid_len]) };
                     out.push_str(valid);
                     i += valid_len;
                 }
@@ -687,7 +688,12 @@ fn base64_encode(bytes: &[u8], url_safe: bool) -> String {
     out
 }
 
-fn decode_read_chunk(pending: &mut Vec<u8>, chunk: &[u8], enc: ReadEncoding, flush: bool) -> String {
+fn decode_read_chunk(
+    pending: &mut Vec<u8>,
+    chunk: &[u8],
+    enc: ReadEncoding,
+    flush: bool,
+) -> String {
     match enc {
         ReadEncoding::Utf8 => decode_utf8_streaming(pending, chunk, flush),
         ReadEncoding::Ascii => chunk.iter().map(|&b| (b & 0x7f) as char).collect(),

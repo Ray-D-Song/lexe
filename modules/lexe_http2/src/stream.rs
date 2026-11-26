@@ -261,9 +261,8 @@ impl<'js> Http2Stream<'js> {
         encoding_or_cb: Opt<Value<'js>>,
         cb: Opt<Function<'js>>,
     ) -> Result<bool> {
-        let callback = cb
-            .0
-            .or_else(|| encoding_or_cb.0.and_then(|v| v.into_function()));
+        let callback =
+            cb.0.or_else(|| encoding_or_cb.0.and_then(|v| v.into_function()));
         let bytes = value_to_bytes(&ctx, chunk)?;
         let tx = this.borrow().write_tx.clone();
         if let Some(tx) = tx {
@@ -336,7 +335,10 @@ impl<'js> Http2Stream<'js> {
         for arg in args.0 {
             if arg.is_function() {
                 callback = arg.into_function();
-            } else if !arg.is_undefined() && !arg.is_null() && data_val.is_none() && !arg.is_string()
+            } else if !arg.is_undefined()
+                && !arg.is_null()
+                && data_val.is_none()
+                && !arg.is_string()
             {
                 data_val = Some(arg);
             } else if arg.is_string() && data_val.is_none() {

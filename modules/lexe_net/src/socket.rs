@@ -1377,7 +1377,10 @@ pub fn parse_port_value(ctx: &Ctx<'_>, value: &Value<'_>) -> Result<Option<u16>>
     ))
 }
 
-pub fn prepare_no_delay_option(options: &mut TcpSocketOptions, no_delay: Opt<bool>) -> Option<bool> {
+pub fn prepare_no_delay_option(
+    options: &mut TcpSocketOptions,
+    no_delay: Opt<bool>,
+) -> Option<bool> {
     let enable = no_delay.0.unwrap_or(true);
     if options.no_delay == Some(enable) {
         None
@@ -1404,10 +1407,7 @@ pub fn prepare_keep_alive_option(
         Some(Duration::from_secs(delay_secs))
     };
 
-    let prev_delay = options
-        .keep_alive
-        .as_ref()
-        .and_then(|ka| ka.initial_delay);
+    let prev_delay = options.keep_alive.as_ref().and_then(|ka| ka.initial_delay);
     // Keep prior delay when disabling so re-enable can reapply it.
     let saved_delay = delay.or(prev_delay);
 
@@ -1420,9 +1420,11 @@ pub fn prepare_keep_alive_option(
         },
     };
 
-    let unchanged = options.keep_alive.as_ref().map(|ka| {
-        ka.enabled == next.enabled && ka.initial_delay == next.initial_delay
-    }) == Some(true);
+    let unchanged = options
+        .keep_alive
+        .as_ref()
+        .map(|ka| ka.enabled == next.enabled && ka.initial_delay == next.initial_delay)
+        == Some(true);
 
     if unchanged {
         Ok(None)
@@ -1436,7 +1438,10 @@ pub fn reset_tcp_linger(stream: &std::net::TcpStream) {
     let _ = SockRef::from(stream).set_linger(Some(Duration::ZERO));
 }
 
-pub fn apply_keep_alive(stream: &std::net::TcpStream, options: &KeepAliveOptions) -> io::Result<()> {
+pub fn apply_keep_alive(
+    stream: &std::net::TcpStream,
+    options: &KeepAliveOptions,
+) -> io::Result<()> {
     let sock = SockRef::from(stream);
     sock.set_keepalive(options.enabled)?;
     if options.enabled {
@@ -1451,7 +1456,10 @@ pub fn apply_keep_alive(stream: &std::net::TcpStream, options: &KeepAliveOptions
     Ok(())
 }
 
-pub fn apply_tcp_options(stream: &std::net::TcpStream, options: &TcpSocketOptions) -> io::Result<()> {
+pub fn apply_tcp_options(
+    stream: &std::net::TcpStream,
+    options: &TcpSocketOptions,
+) -> io::Result<()> {
     if let Some(no_delay) = options.no_delay {
         stream.set_nodelay(no_delay)?;
     }

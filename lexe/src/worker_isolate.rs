@@ -71,9 +71,7 @@ async fn run_worker_isolate_async(start: WorkerIsolateStart) -> Result<(), Strin
             let body = if start.eval {
                 // `new Worker(code, { eval: true })`: run the string directly.
                 start.script.clone()
-            } else if start.script.len() >= 5
-                && start.script[..5].eq_ignore_ascii_case("data:")
-            {
+            } else if start.script.len() >= 5 && start.script[..5].eq_ignore_ascii_case("data:") {
                 format!("await import({:?});", start.script)
             } else {
                 let script_path = resolve_script(&ctx, &start.script)?;
