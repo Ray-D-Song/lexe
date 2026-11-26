@@ -90,10 +90,10 @@ pub const SQLITE_CHANGESET_CONSTRAINT: c_int = 4;
 pub const SQLITE_CHANGESET_FOREIGN_KEY: c_int = 5;
 
 pub const SQLITE_DBCONFIG_ENABLE_FKEY: c_int = 1002;
+pub const SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION: c_int = 1005;
 pub const SQLITE_DBCONFIG_DEFENSIVE: c_int = 1010;
-pub const SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION: c_int = 1015;
-pub const SQLITE_DBCONFIG_DQS_DDL: c_int = 1013;
-pub const SQLITE_DBCONFIG_DQS_DML: c_int = 1014;
+pub const SQLITE_DBCONFIG_DQS_DML: c_int = 1013;
+pub const SQLITE_DBCONFIG_DQS_DDL: c_int = 1014;
 
 pub type sqlite3 = c_void;
 pub type sqlite3_stmt = c_void;

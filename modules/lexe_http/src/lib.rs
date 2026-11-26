@@ -97,7 +97,7 @@ impl ModuleDef for HttpsModule {
                 Class::<TlsServer>::define(&scratch)?;
                 TlsServer::add_event_emitter_prototype(ctx)?;
                 Class::<IncomingMessage>::define(&scratch)?;
-                IncomingMessage::add_event_emitter_prototype(ctx)?;
+                IncomingMessage::init_prototype(ctx)?;
                 Class::<ServerResponse>::define(&scratch)?;
                 ServerResponse::add_event_emitter_prototype(ctx)?;
                 Class::<ClientRequest>::define(&scratch)?;

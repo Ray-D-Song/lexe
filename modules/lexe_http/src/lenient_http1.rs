@@ -405,11 +405,7 @@ async fn read_exact_or_chunk_into_req<'js, R: AsyncRead + Unpin>(
             if io.req.borrow().body_len().saturating_add(data.len()) > max_body_size {
                 return Err(BodyAbort::TooLarge);
             }
-            io.req.borrow_mut().append_body(&data);
-            let chunk = Buffer(data)
-                .into_js(io.ctx)
-                .unwrap_or_else(|_| Undefined.into_value(io.ctx.clone()));
-            let _ = IncomingMessage::emit_str(io.req.clone(), io.ctx, "data", vec![chunk], false);
+            IncomingMessage::push_body_chunk(io.req, io.ctx, &data);
             remaining -= take;
             continue;
         }
@@ -1045,8 +1041,7 @@ async fn dispatch_lenient_request<'js, R: AsyncRead + Unpin>(
         };
         match consume_lenient_body(&mut body_io, is_chunked, content_length, config).await {
             Ok(()) => {
-                req.borrow_mut().mark_complete();
-                let _ = IncomingMessage::emit_str(req, ctx, "end", vec![], false);
+                IncomingMessage::finish_body(&req, ctx);
             },
             Err(BodyAbort::TooLarge) => {
                 write_simple_response(write_tx, StatusCode::PAYLOAD_TOO_LARGE, true).await;
@@ -1073,8 +1068,7 @@ async fn dispatch_lenient_request<'js, R: AsyncRead + Unpin>(
                 };
             },
             Err(BodyAbort::Destroyed | BodyAbort::Eof) => {
-                req.borrow_mut().mark_complete();
-                let _ = IncomingMessage::emit_str(req, ctx, "end", vec![], false);
+                IncomingMessage::finish_body(&req, ctx);
             },
         }
     }

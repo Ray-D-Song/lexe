@@ -1,5 +1,8 @@
+import fs from "node:fs";
 import defaultImport from "node:net";
 import legacyImport from "net";
+import os from "node:os";
+import path from "node:path";
 
 it("node:net should be the same as net", () => {
   expect(defaultImport).toStrictEqual(legacyImport);
@@ -326,5 +329,37 @@ describe("net Happy-Eyeballs and Server options", () => {
     c2.destroy();
     firstConn?.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("handles destroy() after reading from a Unix domain socket without ENOTCONN crashes", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lexe-net-uds-"));
+    const sockPath = path.join(tmpDir, "test.sock");
+    const server = defaultImport.createServer((conn) => {
+      conn.on("data", () => {
+        conn.write("reply");
+        conn.end();
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(sockPath, () => resolve()));
+
+    try {
+      const sock = defaultImport.createConnection({ path: sockPath });
+      const errors: Error[] = [];
+      sock.on("error", (err) => errors.push(err));
+      await new Promise<void>((resolve) => sock.once("connect", () => resolve()));
+      sock.write("ping");
+      const chunks: Buffer[] = [];
+      for await (const chunk of sock) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        break;
+      }
+      sock.destroy();
+      await new Promise((r) => setTimeout(r, 80));
+      expect(Buffer.concat(chunks).toString()).toBe("reply");
+      expect(errors).toEqual([]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

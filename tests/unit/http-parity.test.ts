@@ -4,6 +4,7 @@ import https from "node:https";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough, Readable, finished } from "node:stream";
 
 const TLS_DATA_DIR = path.resolve("libs/lexe_test_tls/data");
 
@@ -631,6 +632,125 @@ describe("node:https Server, Agent, and globalAgent parity", () => {
       expect(String(r2.headers["x-dup"])).toContain("one");
       expect(String(r2.headers["x-dup"])).toContain("two");
       expect(r2.body).toBe("array-ok");
+    } finally {
+      await close();
+    }
+  });
+
+  it("exposes IncomingMessage as a Readable stream supporting finished, pipe, async iteration, and delayed readers", async () => {
+    const server = http.createServer(async (req: any, res: any) => {
+      expect(req instanceof Readable).toBe(true);
+      expect(typeof req.pipe).toBe("function");
+      expect(typeof req.closed).toBe("boolean");
+
+      if (req.url === "/delayed-eos") {
+        // Yield across timer ticks before attaching finished() and 'data'
+        await new Promise((r) => setTimeout(r, 15));
+        const chunks: Buffer[] = [];
+        await new Promise<void>((resolve, reject) => {
+          const cleanup = finished(req, { readable: true, writable: false }, (err?: any) => {
+            cleanup();
+            if (err) reject(err);
+            else resolve();
+          });
+          req.on("data", (chunk: any) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(Buffer.concat(chunks));
+        return;
+      }
+
+      if (req.url === "/pipe") {
+        const pt = new PassThrough();
+        const out: Buffer[] = [];
+        pt.on("data", (c: any) => out.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+        pt.on("end", () => res.end(Buffer.concat(out)));
+        req.pipe(pt);
+        return;
+      }
+
+      if (req.url === "/async-iter") {
+        const parts: Buffer[] = [];
+        for await (const chunk of req) {
+          parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        res.end(Buffer.concat(parts));
+        return;
+      }
+
+      if (req.url === "/read-empty") {
+        expect(req.read()).toBe(null);
+        res.end("empty-ok");
+        return;
+      }
+
+      res.end("fallback");
+    });
+
+    const { port, close } = await listenServer(server);
+    try {
+      const sendPost = (reqPath: string, payload: string) =>
+        new Promise<{ status: number; body: string; resIsReadable: boolean; finishedOk: boolean }>((resolve, reject) => {
+          const clientReq = http.request(
+            { host: "127.0.0.1", port, path: reqPath, method: "POST" },
+            (res: any) => {
+              const resIsReadable = res instanceof Readable;
+              const chunks: Buffer[] = [];
+              const cleanup = finished(res, { readable: true, writable: false }, (err?: any) => {
+                cleanup();
+                if (err) reject(err);
+                else resolve({
+                  status: res.statusCode,
+                  body: Buffer.concat(chunks).toString("utf8"),
+                  resIsReadable,
+                  finishedOk: true,
+                });
+              });
+              res.on("data", (c: any) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+            },
+          );
+          clientReq.on("error", reject);
+          clientReq.end(payload);
+        });
+
+      const d = await sendPost("/delayed-eos", '{"id":"ses_123"}');
+      expect(d.status).toBe(200);
+      expect(d.body).toBe('{"id":"ses_123"}');
+      expect(d.resIsReadable).toBe(true);
+      expect(d.finishedOk).toBe(true);
+
+      const p = await sendPost("/pipe", "pipe-payload");
+      expect(p.body).toBe("pipe-payload");
+
+      const a = await sendPost("/async-iter", "iter-payload");
+      expect(a.body).toBe("iter-payload");
+
+      const e = await sendPost("/read-empty", "");
+      expect(e.body).toBe("empty-ok");
+    } finally {
+      await close();
+    }
+  });
+
+  it("keeps streaming SSE responses open past keepAliveTimeout", async () => {
+    const server = http.createServer((_req: any, res: any) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: first\n\n");
+      setTimeout(() => {
+        if (!res.destroyed) {
+          res.end("data: second\n\n");
+        }
+      }, 220);
+    });
+    server.keepAliveTimeout = 60;
+    const { port, close } = await listenServer(server);
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/events`);
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toBe("data: first\n\ndata: second\n\n");
     } finally {
       await close();
     }

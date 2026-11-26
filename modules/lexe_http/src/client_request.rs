@@ -16,7 +16,6 @@ use hyper::{
     header::{HeaderName, HeaderValue},
     Method, Request, Uri,
 };
-use lexe_buffer::Buffer;
 use lexe_context::CtxExtension;
 use lexe_events::{Emitter, EventEmitter, EventList};
 use lexe_net::Socket;
@@ -909,14 +908,9 @@ impl<'js> ClientRequest<'js> {
         let collected = incoming_body.collect().await.or_throw(&ctx)?;
         let bytes = collected.to_bytes();
         if !bytes.is_empty() {
-            message.borrow_mut().append_body(&bytes);
-            let chunk = Buffer(bytes.to_vec())
-                .into_js(&ctx)
-                .unwrap_or_else(|_| Undefined.into_value(ctx.clone()));
-            IncomingMessage::emit_str(message.clone(), &ctx, "data", vec![chunk], false)?;
+            IncomingMessage::push_body_chunk(&message, &ctx, &bytes);
         }
-        message.borrow_mut().mark_complete();
-        IncomingMessage::emit_str(message.clone(), &ctx, "end", vec![], false)?;
+        IncomingMessage::finish_body(&message, &ctx);
         let _ = lexe_utils::diagnostics::publish(&ctx, "http.client.response.finish", |ctx| {
             let msg = Object::new(ctx.clone())?;
             msg.set("request", this.clone().into_value())?;

@@ -798,4 +798,28 @@ describe("enableDefensive and limits", () => {
       db.close();
     }
   });
+
+  it("keeps SQL views accessible after enableLoadExtension(false)", () => {
+    const db = new DatabaseSync(":memory:", { allowExtension: true });
+    try {
+      db.enableLoadExtension(false);
+      db.exec(`
+        CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT);
+        CREATE TABLE mirror(id INTEGER, name TEXT);
+        CREATE VIEW items_view AS SELECT id, name FROM items;
+        CREATE TRIGGER items_after_insert AFTER INSERT ON items BEGIN
+          INSERT INTO mirror(id, name) SELECT id, name FROM items_view WHERE id = NEW.id;
+        END;
+      `);
+      db.prepare("INSERT INTO items(id, name) VALUES (?, ?)").run(1, "alpha");
+      expect(db.prepare("SELECT id, name FROM items_view").get()).toEqual(
+        nullProto({ id: 1, name: "alpha" })
+      );
+      expect(db.prepare("SELECT id, name FROM mirror").get()).toEqual(
+        nullProto({ id: 1, name: "alpha" })
+      );
+    } finally {
+      db.close();
+    }
+  });
 });

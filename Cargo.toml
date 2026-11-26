@@ -71,7 +71,10 @@ codegen-units = 1
 opt-level = "z"
 panic = "abort"
 
-# Keep QuickJS C engine at -O3 for JS execution speed.
+# Keep QuickJS C engine at -O3 for JS execution speed and compact C call frames.
+[profile.dev.package.rquickjs-sys]
+opt-level = 3
+
 [profile.release.package.rquickjs-sys]
 opt-level = 3
 

@@ -376,12 +376,13 @@ impl<'js> Socket<'js> {
         error: Opt<Value<'js>>,
         shutdown: bool,
     ) -> Class<'js, Self> {
-        // Drop the JS owner eagerly: holding it past close leaves an
-        // uncollectable `this <-> _handle` cycle that aborts teardown with
-        // QuickJS's `gc_obj_list` assertion.
-        this.borrow_mut().js_owner = None;
         {
             let mut borrow = this.borrow_mut();
+            // When no I/O loop is active to call `emit_close`, release the JS owner now
+            // so `this <-> _handle` doesn't pin GC objects across teardown.
+            if matches!(borrow.transport_state, TransportState::Closed) && !borrow.connecting {
+                borrow.js_owner = None;
+            }
             if let Some(control) = borrow.tcp_control.take() {
                 if shutdown {
                     let _ = control.shutdown(Shutdown::Both);

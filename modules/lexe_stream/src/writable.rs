@@ -539,7 +539,13 @@ where
                                         }
                                     },
                                     Some(WriteCommand::End) => {
-                                        writer.shutdown().await.or_throw(&ctx3)?;
+                                        writer.flush().await.or_throw(&ctx3)?;
+                                        // On macOS/BSD, shutting down a socket whose peer already closed returns ENOTCONN.
+                                        if let Err(err) = writer.shutdown().await {
+                                            if err.kind() != std::io::ErrorKind::NotConnected {
+                                                return Err(err).or_throw(&ctx3);
+                                            }
+                                        }
                                         break;
                                     },
                                     Some(WriteCommand::Flush) => writer.flush().await.or_throw(&ctx3)?,

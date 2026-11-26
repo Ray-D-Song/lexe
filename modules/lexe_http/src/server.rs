@@ -41,8 +41,8 @@ use rquickjs::{
     class::{Trace, Tracer},
     module::{Declarations, Exports, ModuleDef},
     prelude::{Func, Opt, Rest, This},
-    qjs, Array, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Object, Result, Undefined,
-    Value,
+    qjs, Array, Class, Ctx, Exception, Function, IntoJs, JsLifetime, Null, Object, Result,
+    Undefined, Value,
 };
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions as NamedPipeServerOptions};
@@ -245,6 +245,43 @@ pub(crate) enum ResponseSink {
     Raw(oneshot::Sender<RawResponseHead>),
 }
 
+struct ActiveResponseGuard {
+    active_requests: Arc<AtomicUsize>,
+    activity_tx: mpsc::UnboundedSender<()>,
+}
+
+impl Drop for ActiveResponseGuard {
+    fn drop(&mut self) {
+        self.active_requests.fetch_sub(1, Ordering::Relaxed);
+        let _ = self.activity_tx.send(());
+    }
+}
+
+struct TrackedResponseBody {
+    inner: BoxBody<Bytes, Infallible>,
+    _guard: ActiveResponseGuard,
+}
+
+impl hyper::body::Body for TrackedResponseBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<std::result::Result<Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.inner).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
 impl Listener {
     async fn accept(&mut self) -> std::io::Result<AcceptedStream> {
         match self {
@@ -278,10 +315,16 @@ pub struct IncomingMessage<'js> {
     trailers: Object<'js>,
     raw_trailers: Vec<String>,
     body: Vec<u8>,
+    total_body_bytes: usize,
     complete: bool,
+    end_emitted: bool,
     paused: bool,
+    flowing: Option<bool>,
     destroyed: bool,
+    closed: bool,
+    did_read: bool,
     aborted: bool,
+    errored: Value<'js>,
     socket: Value<'js>,
     response_status_code: Option<u16>,
     response_status_message: Option<String>,
@@ -296,6 +339,7 @@ impl<'js> Trace<'js> for IncomingMessage<'js> {
         self.emitter.trace(t);
         self.headers.trace(t);
         self.trailers.trace(t);
+        self.errored.trace(t);
         self.socket.trace(t);
     }
 }
@@ -317,13 +361,19 @@ impl<'js> IncomingMessage<'js> {
             url: String::new(),
             headers: Object::new(ctx.clone())?,
             raw_headers: Vec::new(),
-            trailers: Object::new(ctx)?,
+            trailers: Object::new(ctx.clone())?,
             raw_trailers: Vec::new(),
             body: Vec::new(),
+            total_body_bytes: 0,
             complete: false,
+            end_emitted: false,
             paused: false,
+            flowing: None,
             destroyed: false,
+            closed: false,
+            did_read: false,
             aborted: false,
+            errored: Null.into_value(ctx),
             socket: sock,
             response_status_code: None,
             response_status_message: None,
@@ -391,20 +441,73 @@ impl<'js> IncomingMessage<'js> {
     fn connection(&self) -> Value<'js> {
         self.socket.clone()
     }
-    pub fn read(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Value<'js>> {
-        ObjectBytes::Vec(std::mem::take(&mut this.borrow_mut().body)).into_js(&ctx)
+    pub fn read(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        size: Opt<Option<usize>>,
+    ) -> Result<Value<'js>> {
+        let size = size.0.flatten();
+        if size == Some(0) {
+            return Ok(Null.into_value(ctx));
+        }
+        let chunk = {
+            let mut m = this.borrow_mut();
+            if m.body.is_empty() {
+                return Ok(Null.into_value(ctx));
+            }
+            m.did_read = true;
+            match size {
+                Some(n) if n < m.body.len() => m.body.drain(..n).collect(),
+                _ => std::mem::take(&mut m.body),
+            }
+        };
+        Buffer(chunk).into_js(&ctx)
     }
     pub fn pause(this: This<Class<'js, Self>>) -> Class<'js, Self> {
-        this.borrow_mut().paused = true;
+        {
+            let mut m = this.borrow_mut();
+            m.paused = true;
+            m.flowing = Some(false);
+        }
         this.0
     }
     pub fn resume(this: This<Class<'js, Self>>) -> Class<'js, Self> {
-        this.borrow_mut().paused = false;
+        {
+            let mut m = this.borrow_mut();
+            m.paused = false;
+            m.flowing = Some(true);
+        }
         this.0
     }
-    pub fn destroy(this: This<Class<'js, Self>>) -> Class<'js, Self> {
-        this.borrow_mut().destroyed = true;
-        this.0
+    #[qjs(rename = "isPaused")]
+    pub fn is_paused_js(&self) -> bool {
+        self.paused
+    }
+    pub fn destroy(
+        this: This<Class<'js, Self>>,
+        ctx: Ctx<'js>,
+        error: Opt<Value<'js>>,
+    ) -> Result<Class<'js, Self>> {
+        let should_emit = {
+            let mut m = this.borrow_mut();
+            let already_closed = m.closed;
+            m.destroyed = true;
+            m.closed = true;
+            let err = error.0.filter(|v| !v.is_undefined() && !v.is_null());
+            if let Some(ref e) = err {
+                if m.errored.is_null() {
+                    m.errored = e.clone();
+                }
+            }
+            (!already_closed).then_some(err)
+        };
+        if let Some(err_to_emit) = should_emit {
+            if let Some(err) = err_to_emit {
+                let _ = Self::emit_str(this.0.clone(), &ctx, "error", vec![err], false);
+            }
+            let _ = Self::emit_str(this.0.clone(), &ctx, "close", vec![], false);
+        }
+        Ok(this.0)
     }
     pub fn set_timeout(
         this: This<Class<'js, Self>>,
@@ -451,10 +554,16 @@ impl<'js> IncomingMessage<'js> {
             trailers: Object::new(ctx.clone())?,
             raw_trailers: Vec::new(),
             body: Vec::new(),
+            total_body_bytes: 0,
             complete: false,
+            end_emitted: false,
             paused: false,
+            flowing: None,
             destroyed: false,
+            closed: false,
+            did_read: false,
             aborted: false,
+            errored: Null.into_value(ctx.clone()),
             socket,
             response_status_code: None,
             response_status_message: None,
@@ -478,22 +587,501 @@ impl<'js> IncomingMessage<'js> {
             trailers: Object::new(ctx.clone())?,
             raw_trailers: Vec::new(),
             body: Vec::new(),
+            total_body_bytes: 0,
             complete: false,
+            end_emitted: false,
             paused: false,
+            flowing: None,
             destroyed: false,
+            closed: false,
+            did_read: false,
             aborted: false,
+            errored: Null.into_value(ctx.clone()),
             socket,
             response_status_code: Some(status_code),
             response_status_message: status_message,
         })
     }
 
-    pub(crate) fn append_body(&mut self, data: &[u8]) {
-        self.body.extend_from_slice(data);
+    /// Push a wire body chunk into `IncomingMessage`, emitting `'data'` if flowing or buffering otherwise.
+    pub(crate) fn push_body_chunk(this: &Class<'js, Self>, ctx: &Ctx<'js>, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        enum Action {
+            EmitData,
+            EmitReadable,
+            Ignore,
+        }
+        let action = {
+            let mut m = this.borrow_mut();
+            if m.destroyed || m.aborted {
+                Action::Ignore
+            } else {
+                m.total_body_bytes = m.total_body_bytes.saturating_add(data.len());
+                let flowing = !m.paused && (m.flowing == Some(true) || m.has_listener_str("data"));
+                if flowing {
+                    m.flowing = Some(true);
+                    m.did_read = true;
+                    Action::EmitData
+                } else {
+                    m.body.extend_from_slice(data);
+                    if m.has_listener_str("readable") {
+                        Action::EmitReadable
+                    } else {
+                        Action::Ignore
+                    }
+                }
+            }
+        };
+        match action {
+            Action::EmitData => {
+                let chunk = Buffer(data.to_vec())
+                    .into_js(ctx)
+                    .unwrap_or_else(|_| Undefined.into_value(ctx.clone()));
+                let _ = Self::emit_str(this.clone(), ctx, "data", vec![chunk], false);
+            },
+            Action::EmitReadable => {
+                let _ = Self::emit_str(this.clone(), ctx, "readable", vec![], false);
+            },
+            Action::Ignore => {},
+        }
     }
 
-    pub(crate) fn mark_complete(&mut self) {
-        self.complete = true;
+    /// Mark wire EOF on `IncomingMessage`, emitting `'end'` and `'close'` when drained or `'end'`-only.
+    pub(crate) fn finish_body(this: &Class<'js, Self>, ctx: &Ctx<'js>) {
+        let (emit_end, emit_readable) = {
+            let mut m = this.borrow_mut();
+            m.complete = true;
+            let has_end_only = m.has_listener_str("end")
+                && !m.has_listener_str("data")
+                && !m.has_listener_str("readable");
+            if m.end_emitted || m.destroyed || m.aborted {
+                (false, false)
+            } else if !m.paused && (m.body.is_empty() || has_end_only) {
+                m.end_emitted = true;
+                (true, false)
+            } else {
+                (false, m.has_listener_str("readable"))
+            }
+        };
+        if emit_readable {
+            let _ = Self::emit_str(this.clone(), ctx, "readable", vec![], false);
+        }
+        if emit_end {
+            Self::emit_end_and_close(this, ctx);
+        }
+    }
+
+    fn emit_end_and_close(this: &Class<'js, Self>, ctx: &Ctx<'js>) {
+        let _ = Self::emit_str(this.clone(), ctx, "end", vec![], false);
+        let should_close = {
+            let mut m = this.borrow_mut();
+            if m.closed {
+                false
+            } else {
+                m.closed = true;
+                m.destroyed = true;
+                true
+            }
+        };
+        if should_close {
+            let _ = Self::emit_str(this.clone(), ctx, "close", vec![], false);
+        }
+    }
+
+    fn drain_for_js(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<()> {
+        loop {
+            let chunk_opt = {
+                let mut m = this.borrow_mut();
+                if m.destroyed || m.paused {
+                    return Ok(());
+                }
+                let can_flow = m.flowing == Some(true) || m.has_listener_str("data");
+                if can_flow && !m.body.is_empty() {
+                    m.did_read = true;
+                    Some(std::mem::take(&mut m.body))
+                } else {
+                    None
+                }
+            };
+            if let Some(bytes) = chunk_opt {
+                let chunk = Buffer(bytes)
+                    .into_js(&ctx)
+                    .unwrap_or_else(|_| Undefined.into_value(ctx.clone()));
+                let _ = Self::emit_str(this.0.clone(), &ctx, "data", vec![chunk], false);
+                continue;
+            }
+            let should_end = {
+                let mut m = this.borrow_mut();
+                if !m.destroyed && !m.paused && m.complete && m.body.is_empty() && !m.end_emitted {
+                    m.end_emitted = true;
+                    true
+                } else {
+                    false
+                }
+            };
+            if should_end {
+                Self::emit_end_and_close(&this.0, &ctx);
+            }
+            return Ok(());
+        }
+    }
+
+    fn set_flowing_for_js(this: This<Class<'js, Self>>, flowing: Option<bool>) {
+        let mut m = this.borrow_mut();
+        if flowing == Some(true) && !m.paused {
+            m.flowing = Some(true);
+        } else if let Some(val) = flowing {
+            m.flowing = Some(val);
+        }
+    }
+
+    fn get_readable_flags(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        let m = this.borrow();
+        let arr = Array::new(ctx.clone())?;
+        arr.set(0, m.complete)?;
+        arr.set(1, m.end_emitted)?;
+        arr.set(2, m.paused)?;
+        let flowing: Value<'js> = match m.flowing {
+            None => Null.into_value(ctx.clone()),
+            Some(b) => b.into_js(&ctx)?,
+        };
+        arr.set(3, flowing)?;
+        arr.set(4, m.destroyed)?;
+        arr.set(5, m.closed)?;
+        arr.set(6, m.did_read)?;
+        arr.set(7, m.body.len() as f64)?;
+        arr.set(8, m.errored.clone())?;
+        arr.into_js(&ctx)
+    }
+
+    /// Initialize `IncomingMessage.prototype` with `EventEmitter` + Node `Readable` stream semantics.
+    pub(crate) fn init_prototype(ctx: &Ctx<'js>) -> Result<()> {
+        let proto = Class::<Self>::prototype(ctx)?
+            .ok_or_else(|| Exception::throw_type(ctx, "IncomingMessage prototype missing"))?;
+        if proto
+            .get::<_, Option<bool>>("__lexeReadableHooked")?
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        Self::add_event_emitter_prototype(ctx)?;
+        let state_fn = Function::new(ctx.clone(), Self::get_readable_flags)?;
+        let drain_fn = Function::new(ctx.clone(), Self::drain_for_js)?;
+        let flowing_fn = Function::new(ctx.clone(), Self::set_flowing_for_js)?;
+        let install: Function = ctx.eval(
+            r#"(function (proto, stateFn, drainFn, flowingFn) {
+  if (proto.__lexeReadableHooked) return;
+  Object.defineProperty(proto, "__lexeReadableHooked", { value: true });
+
+  if (typeof require === "function") {
+    try {
+      const { Readable } = require("node:stream");
+      if (Readable && Readable.prototype && Object.getPrototypeOf(proto) !== Readable.prototype) {
+        Object.setPrototypeOf(proto, Readable.prototype);
+      }
+    } catch {}
+  }
+
+  const kPipes = Symbol("lexe.http.incoming.pipes");
+  const kDecoder = Symbol("lexe.http.incoming.decoder");
+  const kEncoding = Symbol("lexe.http.incoming.encoding");
+  const kWrappedListeners = Symbol("lexe.http.incoming.wrapped");
+
+  function makeState(stream) {
+    const s = stateFn.call(stream);
+    const len = s[7];
+    return {
+      objectMode: false,
+      highWaterMark: 16384,
+      buffer: { length: len > 0 ? 1 : 0 },
+      length: len,
+      pipes: stream[kPipes] ? stream[kPipes].map((p) => p.dest) : [],
+      flowing: s[3],
+      ended: s[0],
+      endEmitted: s[1],
+      reading: false,
+      constructed: true,
+      sync: false,
+      needReadable: false,
+      emittedReadable: false,
+      readableListening: typeof stream.listenerCount === "function" ? stream.listenerCount("readable") > 0 : false,
+      resumeScheduled: false,
+      errorEmitted: s[8] !== null && s[8] !== undefined,
+      emitClose: true,
+      autoDestroy: true,
+      destroyed: s[4],
+      errored: s[8],
+      closed: s[5],
+      closeEmitted: s[5],
+    };
+  }
+
+  Object.defineProperties(proto, {
+    readable: { get() { const s = stateFn.call(this); return !s[1] && !s[4] && !s[5]; }, enumerable: true, configurable: true },
+    readableEnded: { get() { return stateFn.call(this)[1]; }, enumerable: true, configurable: true },
+    readableFlowing: { get() { return stateFn.call(this)[3]; }, enumerable: true, configurable: true },
+    destroyed: { get() { return stateFn.call(this)[4]; }, enumerable: true, configurable: true },
+    closed: { get() { return stateFn.call(this)[5]; }, enumerable: true, configurable: true },
+    readableDidRead: { get() { return stateFn.call(this)[6]; }, enumerable: true, configurable: true },
+    readableAborted: { get() { const s = stateFn.call(this); return Boolean(this.aborted || (s[4] && !s[1])); }, enumerable: true, configurable: true },
+    readableObjectMode: { value: false, enumerable: true, configurable: true },
+    readableHighWaterMark: { value: 16384, enumerable: true, configurable: true },
+    errored: { get() { return stateFn.call(this)[8]; }, enumerable: true, configurable: true },
+    readableErrored: { get() { return stateFn.call(this)[8]; }, enumerable: true, configurable: true },
+    _readableState: { get() { return makeState(this); }, configurable: true },
+  });
+
+  function decodeChunk(stream, chunk) {
+    if (chunk === null || chunk === undefined) return chunk;
+    const dec = stream[kDecoder];
+    if (!dec) return chunk;
+    if (typeof chunk === "string") return chunk;
+    if (typeof dec.write === "function") return dec.write(chunk);
+    if (typeof dec.decode === "function") return dec.decode(chunk, { stream: true });
+    return Buffer.isBuffer(chunk) ? chunk.toString(stream[kEncoding]) : chunk;
+  }
+
+  const origRead = proto.read;
+  if (typeof origRead === "function") {
+    proto.read = function (size) {
+      const chunk = origRead.call(this, size);
+      const out = decodeChunk(this, chunk);
+      const s = stateFn.call(this);
+      if (s[0] && s[7] === 0 && !s[1] && !s[2] && !s[4]) {
+        queueMicrotask(() => {
+          try { drainFn.call(this); } catch {}
+        });
+      }
+      return out;
+    };
+  }
+
+  proto.setEncoding = function (encoding) {
+    const enc = String(encoding);
+    this[kEncoding] = enc;
+    if (typeof require === "function") {
+      try {
+        const { StringDecoder } = require("node:string_decoder");
+        this[kDecoder] = new StringDecoder(enc);
+        return this;
+      } catch {}
+    }
+    this[kDecoder] = new TextDecoder(enc);
+    return this;
+  };
+
+  proto.pipe = function (dest, options) {
+    const src = this;
+    if (!dest || typeof dest.write !== "function") {
+      throw new TypeError("dest must be a writable stream");
+    }
+    const endDest = !options || options.end !== false;
+    let list = src[kPipes];
+    if (!list) {
+      list = [];
+      src[kPipes] = list;
+    }
+
+    let cleaned = false;
+    let pausedByPipe = false;
+
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      src.off("data", onData);
+      src.off("end", onEnd);
+      src.off("close", onClose);
+      if (typeof dest.off === "function") {
+        dest.off("drain", onDrain);
+        dest.off("close", cleanup);
+        dest.off("finish", cleanup);
+      }
+      const arr = src[kPipes];
+      if (arr) {
+        const idx = arr.findIndex((p) => p.dest === dest);
+        if (idx !== -1) arr.splice(idx, 1);
+      }
+    };
+
+    const onDrain = () => {
+      if (pausedByPipe) {
+        pausedByPipe = false;
+        src.resume();
+      }
+    };
+
+    const onData = (chunk) => {
+      const ok = dest.write(chunk);
+      if (ok === false && !cleaned) {
+        pausedByPipe = true;
+        src.pause();
+      }
+    };
+
+    const onEnd = () => {
+      cleanup();
+      if (endDest && typeof dest.end === "function") {
+        dest.end();
+      }
+    };
+
+    const onClose = () => {
+      cleanup();
+    };
+
+    list.push({ dest, cleanup });
+    if (typeof dest.on === "function") {
+      dest.on("drain", onDrain);
+      dest.once("close", cleanup);
+      dest.once("finish", cleanup);
+    }
+    if (typeof dest.emit === "function") {
+      dest.emit("pipe", src);
+    }
+    src.on("data", onData);
+    src.once("end", onEnd);
+    src.once("close", onClose);
+    if (src.readableEnded) {
+      queueMicrotask(onEnd);
+    }
+    return dest;
+  };
+
+  proto.unpipe = function (dest) {
+    const arr = this[kPipes];
+    if (!arr || arr.length === 0) return this;
+    if (dest === undefined) {
+      for (const item of arr.slice()) {
+        item.cleanup();
+        if (typeof item.dest.emit === "function") {
+          item.dest.emit("unpipe", this);
+        }
+      }
+      return this;
+    }
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i].dest === dest) {
+        const item = arr[i];
+        item.cleanup();
+        if (typeof dest.emit === "function") {
+          dest.emit("unpipe", this);
+        }
+      }
+    }
+    return this;
+  };
+
+  const origResume = proto.resume;
+  if (typeof origResume === "function") {
+    proto.resume = function () {
+      const ret = origResume.call(this);
+      queueMicrotask(() => {
+        try { drainFn.call(this); } catch {}
+      });
+      return ret;
+    };
+  }
+
+  for (const m of ["on", "once", "addListener", "prependListener", "prependOnceListener"]) {
+    const orig = proto[m];
+    if (typeof orig !== "function") continue;
+    proto[m] = function (ev, listener) {
+      if (ev === "data" && typeof listener === "function") {
+        flowingFn.call(this, true);
+        let map = this[kWrappedListeners];
+        if (!map) {
+          map = new WeakMap();
+          this[kWrappedListeners] = map;
+        }
+        let wrapped = map.get(listener);
+        if (!wrapped) {
+          const stream = this;
+          wrapped = function (chunk) {
+            return listener.call(this, decodeChunk(stream, chunk));
+          };
+          map.set(listener, wrapped);
+        }
+        const ret = orig.call(this, ev, wrapped);
+        queueMicrotask(() => {
+          try {
+            if (!this.isPaused()) drainFn.call(this);
+          } catch {}
+        });
+        return ret;
+      }
+      if (ev === "readable" && typeof listener === "function") {
+        const ret = orig.call(this, ev, listener);
+        const s = stateFn.call(this);
+        if ((s[7] > 0 || s[0]) && !s[1] && !s[4]) {
+          queueMicrotask(() => {
+            try {
+              const cur = stateFn.call(this);
+              if (!cur[1] && !cur[4] && this.listenerCount("readable") > 0) {
+                this.emit("readable");
+              }
+            } catch {}
+          });
+        }
+        return ret;
+      }
+      return orig.call(this, ev, listener);
+    };
+  }
+
+  for (const m of ["off", "removeListener"]) {
+    const orig = proto[m];
+    if (typeof orig !== "function") continue;
+    proto[m] = function (ev, listener) {
+      if (ev === "data" && typeof listener === "function" && this[kWrappedListeners]) {
+        const wrapped = this[kWrappedListeners].get(listener);
+        if (wrapped) return orig.call(this, ev, wrapped);
+      }
+      return orig.call(this, ev, listener);
+    };
+  }
+
+  proto[Symbol.asyncIterator] = async function* () {
+    const queue = [];
+    let ended = Boolean(this.readableEnded);
+    let err = this.errored ?? null;
+    let notify = null;
+    const wake = () => {
+      if (notify) {
+        const fn = notify;
+        notify = null;
+        fn();
+      }
+    };
+    const onData = (chunk) => { queue.push(chunk); wake(); };
+    const onEnd = () => { ended = true; wake(); };
+    const onClose = () => { ended = true; wake(); };
+    const onError = (e) => { err = e; ended = true; wake(); };
+    this.on("data", onData);
+    this.once("end", onEnd);
+    this.once("close", onClose);
+    this.once("error", onError);
+    try {
+      while (true) {
+        while (queue.length > 0) {
+          yield queue.shift();
+        }
+        if (err !== null && err !== undefined) throw err;
+        if (ended) return;
+        await new Promise((resolve) => { notify = resolve; });
+      }
+    } finally {
+      this.off("data", onData);
+      this.off("end", onEnd);
+      this.off("close", onClose);
+      this.off("error", onError);
+    }
+  };
+})"#,
+        )?;
+        install.call::<_, ()>((proto, state_fn, drain_fn, flowing_fn))?;
+        Ok(())
     }
 
     pub(crate) fn is_paused(&self) -> bool {
@@ -505,7 +1093,7 @@ impl<'js> IncomingMessage<'js> {
     }
 
     pub(crate) fn body_len(&self) -> usize {
-        self.body.len()
+        self.total_body_bytes
     }
 
     pub(crate) fn push_trailer(&mut self, name: &str, value: String) {
@@ -2396,6 +2984,10 @@ where
                     HTTP_DISPATCH_NEST
                         .scope(Cell::new(0), async {
                             active_requests.fetch_add(1, Ordering::Relaxed);
+                            let response_guard = ActiveResponseGuard {
+                                active_requests,
+                                activity_tx,
+                            };
                             event_loop::adjust_http_inflight(http_rt_key, 1);
                             let response = dispatch(
                                 request_ctx,
@@ -2411,9 +3003,18 @@ where
                             )
                             .await;
                             event_loop::adjust_http_inflight(http_rt_key, -1);
-                            active_requests.fetch_sub(1, Ordering::Relaxed);
-                            let _ = activity_tx.send(());
-                            response
+                            // Keep `active_requests` elevated until Hyper finishes polling
+                            // the response body so `keep_alive_timeout` cannot sever live
+                            // streaming/SSE responses between chunks.
+                            response.map(|res| {
+                                res.map(|inner| {
+                                    TrackedResponseBody {
+                                        inner,
+                                        _guard: response_guard,
+                                    }
+                                    .boxed()
+                                })
+                            })
                         })
                         .await
                 }
@@ -2907,12 +3508,7 @@ async fn dispatch<'js>(
                             .body(Full::new(Bytes::new()).boxed())
                             .unwrap_or_else(|_| empty()));
                     }
-                    req.borrow_mut().append_body(&data);
-                    let chunk = Buffer(data.to_vec())
-                        .into_js(&ctx)
-                        .unwrap_or_else(|_| Undefined.into_value(ctx.clone()));
-                    let _ =
-                        IncomingMessage::emit_str(req.clone(), &ctx, "data", vec![chunk], false);
+                    IncomingMessage::push_body_chunk(&req, &ctx, &data);
                 },
                 Err(frame) => {
                     if let Ok(trailers) = frame.into_trailers() {
@@ -2927,8 +3523,7 @@ async fn dispatch<'js>(
         }
     }
     if consume_body {
-        req.borrow_mut().mark_complete();
-        let _ = IncomingMessage::emit_str(req, &ctx, "end", vec![], false);
+        IncomingMessage::finish_body(&req, &ctx);
     }
     Ok(finish_hyper(
         await_oneshot_pumping(&ctx, &mut js_pump, rx).await,
@@ -3075,7 +3670,7 @@ impl ModuleDef for HttpModule {
                 let _: Value = install.call((ctor,))?;
             }
             Server::add_event_emitter_prototype(ctx)?;
-            IncomingMessage::add_event_emitter_prototype(ctx)?;
+            IncomingMessage::init_prototype(ctx)?;
             OutgoingMessage::add_event_emitter_prototype(ctx)?;
             ServerResponse::add_event_emitter_prototype(ctx)?;
             Socket::add_event_emitter_prototype(ctx)?;
