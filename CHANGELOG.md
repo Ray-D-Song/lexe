@@ -4,6 +4,13 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Reduced release binary size (~41% on stable `darwin-arm64`, ~49% with nightly `build-std`):
+  - Switched `[profile.release]` to `opt-level = "z"` while keeping `rquickjs-sys` at `opt-level = 3` for QuickJS VM execution speed.
+  - Trimmed unused SQLite extensions (`GEOPOLY`, `RTREE`, `RBU`, `FTS3`, `DBSTAT_VTAB`) from `lexe_sqlite`, retaining `FTS5`, `SESSION`, `PREUPDATE_HOOK`, `COLUMN_METADATA`, and `MATH_FUNCTIONS`.
+  - Switched `jiff` to system timezone databases (`tzdb-zoneinfo`, `tzdb-concatenated`) instead of bundling the full IANA tzdb.
+  - Switched default TLS root certificates in `lexe_tls`, `lexe_http`, `lexe_fetch`, and `lexe_modules` from `webpki-roots` to `native-roots` (`rustls-native-certs`). Pass `--features webpki-roots` when targeting minimal containers without system CA bundles.
+  - Verified nightly size-optimized `build-std` flags: `RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort" cargo +nightly build --release --target <triple> -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size`.
+
 ## [0.1.6] - 2026-11-26
 
 - Fixed Windows MSVC `lexe.exe` builds so native `.node` addons resolve the `napi_*` and `node_api_*` host symbols. The executable now exports the full N-API surface through a generated module definition, so Windows standalone CLI builds no longer panic while loading native addons.

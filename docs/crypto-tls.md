@@ -23,6 +23,13 @@ Lexe supports multiple cryptographic backends for both the crypto module and TLS
 
 `node:tls` is implemented as a **partial** Node core subset (client/server, `TLSSocket`, `SecureContext`, STARTTLS handoff for `net.Socket`, TLS 1.2/1.3, ALPN, SNI, mTLS). Not supported: session resume/tickets, PFX, custom ciphers/sigalgs, OCSP, renegotiation, PSK, and other advanced options (these throw `ERR_TLS_OPTION_NOT_SUPPORTED`). HTTP/HTTPS/Fetch continue to use the internal `BuildClientConfigOptions` / `TLS_CONFIG` Rust API unchanged.
 
+### TLS Root Certificate Features
+
+| Feature                  | Description                                                              |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `native-roots` (default) | Load CA certificates from the host OS trust store (`rustls-native-certs`) |
+| `webpki-roots`           | Bundle Mozilla's root CA store (`webpki-roots`) for minimal/musl images  |
+
 ### Building with Different Backends
 
 ```bash
