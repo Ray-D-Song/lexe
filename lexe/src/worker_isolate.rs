@@ -7,7 +7,7 @@ use lexe_utils::clone_wire::deserialize;
 use lexe_worker_threads::{
     set_worker_isolate_runner, set_worker_thread_id, MainToWorker, WorkerIsolateStart, WorkerToMain,
 };
-use rquickjs::{prelude::Func, CatchResultExt, Ctx, Function, Promise};
+use rquickjs::{prelude::Func, CatchResultExt, CaughtError, Ctx, Function, Promise};
 
 use url::Url;
 
@@ -70,6 +70,10 @@ async fn run_worker_isolate_async(start: WorkerIsolateStart) -> Result<(), Strin
             let body = if start.eval {
                 // `new Worker(code, { eval: true })`: run the string directly.
                 start.script.clone()
+            } else if start.script.len() >= 5
+                && start.script[..5].eq_ignore_ascii_case("data:")
+            {
+                format!("await import({:?});", start.script)
             } else {
                 let script_path = resolve_script(&ctx, &start.script)?;
                 let import_url = Url::from_file_path(&script_path)
@@ -99,7 +103,13 @@ delete globalThis.__lexeWorkerBootstrapData;
                 .eval_with_options::<Promise, _>(code, opts)
                 .map_err(|e| e.to_string())?;
             if let Err(err) = promise.into_future::<()>().await.catch(&ctx) {
-                return Err(err.throw(&ctx).to_string());
+                let message = match err {
+                    CaughtError::Exception(exc) => exc.to_string(),
+                    CaughtError::Value(val) => format!("Uncaught {val:?}"),
+                    CaughtError::Error(e) => e.to_string(),
+                };
+                let _ = to_main.send(WorkerToMain::Error(message.clone()));
+                return Err(message);
             }
 
             let _ = to_main.send(WorkerToMain::Online);

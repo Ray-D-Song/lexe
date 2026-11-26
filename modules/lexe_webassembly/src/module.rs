@@ -9,7 +9,7 @@
 //! makes it independent of any particular realm's `Store` and safe to keep
 //! alive across `Instance` creation/destruction.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use rquickjs::{
     atom::PredefinedAtom, class::Trace, Array, ArrayBuffer, Class, Ctx, Object, Result, Value,
@@ -149,8 +149,8 @@ fn extern_kind_from_external_kind(kind: wasmparser::ExternalKind) -> ExternKind 
 #[derive(rquickjs::JsLifetime)]
 #[rquickjs::class(rename = "Module")]
 pub struct WasmModule {
-    pub(crate) inner: Rc<WasmiModule>,
-    pub(crate) metadata: Rc<ModuleMetadata>,
+    pub(crate) inner: Arc<WasmiModule>,
+    pub(crate) metadata: Arc<ModuleMetadata>,
 }
 
 impl<'js> Trace<'js> for WasmModule {
@@ -173,8 +173,8 @@ pub fn compile_module<'js>(
     let inner = WasmiModule::new(&engine, &bytes[..])
         .map_err(|err| host.throw_compile_error(ctx, err.to_string()))?;
     Ok(WasmModule {
-        inner: Rc::new(inner),
-        metadata: Rc::new(metadata),
+        inner: Arc::new(inner),
+        metadata: Arc::new(metadata),
     })
 }
 
@@ -325,8 +325,8 @@ mod tests {
             let inner = WasmiModule::new(&engine, &bytes[..]).unwrap();
             let metadata = extract_module_metadata(&bytes).unwrap();
             let module = WasmModule {
-                inner: Rc::new(inner),
-                metadata: Rc::new(metadata),
+                inner: Arc::new(inner),
+                metadata: Arc::new(metadata),
             };
             let class = Class::instance(ctx.clone(), module)?;
             let value: Value = class.clone().into_js(&ctx)?;

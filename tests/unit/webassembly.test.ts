@@ -661,3 +661,13 @@ describe("llhttp-shaped smoke fixture", () => {
     expect(calls).toEqual(["begin", "url:71", "headers_complete", "body", "complete"]);
   });
 });
+
+describe("WebAssembly.Module structuredClone", () => {
+  it("clones a compiled WebAssembly.Module so it can be instantiated again", () => {
+    const mod = new WebAssembly.Module(loadWasm("add"));
+    const cloned = structuredClone(mod);
+    expect(cloned).toBeInstanceOf(WebAssembly.Module);
+    const inst = new WebAssembly.Instance(cloned);
+    expect((inst.exports.add as (a: number, b: number) => number)(19, 23)).toEqual(42);
+  });
+});

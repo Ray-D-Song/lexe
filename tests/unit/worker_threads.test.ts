@@ -279,4 +279,70 @@ describe("worker_threads Worker spawn", () => {
     expect(wtDefault.markAsUncloneable).toBe(markAsUncloneable);
     expect(() => markAsUncloneable({})).not.toThrow();
   });
+
+  it("loads ES module data: URL workers (base64 and UTF-8)", async () => {
+    const { Worker } = await import("node:worker_threads");
+
+    const base64Code = `
+      import { parentPort, workerData } from "node:worker_threads";
+      parentPort.postMessage({ got: workerData.x + 1 });
+    `;
+    const base64Url = new URL(
+      "data:text/javascript;base64," + Buffer.from(base64Code).toString("base64")
+    );
+    const w1 = new Worker(base64Url, { workerData: { x: 41 } });
+    const msg1 = await new Promise<unknown>((resolve, reject) => {
+      w1.once("message", resolve);
+      w1.once("error", reject);
+    });
+    expect(msg1).toEqual({ got: 42 });
+    w1.terminate();
+    await new Promise<void>((resolve) => w1.once("exit", () => resolve()));
+
+    const textCode = `import{parentPort}from"node:worker_threads";parentPort.postMessage("ok-text");`;
+    const textUrl = new URL("data:text/javascript," + encodeURIComponent(textCode));
+    const w2 = new Worker(textUrl);
+    const msg2 = await new Promise<unknown>((resolve, reject) => {
+      w2.once("message", resolve);
+      w2.once("error", reject);
+    });
+    expect(msg2).toBe("ok-text");
+    w2.terminate();
+    await new Promise<void>((resolve) => w2.once("exit", () => resolve()));
+  });
+
+  it("shares WebAssembly.Module across worker_threads via workerData and postMessage", async () => {
+    const { Worker } = await import("node:worker_threads");
+    const addWasm = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x07, 0x01, 0x60, 0x02, 0x7f, 0x7f,
+      0x01, 0x7f, 0x03, 0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x61, 0x64, 0x64, 0x00, 0x00,
+      0x0a, 0x09, 0x01, 0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b,
+    ]);
+    const mod = new WebAssembly.Module(addWasm);
+
+    const code = `
+      import { parentPort, workerData } from "node:worker_threads";
+      const i1 = new WebAssembly.Instance(workerData.mod);
+      parentPort.on("message", (msg) => {
+        const i2 = new WebAssembly.Instance(msg.mod);
+        parentPort.postMessage({
+          a: i1.exports.add(20, 22),
+          b: i2.exports.add(10, 5),
+          isMod1: workerData.mod instanceof WebAssembly.Module,
+          isMod2: msg.mod instanceof WebAssembly.Module,
+        });
+      });
+    `;
+    const url = new URL("data:text/javascript;base64," + Buffer.from(code).toString("base64"));
+    const worker = new Worker(url, { workerData: { mod } });
+    await new Promise<void>((resolve) => worker.once("online", resolve));
+    const reply = new Promise<unknown>((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    worker.postMessage({ mod });
+    expect(await reply).toEqual({ a: 42, b: 15, isMod1: true, isMod2: true });
+    worker.terminate();
+    await new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+  });
 });

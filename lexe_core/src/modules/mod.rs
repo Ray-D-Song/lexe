@@ -75,5 +75,6 @@ pub use lexe_modules::v8;
 #[cfg(feature = "zlib")]
 pub use lexe_modules::zlib;
 
+pub mod data_url;
 pub mod embedded;
 pub mod lexe;

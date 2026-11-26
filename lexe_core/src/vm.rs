@@ -21,6 +21,7 @@ use crate::libs::{
 #[cfg(feature = "async-hooks")]
 use crate::modules::async_hooks::promise_hook_tracker;
 use crate::modules::{
+    data_url::{DataUrlLoader, DataUrlResolver},
     embedded::{loader::EmbeddedLoader, resolver::EmbeddedResolver, BYTECODE_CACHE},
     module_builder::{ModuleBuilder, ModuleBuilderConfig},
     package::{loader::PackageLoader, resolver::PackageResolver},
@@ -107,10 +108,11 @@ impl Vm {
         let resolver = (
             module_resolver,
             EmbeddedResolver,
+            DataUrlResolver,
             PackageResolver,
             file_resolver,
         );
-        let loader = (module_loader, EmbeddedLoader, PackageLoader);
+        let loader = (module_loader, EmbeddedLoader, DataUrlLoader, PackageLoader);
 
         let v8_start_ns = time::monotonic_elapsed_nanos();
         let runtime = AsyncRuntime::new()?;
