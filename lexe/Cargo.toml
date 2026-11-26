@@ -43,7 +43,7 @@ v8-compat = ["napi", "lexe_napi/v8-compat", "lexe_core/v8-compat", "dep:lexe_nap
 
 [dependencies]
 constcat = { version = "0.6", default-features = false }
-jiff = { version = "0.2" }
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-concatenated"] }
 lexe_core = { path = "../lexe_core", default-features = false }
 lexe_utils = { path = "../libs/lexe_utils", default-features = false }
 lexe_worker_threads = { path = "../modules/lexe_worker_threads" }

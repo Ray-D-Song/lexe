@@ -12,6 +12,6 @@ name = "lexe_temporal"
 path = "src/lib.rs"
 
 [dependencies]
-jiff = { version = "0.2" }
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-concatenated"] }
 lexe_utils = { version = "0.1.6", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", features = ["macro"], default-features = false }

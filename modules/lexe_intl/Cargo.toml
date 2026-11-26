@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 itoa = "1.0"
-jiff = { version = "0.2" }
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-concatenated"] }
 rquickjs = { version = "=0.12.1", default-features = false }
 unicode-segmentation = "1.12"
 lexe_utils = { version = "0.1.6", path = "../../libs/lexe_utils" }

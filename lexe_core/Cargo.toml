@@ -117,7 +117,7 @@ bytes = { version = "1", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
 hyper = { version = "1", default-features = false, optional = true }
 itoa = { version = "1", default-features = false }
-jiff = { version = "0.2" }
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo", "tzdb-concatenated"] }
 libc = { version = "0.2", default-features = false }
 lexe_context = { path = "../libs/lexe_context" }
 lexe_encoding = { path = "../libs/lexe_encoding" }
