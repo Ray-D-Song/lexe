@@ -1,7 +1,7 @@
 [package]
 name = "lexe_fetch"
 description = "lexe Module fetch"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -35,16 +35,16 @@ http-body = { version = "1", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
 hyper = { version = "1", features = ["client"], default-features = false }
 itoa = { version = "1", default-features = false }
-lexe_abort = { version = "0.1.7", path = "../lexe_abort" }
-lexe_buffer = { version = "0.1.7", path = "../lexe_buffer" }
-lexe_compression = { version = "0.1.7", path = "../../libs/lexe_compression", default-features = false }
-lexe_context = { version = "0.1.7", path = "../../libs/lexe_context" }
-lexe_encoding = { version = "0.1.7", path = "../../libs/lexe_encoding" }
-lexe_http = { version = "0.1.7", default-features = false, path = "../lexe_http" }
-lexe_json = { version = "0.1.7", path = "../../libs/lexe_json" }
-lexe_url = { version = "0.1.7", path = "../lexe_url" }
-lexe_utils = { version = "0.1.7", path = "../../libs/lexe_utils", default-features = false }
-lexe_stream_web = { version = "0.1.7", path = "../lexe_stream_web" }
+lexe_abort = { version = "0.1.8", path = "../lexe_abort" }
+lexe_buffer = { version = "0.1.8", path = "../lexe_buffer" }
+lexe_compression = { version = "0.1.8", path = "../../libs/lexe_compression", default-features = false }
+lexe_context = { version = "0.1.8", path = "../../libs/lexe_context" }
+lexe_encoding = { version = "0.1.8", path = "../../libs/lexe_encoding" }
+lexe_http = { version = "0.1.8", default-features = false, path = "../lexe_http" }
+lexe_json = { version = "0.1.8", path = "../../libs/lexe_json" }
+lexe_url = { version = "0.1.8", path = "../lexe_url" }
+lexe_utils = { version = "0.1.8", path = "../../libs/lexe_utils", default-features = false }
+lexe_stream_web = { version = "0.1.8", path = "../lexe_stream_web" }
 once_cell = { version = "1", features = ["std"], default-features = false }
 pin-project-lite = { version = "0.2", default-features = false }
 percent-encoding = { version = "2", features = [
@@ -62,7 +62,7 @@ tokio = { version = "1", features = [
 tracing = { version = "0.1", default-features = false }
 
 [dev-dependencies]
-lexe_compression = { version = "0.1.7", path = "../../libs/lexe_compression" }
+lexe_compression = { version = "0.1.8", path = "../../libs/lexe_compression" }
 lexe_test = { path = "../../libs/lexe_test" }
 lexe_test_tls = { path = "../../libs/lexe_test_tls", default-features = false }
 wiremock = { version = "0.6", default-features = false }
