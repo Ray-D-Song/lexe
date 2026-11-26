@@ -793,11 +793,15 @@ named exports) combining:
 
 ## v8
 
-Node-compatible subset of the `v8` module. Statistics are derived from **QuickJS**
-`JS_ComputeMemoryUsage`, not Google V8. Heap space name is always `"quickjs"`.
-When QuickJS has no malloc limit (`malloc_limit === 0`), `heap_size_limit` is
-`Number.MAX_SAFE_INTEGER`. `setFlagsFromString` is a compatibility no-op (does not
-configure QuickJS). Serialization, snapshots, and profilers are not implemented.
+Node-compatible subset of the `v8` module. Heap statistics are derived from **QuickJS**
+`JS_ComputeMemoryUsage`, not Google V8 (heap space name is always `"quickjs"`;
+when `malloc_limit === 0`, `heap_size_limit` is `Number.MAX_SAFE_INTEGER`).
+`setFlagsFromString` is a compatibility no-op (does not configure QuickJS).
+`serialize`/`deserialize`/`Serializer`/`Deserializer`/`DefaultSerializer`/`DefaultDeserializer`
+use Lexe's structured-clone wire codec (`clone_wire`) plus V8 header/primitive framing (`0xFF 0x0F`).
+Heap snapshots, profilers, `queryObjects`, `startupSnapshot`, and coverage APIs are not implemented.
+
+[cachedDataVersionTag](https://nodejs.org/api/v8.html#v8cacheddataversiontag)
 
 [getHeapStatistics](https://nodejs.org/api/v8.html#v8getheapstatistics)
 
@@ -806,6 +810,12 @@ configure QuickJS). Serialization, snapshots, and profilers are not implemented.
 [getHeapCodeStatistics](https://nodejs.org/api/v8.html#v8getheapcodestatistics)
 
 [setFlagsFromString](https://nodejs.org/api/v8.html#v8setflagsfromstringflags) (no-op)
+
+[serialize](https://nodejs.org/api/v8.html#v8serializevalue) / [deserialize](https://nodejs.org/api/v8.html#v8deserializebuffer)
+
+[Serializer](https://nodejs.org/api/v8.html#class-v8serializer) / [DefaultSerializer](https://nodejs.org/api/v8.html#class-v8defaultserializer)
+
+[Deserializer](https://nodejs.org/api/v8.html#class-v8deserializer) / [DefaultDeserializer](https://nodejs.org/api/v8.html#class-v8defaultdeserializer)
 
 ## querystring
 

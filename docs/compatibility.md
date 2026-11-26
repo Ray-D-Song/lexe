@@ -49,7 +49,7 @@
 | node:url | ✔︎ | ✔︎ | — |
 | node:util | ✔︎ | ✔︎⚠️ | Limited `TextDecoder` encodings (`utf-8`, `utf-16le`, `utf-16be`, `windows-1252`) ([details](#nodeutil-and-nodeutiltypes)) |
 | node:util/types | ✔︎ | ✔︎ | — |
-| node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; missing Serializer/Deserializer, heap snapshots, and `GCProfiler` ([details](#nodev8)) |
+| node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; structured-clone-backed serialization; missing V8 heap snapshots and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✘ | Not implemented |
 | node:worker_threads | ✔︎ | ✔︎⚠️ | Missing V8 `Worker.prototype.getHeapSnapshot()` ([details](#nodeworker_threads)) |
@@ -164,8 +164,8 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 #### `node:v8`
 
 - Backed by QuickJS `JS_ComputeMemoryUsage` rather than V8: `getHeapSpaceStatistics()` always returns a single `"quickjs"` space, and `heap_size_limit` falls back to `Number.MAX_SAFE_INTEGER` when `malloc_limit === 0`.
-- `setFlagsFromString()` is a no-op.
-- Missing serialization (`serialize`, `deserialize`, `Serializer`, `Deserializer`, `DefaultSerializer`, `DefaultDeserializer`), heap snapshots (`writeHeapSnapshot`, `getHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `cachedDataVersionTag`, and coverage APIs (`takeCoverage`, `stopCoverage`).
+- `setFlagsFromString()` is a no-op; `cachedDataVersionTag()`, `serialize()`, `deserialize()`, `Serializer`, `Deserializer`, `DefaultSerializer`, and `DefaultDeserializer` are implemented (backed by structured clone wire format rather than V8 binary snapshots).
+- Missing V8-specific heap snapshots (`writeHeapSnapshot`, `getHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, and coverage APIs (`takeCoverage`, `stopCoverage`).
 
 #### `node:worker_threads`
 

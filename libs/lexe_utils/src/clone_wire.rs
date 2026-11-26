@@ -40,6 +40,10 @@ enum WireNode {
     },
     Error(String),
     ArrayBufferCopy(Vec<u8>),
+    ArrayBufferView {
+        bytes: Vec<u8>,
+        view_name: String,
+    },
     SharedArrayBuffer {
         id: u64,
     },
@@ -260,10 +264,13 @@ fn encode_node_inner<'js>(
         Type::Bool => Ok(WireNode::Bool(value.as_bool().unwrap_or(false))),
         Type::Int | Type::Float => Ok(WireNode::Number(value.as_number().unwrap_or(f64::NAN))),
         Type::String => Ok(WireNode::String(value.as_string().unwrap().to_string()?)),
-        Type::BigInt => Err(Exception::throw_type(
-            ctx,
-            "BigInt cannot be cloned across worker processes yet",
-        )),
+        Type::BigInt => {
+            let s = ctx
+                .globals()
+                .get::<_, Function>("String")?
+                .call::<_, String>((value.clone(),))?;
+            Ok(WireNode::BigInt(s))
+        },
         Type::Array => {
             let array = unsafe { value.as_array().unwrap_unchecked() };
             let mut items = Vec::with_capacity(array.len());
@@ -355,9 +362,22 @@ fn encode_node_inner<'js>(
                         view_name,
                     });
                 }
-                let bytes = read_array_buffer_bytes(ctx, &ab)?;
-                transfers.push(bytes.clone());
-                return Ok(WireNode::ArrayBufferCopy(bytes));
+                let ab_bytes = read_array_buffer_bytes(ctx, &ab)?;
+                let byte_offset = object.get::<_, u32>("byteOffset").unwrap_or(0) as usize;
+                let byte_length = object
+                    .get::<_, u32>("byteLength")
+                    .unwrap_or(ab_bytes.len() as u32) as usize;
+                let end = byte_offset.saturating_add(byte_length).min(ab_bytes.len());
+                let slice = ab_bytes.get(byte_offset..end).unwrap_or(&[]).to_vec();
+                let view_name = object
+                    .get::<_, Object>(PredefinedAtom::Constructor)
+                    .and_then(|c| c.get::<_, String>(PredefinedAtom::Name))
+                    .unwrap_or_else(|_| String::from("Uint8Array"));
+                transfers.push(slice.clone());
+                return Ok(WireNode::ArrayBufferView {
+                    bytes: slice,
+                    view_name,
+                });
             }
             let keys: Vec<String> = object.keys().collect::<Result<_>>()?;
             let mut props = Vec::with_capacity(keys.len());
@@ -430,6 +450,25 @@ fn decode_at<'js>(
         },
         WireNode::ArrayBufferCopy(bytes) => {
             ArrayBuffer::new_copy(ctx.clone(), bytes)?.into_js(ctx)?
+        },
+        WireNode::ArrayBufferView { bytes, view_name } => {
+            let ab = ArrayBuffer::new_copy(ctx.clone(), bytes)?;
+            if view_name == "Buffer" {
+                if let Ok(buf_fn) = ctx.globals().get::<_, Object>("Buffer") {
+                    if let Ok(from_fn) = buf_fn.get::<_, Function>("from") {
+                        return Ok(from_fn.call::<_, Value>((ab,))?);
+                    }
+                }
+            }
+            if let Ok(ctor) = ctx
+                .globals()
+                .get::<_, rquickjs::function::Constructor>(view_name.as_str())
+            {
+                let obj: Object = ctor.construct((ab,))?;
+                obj.into_js(ctx)?
+            } else {
+                ab.into_js(ctx)?
+            }
         },
         WireNode::SharedArrayBuffer { id } => {
             shared_array_buffer::new_shared_array_buffer_value(ctx, *id)?
@@ -642,6 +681,11 @@ fn write_node(out: &mut Vec<u8>, node: &WireNode) {
             out.push(18);
             write_u32(out, *id);
         },
+        WireNode::ArrayBufferView { bytes, view_name } => {
+            out.push(19);
+            write_bytes(out, bytes);
+            write_bytes(out, view_name.as_bytes());
+        },
     }
 }
 
@@ -704,6 +748,10 @@ fn read_node(data: &[u8], pos: &mut usize) -> Result<WireNode> {
             view_name: read_string(data, pos)?,
         },
         18 => WireNode::SharedHandle(read_u32(data, pos)?),
+        19 => WireNode::ArrayBufferView {
+            bytes: read_vec(data, pos)?,
+            view_name: read_string(data, pos)?,
+        },
         _ => {
             return Err(rquickjs::Error::new_from_js_message(
                 "clone_wire",

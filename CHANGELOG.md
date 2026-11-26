@@ -4,6 +4,10 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Improved `node:v8` compatibility (`docs/compatibility.md`):
+  - Added `serialize()`, `deserialize()`, `Serializer`, `Deserializer`, `DefaultSerializer`, `DefaultDeserializer` (including `writeHeader`/`readHeader`, `getWireFormatVersion`, `writeUint32`/`readUint32`, `writeUint64`/`readUint64`, `writeDouble`/`readDouble`, `writeRawBytes`/`readRawBytes`/`_readRawBytes`, `transferArrayBuffer`, and custom `_writeHostObject`/`_readHostObject`), and `cachedDataVersionTag()`.
+  - Added `BigInt` and `ArrayBufferView` (`Uint8Array`, TypedArrays, `Buffer`, `DataView`) structured-clone wire encoding/decoding in `lexe_utils::clone_wire`.
+
 - Improved `node:async_hooks` compatibility (`docs/compatibility.md`):
   - Added `executionAsyncResource()`, `asyncWrapProviders`, and `AsyncLocalStorage({ defaultValue, name })` constructor options plus `AsyncLocalStorage.prototype.name`.
   - Updated `currentId()` to return the active `executionAsyncId()` instead of hardcoded `0`.
