@@ -180,13 +180,16 @@ jobs:
           else
             docker run --rm -v "$PWD/$bin:/lexe:ro" alpine:3.20 /lexe --version
           fi
-      - name: Install Rosetta 2 for x86_64 smoke test
-        if: matrix.target == 'x86_64-apple-darwin'
-        run: softwareupdate --install-rosetta --agree-to-license
       - name: Verify binary and stage release asset
         shell: bash
         run: |
           cp "target/${{ matrix.target }}/release/lexe${{ endsWith(matrix.asset, '.exe') && '.exe' || '' }}" "${{ matrix.asset }}"
+          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
+            # Cross-compiled on arm64 without Rosetta: check the Mach-O arch only.
+            file "${{ matrix.asset }}" | grep -q 'Mach-O 64-bit executable x86_64' || {
+              echo "expected x86_64 Mach-O" >&2; exit 1; }
+            exit 0
+          fi
           expected="lexe v${RELEASE_TAG#v} (${{ matrix.platform }}, ${{ matrix.arch }})"
           test "$(./${{ matrix.asset }} --version)" = "$expected"
           smoke_tmp=$(mktemp -d)
