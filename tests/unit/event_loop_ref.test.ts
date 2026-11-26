@@ -124,4 +124,34 @@ describe("event loop ref/unref", () => {
     expect(code).toBe(0);
     expect(stdout.trim()).toBe("done");
   });
+
+  it("process.stdin.on('data') starts reading and keeps event loop alive until EOF", async () => {
+    const { spawn } = await import("node:child_process");
+    const result = await new Promise<{ code: number | null; stdout: string }>((resolve) => {
+      const child = spawn(
+        process.argv[0],
+        [
+          "-e",
+          `
+            process.stdin.setEncoding("utf8");
+            let buf = "";
+            process.stdin.on("data", (chunk) => { buf += chunk; });
+            process.stdin.on("end", () => console.log("GOT:" + buf.trim()));
+          `,
+        ],
+        { stdio: ["pipe", "pipe", "pipe"] },
+      );
+      let stdout = "";
+      child.stdout.on("data", (c) => {
+        stdout += c.toString();
+      });
+      setTimeout(() => {
+        child.stdin.write("hello-pipe\n");
+        child.stdin.end();
+      }, 40);
+      child.on("close", (code) => resolve({ code, stdout }));
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout.trim()).toBe("GOT:hello-pipe");
+  });
 });
