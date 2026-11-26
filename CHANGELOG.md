@@ -4,6 +4,11 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-26
+
+- Fixed Windows MSVC `lexe.exe` builds so native `.node` addons resolve the `napi_*` and `node_api_*` host symbols. The executable now exports the full N-API surface through a generated module definition, so Windows standalone CLI builds no longer panic while loading native addons.
+- x86_64 macOS release binaries are now cross-compiled on the `macos-15` arm64 runner instead of the slower `macos-15-intel` runner. The x86_64 Mach-O architecture is verified; the x86_64 binary is not executed in CI.
+
 ## [0.1.5] - 2026-11-26
 
 - Split Linux release binaries by C library. `lexe-linux-x64-gnu` and `lexe-linux-arm64-gnu` are dynamically linked against glibc with a glibc 2.28 baseline and export N-API symbols, so native `.node` addons such as `node-pty` load. `lexe-linux-x64-musl` and `lexe-linux-arm64-musl` remain statically linked and do not load native addons. The unadorned `lexe-linux-x64` and `lexe-linux-arm64` assets are no longer published.

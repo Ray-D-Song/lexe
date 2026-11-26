@@ -1,7 +1,7 @@
 [package]
 name = "lexe_dns_cache"
 description = "lexe dns cache helpers"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -16,8 +16,8 @@ hyper-util = { version = "0.1", features = [
   "client",
   "client-legacy",
 ], default-features = false }
-lexe_context = { version = "0.1.5", path = "../lexe_context" }
-lexe_utils = { version = "0.1.5", path = "../lexe_utils", default-features = false }
+lexe_context = { version = "0.1.6", path = "../lexe_context" }
+lexe_utils = { version = "0.1.6", path = "../lexe_utils", default-features = false }
 tokio = { version = "1", features = ["net"], default-features = false }
 tower-service = { version = "0.3", default-features = false }
 quick_cache = { version = "0.6", default-features = false }

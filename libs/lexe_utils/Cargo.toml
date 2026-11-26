@@ -1,7 +1,7 @@
 [package]
 name = "lexe_utils"
 description = "lexe utilities"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -28,8 +28,8 @@ windows-sys = { version = "0.61", features = [
 ], default-features = false }
 
 [dev-dependencies]
-lexe_test = { version = "0.1.5", path = "../lexe_test" }
+lexe_test = { version = "0.1.6", path = "../lexe_test" }
 tokio = { version = "1", features = ["full"] }
 
 [build-dependencies]
-lexe_build = { version = "0.1.5", path = "../lexe_build" }
+lexe_build = { version = "0.1.6", path = "../lexe_build" }

@@ -1,6 +1,6 @@
 {
   "name": "lexe-linux-arm64-gnu",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Lexe native runtime binary for Linux arm64 (gnu). Installed automatically by the lexe package; do not depend on it directly.",
   "license": "Apache-2.0",
   "author": "Ray-D-Song",

@@ -1,7 +1,7 @@
 [package]
 name = "lexe_dgram"
 description = "lexe Module dgram"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -13,10 +13,10 @@ path = "src/lib.rs"
 
 [dependencies]
 itoa = { version = "1", default-features = false }
-lexe_buffer = { version = "0.1.5", path = "../lexe_buffer" }
-lexe_context = { version = "0.1.5", path = "../../libs/lexe_context" }
-lexe_events = { version = "0.1.5", path = "../lexe_events" }
-lexe_utils = { version = "0.1.5", path = "../../libs/lexe_utils", default-features = false }
+lexe_buffer = { version = "0.1.6", path = "../lexe_buffer" }
+lexe_context = { version = "0.1.6", path = "../../libs/lexe_context" }
+lexe_events = { version = "0.1.6", path = "../lexe_events" }
+lexe_utils = { version = "0.1.6", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
 socket2 = { version = "0.6", default-features = false }
 tokio = { version = "1", features = [
