@@ -15,13 +15,16 @@ use rquickjs::{
     qjs, Ctx, Error, Exception, Function, JsLifetime, Module, Object, Result, Value,
 };
 
+pub mod compile_cache;
 mod current_module;
 pub mod extensions;
 pub mod facade;
 pub mod import_load;
 pub mod loader;
+pub mod register_worker;
 mod require;
 pub mod resolver;
+pub mod ts_strip;
 
 use crate::CJS_IMPORT_PREFIX;
 
@@ -153,6 +156,7 @@ pub struct ModuleHookState<'js> {
     next_id: u64,
     hook_ids: Vec<u64>,
     hooks: Vec<Hook<'js>>,
+    pub worker: Option<register_worker::HooksWorkerClient>,
 }
 
 impl Default for ModuleHookState<'_> {
@@ -167,6 +171,7 @@ impl ModuleHookState<'_> {
             next_id: 1,
             hook_ids: Vec::new(),
             hooks: Vec::new(),
+            worker: None,
         }
     }
 }
@@ -259,9 +264,22 @@ impl ModuleDef for ModuleModule {
         declare.declare("builtinModules")?;
         declare.declare("createRequire")?;
         declare.declare("isBuiltin")?;
+        declare.declare("register")?;
         declare.declare("registerHooks")?;
+        declare.declare("stripTypeScriptTypes")?;
         declare.declare("_nodeModulePaths")?;
         declare.declare("_resolveFilename")?;
+        declare.declare("_resolveLookupPaths")?;
+        declare.declare("_load")?;
+        declare.declare("_findPath")?;
+        declare.declare("_initPaths")?;
+        declare.declare("_stat")?;
+        declare.declare("_debug")?;
+        declare.declare("_pathCache")?;
+        declare.declare("_preloadModules")?;
+        declare.declare("_readPackage")?;
+        declare.declare("globalPaths")?;
+        declare.declare("runMain")?;
         declare.declare("_cache")?;
         declare.declare("_extensions")?;
         for name in facade::MODULE_EXTRA_EXPORTS {
@@ -296,7 +314,12 @@ impl ModuleDef for ModuleModule {
             module_ctor.get::<_, Value>("createRequire")?,
         )?;
         exports.export("isBuiltin", Func::from(is_builtin))?;
+        exports.export("register", module_ctor.get::<_, Value>("register")?)?;
         exports.export("registerHooks", Func::from(register_hooks))?;
+        exports.export(
+            "stripTypeScriptTypes",
+            module_ctor.get::<_, Value>("stripTypeScriptTypes")?,
+        )?;
         exports.export(
             "_nodeModulePaths",
             module_ctor.get::<_, Value>("_nodeModulePaths")?,
@@ -305,6 +328,23 @@ impl ModuleDef for ModuleModule {
             "_resolveFilename",
             module_ctor.get::<_, Value>("_resolveFilename")?,
         )?;
+        exports.export(
+            "_resolveLookupPaths",
+            module_ctor.get::<_, Value>("_resolveLookupPaths")?,
+        )?;
+        exports.export("_load", module_ctor.get::<_, Value>("_load")?)?;
+        exports.export("_findPath", module_ctor.get::<_, Value>("_findPath")?)?;
+        exports.export("_initPaths", module_ctor.get::<_, Value>("_initPaths")?)?;
+        exports.export("_stat", module_ctor.get::<_, Value>("_stat")?)?;
+        exports.export("_debug", module_ctor.get::<_, Value>("_debug")?)?;
+        exports.export("_pathCache", module_ctor.get::<_, Value>("_pathCache")?)?;
+        exports.export(
+            "_preloadModules",
+            module_ctor.get::<_, Value>("_preloadModules")?,
+        )?;
+        exports.export("_readPackage", module_ctor.get::<_, Value>("_readPackage")?)?;
+        exports.export("globalPaths", module_ctor.get::<_, Value>("globalPaths")?)?;
+        exports.export("runMain", module_ctor.get::<_, Value>("runMain")?)?;
         exports.export("_cache", module_ctor.get::<_, Value>("_cache")?)?;
         exports.export("_extensions", module_ctor.get::<_, Value>("_extensions")?)?;
         for name in facade::MODULE_EXTRA_EXPORTS {
@@ -408,10 +448,18 @@ pub fn shutdown_context_state<'js>(ctx: &Ctx<'js>) -> Result<()> {
         binding.borrow_mut().esm.clear();
     }
 
+    compile_cache::flush_dirty_to_disk(false);
+
     if let Some(binding) = ctx.userdata::<RefCell<ModuleHookState>>() {
-        let mut state = binding.borrow_mut();
-        state.hook_ids.clear();
-        state.hooks.clear();
+        let worker_opt = {
+            let mut state = binding.borrow_mut();
+            state.hook_ids.clear();
+            state.hooks.clear();
+            state.worker.take()
+        };
+        if let Some(worker) = worker_opt {
+            worker.shutdown();
+        }
     }
 
     unsafe {

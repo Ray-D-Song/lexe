@@ -6,13 +6,14 @@ use lexe_json::parse::json_parse;
 use lexe_path as path;
 use lexe_utils::{io::SUPPORTED_EXTENSIONS, result::ResultExt};
 use rquickjs::{
-    context::EvalOptions, function::Args, function::Opt, function::This, Ctx, Exception, Function,
-    Object, Result, Value,
+    function::Args, function::Opt, function::This, Ctx, Exception, Function, Object, Result, Value,
 };
 
+use super::compile_cache::compile_cjs_with_cache;
 use super::current_module::CurrentModuleGuard;
 use super::facade::ModuleFacadeState;
 use super::import_load::load_source_via_import;
+use super::ts_strip::{is_typescript_filename, strip_ts, StripOptions};
 use super::RequireState;
 use crate::package::resolver::detect_file_format;
 
@@ -136,7 +137,15 @@ pub fn module_compile<'js>(
     let _guard = CurrentModuleGuard::push(ctx.clone(), module.clone())?;
 
     // Match Node: shebang is not part of the CJS wrapper body.
-    let code = strip_shebang(&code);
+    let stripped_owned;
+    let code = if is_typescript_filename(&filename) {
+        let stripped =
+            strip_ts(strip_shebang(&code), &StripOptions::default()).map_err(|e| e.throw(&ctx))?;
+        stripped_owned = stripped;
+        stripped_owned.as_str()
+    } else {
+        strip_shebang(&code)
+    };
 
     // After a CJS wrapper parse failure:
     // - explicit ESM (`.mjs` / `type: "module"`) → hand off to the ESM loader
@@ -150,12 +159,7 @@ pub fn module_compile<'js>(
     let wrapped =
         format!("(function(exports, require, module, __filename, __dirname) {{\n{code}\n}})");
 
-    // Pass the real filename so relative `import()` and error stacks resolve against
-    // this CommonJS file instead of the default `eval_script` script name.
-    let mut options = EvalOptions::default();
-    options.filename = Some(filename.clone());
-
-    match ctx.eval_with_options::<Function, _>(wrapped.as_str(), options) {
+    match compile_cjs_with_cache(&ctx, &wrapped, &filename) {
         Ok(compiled) => {
             compiled.call::<_, ()>((
                 exports.clone(),

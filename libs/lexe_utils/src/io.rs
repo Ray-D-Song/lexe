@@ -22,7 +22,7 @@ macro_rules! define_supported_extensions {
 
         // Define the function `is_supported_ext` using a match statement
         pub fn is_supported_ext(ext: &str) -> bool {
-            matches!(ext, $($ext)|* | $constant_ext)
+            matches!(ext, $($ext)|* | $constant_ext | ".ts" | ".mts" | ".cts")
         }
     };
 }

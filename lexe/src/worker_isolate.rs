@@ -3,9 +3,13 @@
 
 use std::sync::Arc;
 
+use lexe_core::modules::module::register_worker::{
+    set_module_hooks_worker_runner, HookLoadOutput, HookResolveOutput, HookSourceData,
+    HooksRequest, ModuleHooksWorkerStart, NextReply, RegisterOutcome, WorkerRpcMsg,
+};
 use lexe_core::modules::module_builder::{ModuleBuilder, ModuleBuilderConfig};
 use lexe_core::vm::{Vm, VmOptions};
-use lexe_utils::clone_wire::deserialize;
+use lexe_utils::clone_wire::{deserialize, CloneWirePayload};
 use lexe_worker_threads::{
     attach_thread_inbox, set_worker_isolate_runner, set_worker_thread_id, unregister_thread_inbox,
     worker_write_stderr_hook, worker_write_stdout_hook, MainToWorker, WorkerEnvMode,
@@ -19,6 +23,7 @@ use url::Url;
 
 pub fn register() {
     set_worker_isolate_runner(run_worker_isolate);
+    set_module_hooks_worker_runner(run_module_hooks_worker);
 }
 
 fn run_worker_isolate(start: WorkerIsolateStart) {
@@ -477,4 +482,541 @@ fn encode_base64(input: &[u8]) -> String {
         });
     }
     out
+}
+
+fn run_module_hooks_worker(start: ModuleHooksWorkerStart) {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("module hooks worker tokio runtime");
+    rt.block_on(run_module_hooks_worker_async(start));
+}
+
+async fn run_module_hooks_worker_async(mut start: ModuleHooksWorkerStart) {
+    let vm_opts = VmOptions {
+        module_builder: ModuleBuilder::with_config(ModuleBuilderConfig {
+            sqlite_enabled: false,
+        })
+        .with_global(lexe_core::modules::embedded::init)
+        .with_global(lexe_core::builtins_inspect::init)
+        .with_global(lexe_worker_threads::init)
+        .with_module(lexe_core::modules::lexe::hex::LexeHexModule)
+        .with_module(lexe_core::modules::lexe::qjs::LexeQjsModule)
+        .with_module(lexe_core::modules::lexe::util::LexeUtilModule)
+        .with_module(lexe_core::modules::lexe::xml::LexeXmlModule),
+        ..VmOptions::default()
+    };
+    let vm = match Vm::from_options(vm_opts).await {
+        Ok(vm) => vm,
+        Err(err) => {
+            let _ = start.ready_tx.send(Err(err.to_string()));
+            return;
+        },
+    };
+
+    let init_err = vm
+        .ctx
+        .with(|ctx| {
+            lexe_worker_threads::init(&ctx).map_err(|e| e.to_string())?;
+            ctx.eval::<(), _>(
+                r#"
+                globalThis.__lexeHooksRegistry = new Map();
+                globalThis.__lexeNextHookId = 1;
+                "#,
+            )
+            .map_err(|e| e.to_string())?;
+            Ok::<_, String>(())
+        })
+        .await;
+    if let Err(err) = init_err {
+        let _ = start.ready_tx.send(Err(err));
+        vm.shutdown().await;
+        return;
+    }
+
+    let _ = start.ready_tx.send(Ok(()));
+
+    let mut has_pending = true;
+    loop {
+        tokio::select! {
+            _ = vm.idle(), if has_pending => {
+                has_pending = false;
+            }
+            req = start.from_main.recv() => {
+                match req {
+                    None | Some(HooksRequest::Shutdown) => break,
+                    Some(req) => {
+                        dispatch_hooks_request(&vm, req).await;
+                        has_pending = true;
+                    },
+                }
+            }
+        }
+    }
+
+    let _ = vm.idle().await;
+    vm.shutdown().await;
+}
+
+fn worker_err_msg(ctx: &rquickjs::Ctx<'_>, err: rquickjs::Error) -> String {
+    if ctx.has_exception() {
+        let exc = ctx.catch();
+        if let Some(obj) = exc.as_object() {
+            if let Ok(msg) = obj.get::<_, String>("message") {
+                return msg;
+            }
+        }
+        return format!("{exc:?}");
+    }
+    err.to_string()
+}
+
+async fn dispatch_hooks_request(vm: &Vm, req: HooksRequest) {
+    vm.ctx
+        .with(|ctx| match req {
+            HooksRequest::Register {
+                hook_url,
+                data_wire,
+                reply,
+            } => {
+                let c = ctx.clone();
+                ctx.spawn(async move {
+                    let res = handle_worker_register(&c, hook_url, data_wire).await;
+                    let _ = reply.send(res);
+                });
+            },
+            HooksRequest::Resolve {
+                hook_id,
+                specifier,
+                parent_url,
+                conditions,
+                import_attributes,
+                rpc_tx,
+            } => {
+                let c = ctx.clone();
+                ctx.spawn(async move {
+                    let res = handle_worker_resolve(
+                        &c,
+                        hook_id,
+                        specifier,
+                        parent_url,
+                        conditions,
+                        import_attributes,
+                        rpc_tx.clone(),
+                    )
+                    .await;
+                    let _ = rpc_tx.send(WorkerRpcMsg::ResolveDone(res));
+                });
+            },
+            HooksRequest::Load {
+                hook_id,
+                url,
+                format,
+                import_attributes,
+                rpc_tx,
+            } => {
+                let c = ctx.clone();
+                ctx.spawn(async move {
+                    let res = handle_worker_load(
+                        &c,
+                        hook_id,
+                        url,
+                        format,
+                        import_attributes,
+                        rpc_tx.clone(),
+                    )
+                    .await;
+                    let _ = rpc_tx.send(WorkerRpcMsg::LoadDone(res));
+                });
+            },
+            HooksRequest::Shutdown => {},
+        })
+        .await;
+}
+
+async fn handle_worker_register<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    hook_url: String,
+    data_wire: CloneWirePayload,
+) -> Result<RegisterOutcome, String> {
+    let data = deserialize(ctx, &data_wire).map_err(|e| e.to_string())?;
+    ctx.globals()
+        .set("__lexeHookInitData", data)
+        .map_err(|e| worker_err_msg(ctx, e))?;
+
+    let body = format!(
+        r#"
+        (async () => {{
+            const mod = await import({hook_url:?});
+            const initData = globalThis.__lexeHookInitData;
+            delete globalThis.__lexeHookInitData;
+            if (typeof mod.initialize === "function") {{
+                await mod.initialize(initData);
+            }}
+            const id = globalThis.__lexeNextHookId++;
+            globalThis.__lexeHooksRegistry.set(id, {{
+                resolve: typeof mod.resolve === "function" ? mod.resolve : null,
+                load: typeof mod.load === "function" ? mod.load : null,
+            }});
+            return {{
+                hookId: id,
+                hasResolve: typeof mod.resolve === "function",
+                hasLoad: typeof mod.load === "function",
+            }};
+        }})()
+        "#
+    );
+
+    let promise = ctx
+        .eval::<Promise<'js>, _>(body)
+        .map_err(|e| worker_err_msg(ctx, e))?;
+    let out_val: rquickjs::Value<'js> = promise
+        .into_future()
+        .await
+        .map_err(|e| worker_err_msg(ctx, e))?;
+    let obj = out_val
+        .as_object()
+        .ok_or_else(|| "Register script did not return metadata object".to_string())?;
+    let hook_id = obj.get::<_, u64>("hookId").map_err(|e| e.to_string())?;
+    let has_resolve = obj
+        .get::<_, bool>("hasResolve")
+        .map_err(|e| e.to_string())?;
+    let has_load = obj.get::<_, bool>("hasLoad").map_err(|e| e.to_string())?;
+    Ok(RegisterOutcome {
+        hook_id,
+        has_resolve,
+        has_load,
+    })
+}
+
+async fn handle_worker_resolve<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    hook_id: u64,
+    specifier: String,
+    parent_url: String,
+    conditions: Vec<String>,
+    import_attributes: Vec<(String, String)>,
+    rpc_tx: std::sync::mpsc::SyncSender<WorkerRpcMsg>,
+) -> Result<HookResolveOutput, String> {
+    let context = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
+    context
+        .set("parentURL", parent_url.clone())
+        .map_err(|e| e.to_string())?;
+    let cond_arr = rquickjs::Array::new(ctx.clone()).map_err(|e| e.to_string())?;
+    for (i, c) in conditions.iter().enumerate() {
+        cond_arr.set(i, c.as_str()).map_err(|e| e.to_string())?;
+    }
+    context
+        .set("conditions", cond_arr)
+        .map_err(|e| e.to_string())?;
+    let attrs_obj = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
+    for (k, v) in import_attributes {
+        attrs_obj.set(k, v).map_err(|e| e.to_string())?;
+    }
+    context
+        .set("importAttributes", attrs_obj)
+        .map_err(|e| e.to_string())?;
+
+    let rpc_for_next = rpc_tx;
+    let next_resolve = Function::new(
+        ctx.clone(),
+        move |call_ctx: rquickjs::Ctx<'js>,
+              next_spec: String,
+              next_ctx: rquickjs::function::Opt<Object<'js>>|
+              -> rquickjs::Result<rquickjs::Value<'js>> {
+            let mut next_parent = None;
+            let mut next_conds = None;
+            let mut next_attrs = None;
+            if let Some(ref nc) = next_ctx.0 {
+                if let Ok(Some(p)) = nc.get::<_, Option<String>>("parentURL") {
+                    next_parent = Some(p);
+                }
+                if let Ok(arr) = nc.get::<_, rquickjs::Array>("conditions") {
+                    let mut v = Vec::with_capacity(arr.len());
+                    for item in arr.iter::<String>().flatten() {
+                        v.push(item);
+                    }
+                    next_conds = Some(v);
+                }
+                if let Ok(aobj) = nc.get::<_, Object>("importAttributes") {
+                    let mut v = Vec::new();
+                    for (k, val) in aobj.props::<String, String>().flatten() {
+                        v.push((k, val));
+                    }
+                    next_attrs = Some(v);
+                }
+            }
+
+            let rpc = rpc_for_next.clone();
+            let (promise, resolve, reject) = call_ctx.promise()?;
+            let c = call_ctx.clone();
+            call_ctx.spawn(async move {
+                let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+                if rpc
+                    .send(WorkerRpcMsg::CallNextResolve {
+                        specifier: next_spec,
+                        parent_url: next_parent,
+                        conditions: next_conds,
+                        import_attributes: next_attrs,
+                        reply: reply_tx,
+                    })
+                    .is_err()
+                {
+                    let err = rquickjs::Exception::throw_message(&c, "Main thread channel closed");
+                    let _ = reject.call::<_, ()>((err.to_string(),));
+                    return;
+                }
+                match tokio::task::spawn_blocking(move || reply_rx.recv()).await {
+                    Ok(Ok(NextReply::Resolve(Ok(out)))) => {
+                        if let Ok(obj) = Object::new(c.clone()) {
+                            if let Some(u) = out.url {
+                                let _ = obj.set("url", u);
+                            }
+                            if let Some(f) = out.format {
+                                let _ = obj.set("format", f);
+                            }
+                            let _ = obj.set("shortCircuit", out.short_circuit);
+                            let _ = resolve.call::<_, ()>((obj,));
+                        }
+                    },
+                    Ok(Ok(NextReply::Resolve(Err(msg)))) => {
+                        if let Ok(err_ctor) = c
+                            .globals()
+                            .get::<_, rquickjs::function::Constructor>("Error")
+                        {
+                            if let Ok(err_obj) = err_ctor.construct::<_, Object>((msg,)) {
+                                let _ = reject.call::<_, ()>((err_obj,));
+                            }
+                        }
+                    },
+                    _ => {
+                        if let Ok(err_ctor) = c
+                            .globals()
+                            .get::<_, rquickjs::function::Constructor>("Error")
+                        {
+                            if let Ok(err_obj) =
+                                err_ctor.construct::<_, Object>(("nextResolve channel failed",))
+                            {
+                                let _ = reject.call::<_, ()>((err_obj,));
+                            }
+                        }
+                    },
+                }
+            });
+            Ok(promise.into_value())
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
+    let reg: Object = ctx
+        .globals()
+        .get("__lexeHooksRegistry")
+        .map_err(|e| e.to_string())?;
+    let entry: Object = reg
+        .get::<_, Function>("get")
+        .map_err(|e| e.to_string())?
+        .call((rquickjs::prelude::This(reg), hook_id))
+        .map_err(|e| worker_err_msg(ctx, e))?;
+    let resolve_fn: Function = entry.get("resolve").map_err(|e| e.to_string())?;
+    let ret: rquickjs::Value<'js> = resolve_fn
+        .call((specifier, context, next_resolve))
+        .map_err(|e| worker_err_msg(ctx, e))?;
+    let awaited = if let Ok(p) = rquickjs::Promise::from_value(ret.clone()) {
+        p.into_future::<rquickjs::Value<'js>>()
+            .await
+            .map_err(|e| worker_err_msg(ctx, e))?
+    } else {
+        ret
+    };
+    let obj = awaited
+        .as_object()
+        .ok_or_else(|| "resolve hook must return an object".to_string())?;
+    Ok(HookResolveOutput {
+        url: obj
+            .get::<_, Option<String>>("url")
+            .map_err(|e| e.to_string())?,
+        format: obj
+            .get::<_, Option<String>>("format")
+            .map_err(|e| e.to_string())?,
+        short_circuit: obj
+            .get::<_, Option<bool>>("shortCircuit")
+            .map_err(|e| e.to_string())?
+            .unwrap_or(false),
+    })
+}
+
+async fn handle_worker_load<'js>(
+    ctx: &rquickjs::Ctx<'js>,
+    hook_id: u64,
+    url: String,
+    format: Option<String>,
+    import_attributes: Vec<(String, String)>,
+    rpc_tx: std::sync::mpsc::SyncSender<WorkerRpcMsg>,
+) -> Result<HookLoadOutput, String> {
+    let context = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
+    if let Some(fmt) = format {
+        context.set("format", fmt).map_err(|e| e.to_string())?;
+    }
+    let attrs_obj = Object::new(ctx.clone()).map_err(|e| e.to_string())?;
+    for (k, v) in import_attributes {
+        attrs_obj.set(k, v).map_err(|e| e.to_string())?;
+    }
+    context
+        .set("importAttributes", attrs_obj)
+        .map_err(|e| e.to_string())?;
+
+    let rpc_for_next = rpc_tx;
+    let next_load = Function::new(
+        ctx.clone(),
+        move |call_ctx: rquickjs::Ctx<'js>,
+              next_url: String,
+              next_ctx: rquickjs::function::Opt<Object<'js>>|
+              -> rquickjs::Result<rquickjs::Value<'js>> {
+            let mut next_fmt = None;
+            let mut next_attrs = None;
+            if let Some(ref nc) = next_ctx.0 {
+                if let Ok(Some(f)) = nc.get::<_, Option<String>>("format") {
+                    next_fmt = Some(f);
+                }
+                if let Ok(aobj) = nc.get::<_, Object>("importAttributes") {
+                    let mut v = Vec::new();
+                    for (k, val) in aobj.props::<String, String>().flatten() {
+                        v.push((k, val));
+                    }
+                    next_attrs = Some(v);
+                }
+            }
+
+            let rpc = rpc_for_next.clone();
+            let (promise, resolve, reject) = call_ctx.promise()?;
+            let c = call_ctx.clone();
+            call_ctx.spawn(async move {
+                let (reply_tx, reply_rx) = std::sync::mpsc::sync_channel(1);
+                if rpc
+                    .send(WorkerRpcMsg::CallNextLoad {
+                        url: next_url,
+                        format: next_fmt,
+                        import_attributes: next_attrs,
+                        reply: reply_tx,
+                    })
+                    .is_err()
+                {
+                    if let Ok(err_ctor) = c
+                        .globals()
+                        .get::<_, rquickjs::function::Constructor>("Error")
+                    {
+                        if let Ok(err_obj) =
+                            err_ctor.construct::<_, Object>(("Main thread channel closed",))
+                        {
+                            let _ = reject.call::<_, ()>((err_obj,));
+                        }
+                    }
+                    return;
+                }
+                match tokio::task::spawn_blocking(move || reply_rx.recv()).await {
+                    Ok(Ok(NextReply::Load(Ok(out)))) => {
+                        if let Ok(obj) = Object::new(c.clone()) {
+                            if let Some(f) = out.format {
+                                let _ = obj.set("format", f);
+                            }
+                            let _ = obj.set("shortCircuit", out.short_circuit);
+                            if let Some(src) = out.source {
+                                match src {
+                                    HookSourceData::String(s) => {
+                                        let _ = obj.set("source", s);
+                                    },
+                                    HookSourceData::Bytes(b) => {
+                                        if let Ok(ab) =
+                                            rquickjs::ArrayBuffer::new_copy(c.clone(), &b)
+                                        {
+                                            let _ = obj.set("source", ab);
+                                        }
+                                    },
+                                }
+                            }
+                            let _ = resolve.call::<_, ()>((obj,));
+                        }
+                    },
+                    Ok(Ok(NextReply::Load(Err(msg)))) => {
+                        if let Ok(err_ctor) = c
+                            .globals()
+                            .get::<_, rquickjs::function::Constructor>("Error")
+                        {
+                            if let Ok(err_obj) = err_ctor.construct::<_, Object>((msg,)) {
+                                let _ = reject.call::<_, ()>((err_obj,));
+                            }
+                        }
+                    },
+                    _ => {
+                        if let Ok(err_ctor) = c
+                            .globals()
+                            .get::<_, rquickjs::function::Constructor>("Error")
+                        {
+                            if let Ok(err_obj) =
+                                err_ctor.construct::<_, Object>(("nextLoad channel failed",))
+                            {
+                                let _ = reject.call::<_, ()>((err_obj,));
+                            }
+                        }
+                    },
+                }
+            });
+            Ok(promise.into_value())
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
+    let reg: Object = ctx
+        .globals()
+        .get("__lexeHooksRegistry")
+        .map_err(|e| e.to_string())?;
+    let entry: Object = reg
+        .get::<_, Function>("get")
+        .map_err(|e| e.to_string())?
+        .call((rquickjs::prelude::This(reg), hook_id))
+        .map_err(|e| worker_err_msg(ctx, e))?;
+    let load_fn: Function = entry.get("load").map_err(|e| e.to_string())?;
+    let ret: rquickjs::Value<'js> = load_fn
+        .call((url, context, next_load))
+        .map_err(|e| worker_err_msg(ctx, e))?;
+    let awaited = if let Ok(p) = rquickjs::Promise::from_value(ret.clone()) {
+        p.into_future::<rquickjs::Value<'js>>()
+            .await
+            .map_err(|e| worker_err_msg(ctx, e))?
+    } else {
+        ret
+    };
+    let obj = awaited
+        .as_object()
+        .ok_or_else(|| "load hook must return an object".to_string())?;
+    let format = obj
+        .get::<_, Option<String>>("format")
+        .map_err(|e| e.to_string())?;
+    let short_circuit = obj
+        .get::<_, Option<bool>>("shortCircuit")
+        .map_err(|e| e.to_string())?
+        .unwrap_or(false);
+    let source = if let Ok(src_val) = obj.get::<_, rquickjs::Value>("source") {
+        if src_val.is_undefined() || src_val.is_null() {
+            None
+        } else if let Some(s) = src_val.as_string() {
+            Some(HookSourceData::String(
+                s.to_string().map_err(|e| e.to_string())?,
+            ))
+        } else {
+            let bytes =
+                lexe_utils::bytes::ObjectBytes::from(ctx, &src_val).map_err(|e| e.to_string())?;
+            Some(HookSourceData::Bytes(
+                bytes.as_bytes(ctx).map_err(|e| e.to_string())?.to_vec(),
+            ))
+        }
+    } else {
+        None
+    };
+
+    Ok(HookLoadOutput {
+        format,
+        short_circuit,
+        source,
+    })
 }

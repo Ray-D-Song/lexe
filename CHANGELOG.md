@@ -9,6 +9,10 @@ All notable changes to Lexe are documented in this file.
   - Added WebCrypto `Ed448`, `X448`, `Argon2d`/`Argon2i`/`Argon2id`, and `ChaCha20-Poly1305`, plus `deriveBits`/`deriveKey` WPT edge-case fixes.
 - Expanded non-security `node:tls` and `node:https` compatibility (`docs/compatibility.md`; `node:tls`, `node:https`, and `WEBCRYPTO` graduated to `✔︎` with documented security policies):
   - Added PKCS#12 `pfx`/passphrase and encrypted PKCS#8 PEM parsing, async `SNICallback` & `ALPNCallback`, soft mTLS (`requestCert: true, rejectUnauthorized: false`), TLS session resumption (`session`, `getSession()`, `getTLSTicket()`, `isSessionReused()`, `"session"` event), `tls.rootCertificates` & `tls.getCACertificates()`, and native `TLSSocket.write()` backpressure/`"drain"` propagation.
+- Completed `node:module` TypeScript stripping, compile cache, CJS internals, and worker loader hooks (`docs/compatibility.md`; `node:module` graduated to `✔︎`):
+  - Added `stripTypeScriptTypes()` (`strip`/`transform` modes, V3 source maps, `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`) and direct execution of `.ts`/`.mts`/`.cts` modules across CJS and ESM.
+  - Added on-disk QuickJS bytecode compile cache (`enableCompileCache`, `flushCompileCache`, `getCompileCacheDir`, `NODE_COMPILE_CACHE`, `NODE_DISABLE_COMPILE_CACHE`) keyed by SHA-256 across CJS and ESM modules.
+  - Added OS worker-thread `module.register(specifier[, parentURL][, options])` with async `initialize`, `transferList` (`MessagePort`), and chained `resolve`/`load` hooks, plus `Module._load` and legacy CJS loader helpers (`_resolveLookupPaths`, `_findPath`, `_stat`, `_initPaths`, `_pathCache`, `_preloadModules`, `_readPackage`, `globalPaths`, `runMain`, `wrap`, `wrapper`).
 
 ## [0.1.10] - 2026-11-27
 

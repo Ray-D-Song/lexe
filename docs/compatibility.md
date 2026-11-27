@@ -25,7 +25,7 @@
 | node:https | ✔︎ | — | Requires TLS feature build; follows `node:tls` security policy ([notes](#nodehttps)) |
 | node:inspector | ✔︎ | ✔︎⚠️ | `url()` returns `undefined`; `Session` shim reports unavailable protocol operations ([details](#nodeinspector)) |
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
-| node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
+| node:module | ✔︎ | ✔︎ | TypeScript stripping, worker `register`, on-disk bytecode compile cache, `Module._load`, and CJS/ESM loader ([notes](#nodemodule)) |
 | node:net | ✔︎ | ✔︎⚠️ | Missing legacy `Stream` alias and internal `_createServerHandle`/`_normalizeArgs` |
 | node:os | ✔︎ | ✔︎ | — |
 | node:path | ✔︎ | ✔︎ | — |
@@ -127,22 +127,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `url()` always returns `undefined`. A `Session` shim supports startup probes but reports `ERR_INSPECTOR_NOT_AVAILABLE` for protocol requests.
 - No Inspector debugging protocol; `open()`, `close()`, `waitForDebugger()`, and `console` are not implemented.
 
-#### `node:module`
-
-- Provides a CommonJS loader facade:
-  - `Module`, `createRequire`, `require.resolve`, `require.cache`, `require.extensions`
-  - writable `_resolveFilename` / `_nodeModulePaths`
-  - `Module._compile` for require-hook compatibility
-- Also provides `SourceMap`, `findSourceMap`, `getSourceMapsSupport` / `setSourceMapsSupport`, `findPackageJSON`, `syncBuiltinESMExports`, `registerHooks`, `builtinModules`, `isBuiltin`, and `constants`.
-- Compile cache:
-  - `enableCompileCache` validates its argument and reports `constants.compileCacheStatus.FAILED` (there is no on-disk compile cache).
-  - `flushCompileCache` is a no-op.
-  - `getCompileCacheDir` returns `undefined`.
-- Source maps: `findSourceMap` does not rewrite `Error.prepareStackTrace`; while support is enabled it reads a file's source map on demand.
-- Not implemented: `module.register`, `stripTypeScriptTypes`, and `Module._load`.
-- Extension hooks apply to the CommonJS loader only; they do not change static ESM import semantics.
-- Native `.node` addon loading requires building with `--features napi` or `--features v8-compat` (see [Native addons](#native-addons)).
-
 #### `node:v8`
 
 - Backed by QuickJS `JS_ComputeMemoryUsage` rather than V8: `getHeapSpaceStatistics()` always returns a single `"quickjs"` space, and `heap_size_limit` falls back to `Number.MAX_SAFE_INTEGER` when `malloc_limit === 0`.
@@ -209,26 +193,19 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
 
-- [ ] **1. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
-  - **Gap**: Missing `stripTypeScriptTypes`, `module.register()` (async loader hooks thread), `Module._load`, and on-disk bytecode compile cache (`enableCompileCache` reports `FAILED`).
-  - **Options**:
-    - **A (Implement lightweight/full features)**: Add `stripTypeScriptTypes` (decide lightweight lexer/stripper vs `oxc` full TS parser), `Module._load`, on-disk QuickJS bytecode compile cache (`enableCompileCache`), and `module.register` loader hooks.
-    - **B (Selective subset)**: Add `stripTypeScriptTypes` + `Module._load` + disk compile cache while keeping `module.register` omitted (or async single-isolate hook adapter without dedicated loader worker overhead).
-    - **C (Document current CJS/sync hooks boundary)**: Keep `registerHooks` (sync) without worker-based `module.register` or heavy parser deps.
-
-- [ ] **2. `node:async_hooks` (`createHook()` default activation)**
+- [ ] **1. `node:async_hooks` (`createHook()` default activation)**
   - **Gap**: `AsyncLocalStorage` propagates unconditionally with low overhead; user `createHook()` callbacks only run when `LEXE_ASYNC_HOOKS=1` is set.
   - **Options**:
     - **A (Enable on-demand when `createHook().enable()` is called)**: Keep zero overhead when no hook is created/enabled, and activate Promise/async tracking dynamically as soon as any user `AsyncHook.enable()` is called (eliminating the `LEXE_ASYNC_HOOKS=1` gate while preserving default fast-path throughput).
     - **B (Always keep `LEXE_ASYNC_HOOKS=1` opt-in)**: Preserve the explicit environment gate to guarantee zero accidental user-hook activation overhead in production services.
 
-- [ ] **3. `FETCH` policy boundaries & remaining WPT edge cases**
+- [ ] **2. `FETCH` policy boundaries & remaining WPT edge cases**
   - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
   - **Options**:
     - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
     - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
 
-- [ ] **4. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+- [ ] **3. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
   - **Gap**:
     - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
     - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).
@@ -260,6 +237,15 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
 - Implemented natively: `createServer`, `createSecureServer`, `connect`, `Http2ServerRequest`, `Http2ServerResponse`, `getDefaultSettings`, 6-byte `getPackedSettings`/`getUnpackedSettings`, `sensitiveHeaders`, and full `constants` (253 entries).
 - `performServerHandshake` throws `ERR_HTTP2_ERROR`, server push (`createPushResponse`) throws `ERR_HTTP2_PUSH_DISABLED`, and server request bodies are not streamed into `Http2ServerRequest` yet.
 - Browser builds may still use the embedded load-time stub when the native module is unavailable.
+
+### `node:module`
+
+- Provides CommonJS and ESM module loading (`Module`, `createRequire`, `require.resolve`, `require.cache`, `require.extensions`, writable `_resolveFilename`/`_nodeModulePaths`, `Module._load`, `Module._compile`, and internal compatibility helpers `_resolveLookupPaths`, `_findPath`, `_stat`, `_initPaths`, `_pathCache`, `_preloadModules`, `_readPackage`, `globalPaths`, `runMain`, `wrap`, `wrapper`).
+- Supports `stripTypeScriptTypes(code[, options])` (`'strip'` and `'transform'` modes, inline/URL source maps, `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` on non-erasable TypeScript syntax) and executing `.ts` / `.mts` / `.cts` files directly.
+- Supports on-disk QuickJS bytecode compile cache (`enableCompileCache`, `flushCompileCache`, `getCompileCacheDir`, `NODE_COMPILE_CACHE`, `NODE_DISABLE_COMPILE_CACHE`) for both CommonJS and ESM modules.
+- Supports synchronous `registerHooks()` and OS worker-thread `module.register(specifier[, parentURL][, options])` (`initialize`, `transferList` / `MessagePort`, async `resolve` and `load` hook chaining).
+- `findSourceMap` reads file source maps on demand when source map support is enabled without rewriting `Error.prepareStackTrace`; CJS `require.extensions` hooks apply to CommonJS loads only.
+- Native `.node` addon loading requires building with `--features napi` or `--features v8-compat` (see [Native addons](#native-addons)).
 
 ### `node:process`
 

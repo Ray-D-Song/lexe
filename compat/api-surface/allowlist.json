@@ -118,27 +118,6 @@
     "inspector/promises": {
       "unimplemented": true
     },
-    "module": {
-      "missingExports": [
-        "_debug",
-        "_findPath",
-        "_initPaths",
-        "_load",
-        "_pathCache",
-        "_preloadModules",
-        "_readPackage",
-        "_resolveLookupPaths",
-        "_stat",
-        "globalPaths",
-        "length",
-        "name",
-        "register",
-        "runMain",
-        "stripTypeScriptTypes",
-        "wrap",
-        "wrapper"
-      ]
-    },
     "net": {
       "missingExports": [
         "Stream",

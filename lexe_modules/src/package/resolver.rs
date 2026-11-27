@@ -1332,15 +1332,15 @@ pub(crate) fn detect_file_format(
     path: &str,
 ) -> std::result::Result<DetectedFormat, PackageFormatError> {
     let ext = file_extname(path);
-    if ext == ".mjs" {
+    if ext == ".mjs" || ext == ".mts" {
         return Ok(DetectedFormat::Esm);
     }
-    if ext == ".cjs" {
+    if ext == ".cjs" || ext == ".cts" {
         return Ok(DetectedFormat::Cjs {
             allow_esm_detect: false,
         });
     }
-    if ext == ".js" || ext.is_empty() {
+    if ext == ".js" || ext == ".ts" || ext.is_empty() {
         return Ok(match read_package_scope_type(path)? {
             PackageScopeType::Module => DetectedFormat::Esm,
             PackageScopeType::CommonJs => DetectedFormat::Cjs {

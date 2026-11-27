@@ -10,9 +10,14 @@ use rquickjs::{
 };
 use tracing::trace;
 
+use crate::module::{
+    compile_cache::declare_esm_with_cache,
+    ts_strip::{is_typescript_filename, strip_ts, StripOptions},
+    ModuleCache,
+};
 use crate::modules::path::{self, replace_backslash};
 use crate::package::resolver::detect_file_format;
-use crate::{module::ModuleCache, CJS_IMPORT_PREFIX, CJS_LOADER_PREFIX};
+use crate::{CJS_IMPORT_PREFIX, CJS_LOADER_PREFIX};
 
 pub(crate) fn prepend_cjs_dirname_filename(filename: &str, source: &[u8]) -> Result<String> {
     let filename = replace_backslash(filename);
@@ -200,8 +205,21 @@ impl PackageLoader {
             let bytes = std::fs::read(&resolved_fs)?;
             let module = if from_cjs_import {
                 trace!("+- Loading cjs module via import: {}\n", resolved_fs);
-                let source = prepend_cjs_dirname_filename(&resolved_fs, &bytes)?;
-                Module::declare(ctx.clone(), normalized_name, source)?
+                let stripped_bytes = if is_typescript_filename(&resolved_fs) {
+                    let s = std::str::from_utf8(&bytes).map_err(|_| {
+                        Error::new_loading_message(
+                            &resolved_fs,
+                            "invalid UTF-8 in TypeScript module",
+                        )
+                    })?;
+                    strip_ts(s, &StripOptions::default())
+                        .map_err(|e| e.throw(&ctx))?
+                        .into_bytes()
+                } else {
+                    bytes
+                };
+                let source = prepend_cjs_dirname_filename(&resolved_fs, &stripped_bytes)?;
+                declare_esm_with_cache(&ctx, normalized_name, source.as_bytes())?
             } else {
                 let mut source: &[u8] = &bytes;
 
@@ -209,8 +227,22 @@ impl PackageLoader {
                     source = source.splitn(2, |&c| c == b'\n').nth(1).unwrap_or(source);
                 }
 
+                let stripped_bytes;
+                if is_typescript_filename(&resolved_fs) {
+                    let s = std::str::from_utf8(source).map_err(|_| {
+                        Error::new_loading_message(
+                            &resolved_fs,
+                            "invalid UTF-8 in TypeScript module",
+                        )
+                    })?;
+                    stripped_bytes = strip_ts(s, &StripOptions::default())
+                        .map_err(|e| e.throw(&ctx))?
+                        .into_bytes();
+                    source = &stripped_bytes;
+                }
+
                 trace!("+- Loading esm module: {}\n", resolved_fs);
-                Module::declare(ctx.clone(), normalized_name, source)?
+                declare_esm_with_cache(&ctx, normalized_name, source)?
             };
             {
                 let mut cache = binding.borrow_mut();

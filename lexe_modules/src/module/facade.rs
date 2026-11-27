@@ -471,9 +471,16 @@ pub(super) const MODULE_EXTRA_EXPORTS: [&str; 10] = [
 const MODULE_EXTRAS_JS: &str = include_str!("module_extras.js");
 
 fn install_module_extras<'js>(ctx: &Ctx<'js>, module_ctor: &Constructor<'js>) -> Result<()> {
+    super::compile_cache::init_from_env();
     let extras: Object = ctx.eval(MODULE_EXTRAS_JS)?;
     for name in MODULE_EXTRA_EXPORTS {
-        if name == "syncBuiltinESMExports" {
+        if matches!(
+            name,
+            "syncBuiltinESMExports"
+                | "enableCompileCache"
+                | "flushCompileCache"
+                | "getCompileCacheDir"
+        ) {
             continue;
         }
         module_ctor.set(name, extras.get::<_, Value>(name)?)?;
@@ -482,6 +489,146 @@ fn install_module_extras<'js>(ctx: &Ctx<'js>, module_ctor: &Constructor<'js>) ->
         "syncBuiltinESMExports",
         Function::new(ctx.clone(), sync_builtin_esm_exports)?.with_name("syncBuiltinESMExports")?,
     )?;
+    module_ctor.set(
+        "enableCompileCache",
+        Func::from(super::compile_cache::enable_compile_cache),
+    )?;
+    module_ctor.set(
+        "flushCompileCache",
+        Func::from(super::compile_cache::flush_compile_cache),
+    )?;
+    module_ctor.set(
+        "getCompileCacheDir",
+        Func::from(super::compile_cache::get_compile_cache_dir),
+    )?;
+    module_ctor.set(
+        "stripTypeScriptTypes",
+        Func::from(super::ts_strip::strip_typescript_types),
+    )?;
+    module_ctor.set("register", Func::from(super::register_worker::register))?;
+    let define_prop: Function = ctx.eval(
+        r#"(function(ctor) {
+            Object.defineProperty(ctor, "name", { value: "Module", configurable: true });
+            Object.defineProperty(ctor, "length", { value: 0, configurable: true });
+        })"#,
+    )?;
+    define_prop.call::<_, ()>((module_ctor.clone(),))?;
+    Ok(())
+}
+
+fn module_static_load<'js>(
+    ctx: Ctx<'js>,
+    request: String,
+    parent: Opt<Value<'js>>,
+    is_main: Opt<bool>,
+) -> Result<Value<'js>> {
+    let parent_obj = match parent.0 {
+        Some(v) if !v.is_null() && !v.is_undefined() => v.as_object().cloned(),
+        _ => None,
+    };
+    let link_parent = parent_obj.is_some();
+    let parent_record = if let Some(p) = parent_obj {
+        p
+    } else {
+        let filename = canonical_parent_filename(&ctx, None)?;
+        get_or_create_module_record(&ctx, &filename, None)?
+    };
+    let result = super::require::require_from_module(
+        ctx.clone(),
+        parent_record,
+        request,
+        link_parent && !is_main.0.unwrap_or(false),
+    );
+    if result.is_ok() {
+        clear_spurious_resolving_exception(&ctx);
+    }
+    result
+}
+
+fn module_static_stat(_ctx: Ctx<'_>, filename: String) -> i32 {
+    let p = std::path::Path::new(&filename);
+    match std::fs::metadata(p) {
+        Ok(m) if m.is_dir() => 1,
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
+}
+
+fn module_resolve_lookup_paths<'js>(
+    ctx: Ctx<'js>,
+    request: String,
+    parent: Opt<Value<'js>>,
+) -> Result<Array<'js>> {
+    let paths = Array::new(ctx.clone())?;
+    let parent_obj = match parent.0 {
+        Some(v) if !v.is_null() && !v.is_undefined() => v.as_object().cloned(),
+        _ => None,
+    };
+    if let Some(ref obj) = parent_obj {
+        if let Ok(p) = obj.get::<_, Array>("paths") {
+            for (i, entry) in p.iter::<Value>().enumerate() {
+                if let Ok(val) = entry {
+                    paths.set(i, val)?;
+                }
+            }
+            return Ok(paths);
+        }
+    }
+    let parent_filename = canonical_parent_filename(&ctx, parent_obj)?;
+    let dir = path::dirname(&parent_filename);
+    for (i, p) in node_module_paths(&dir)?.into_iter().enumerate() {
+        paths.set(i, p)?;
+    }
+    let _ = request;
+    Ok(paths)
+}
+
+fn module_find_path<'js>(
+    ctx: Ctx<'js>,
+    request: String,
+    paths: Opt<Value<'js>>,
+    is_main: Opt<bool>,
+) -> Result<Value<'js>> {
+    let opts = Object::new(ctx.clone())?;
+    if let Some(p) = paths.0 {
+        if !p.is_undefined() && !p.is_null() {
+            opts.set("paths", p)?;
+        }
+    }
+    match default_resolve_filename(ctx.clone(), request, Opt(None), is_main, Opt(Some(opts))) {
+        Ok(resolved) => Ok(rquickjs::String::from_str(ctx, &resolved)?.into_value()),
+        Err(_) => {
+            if ctx.has_exception() {
+                let _ = ctx.catch();
+            }
+            Ok(Value::new_bool(ctx, false))
+        },
+    }
+}
+
+fn module_wrap(script: String) -> String {
+    format!("(function (exports, require, module, __filename, __dirname) {{ {script}\n}});")
+}
+
+fn init_global_paths_array<'js>(ctx: &Ctx<'js>) -> Result<Array<'js>> {
+    let arr = Array::new(ctx.clone())?;
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = std::path::PathBuf::from(home);
+        let candidates = [
+            home_path.join(".node_modules"),
+            home_path.join(".node_libraries"),
+        ];
+        for (i, p) in candidates.iter().enumerate() {
+            arr.set(i, p.to_string_lossy().as_ref())?;
+        }
+    }
+    Ok(arr)
+}
+
+fn module_run_main<'js>(ctx: Ctx<'js>, main: Opt<String>) -> Result<()> {
+    if let Some(entry) = main.0 {
+        let _ = module_static_load(ctx, entry, Opt(None), Opt(Some(true)))?;
+    }
     Ok(())
 }
 
@@ -545,6 +692,37 @@ pub fn init_module_facade<'js>(
     module_ctor.set("_extensions", extensions.clone())?;
     module_ctor.set("_nodeModulePaths", Func::from(node_module_paths_fn))?;
     module_ctor.set("_resolveFilename", Func::from(default_resolve_filename))?;
+    module_ctor.set(
+        "_resolveLookupPaths",
+        Func::from(module_resolve_lookup_paths),
+    )?;
+    module_ctor.set("_load", Func::from(module_static_load))?;
+    module_ctor.set("_findPath", Func::from(module_find_path))?;
+    module_ctor.set("_stat", Func::from(module_static_stat))?;
+    module_ctor.set("_pathCache", ctx.eval::<Value, _>("Object.create(null)")?)?;
+    module_ctor.set("_debug", Func::from(|| ()))?;
+    module_ctor.set("_preloadModules", Func::from(|| ()))?;
+    module_ctor.set("_readPackage", Func::from(|| ()))?;
+    module_ctor.set("globalPaths", init_global_paths_array(ctx)?)?;
+    module_ctor.set(
+        "_initPaths",
+        Func::from(|ctx: Ctx<'_>| -> Result<()> {
+            if let Some(facade) = ctx.userdata::<RefCell<ModuleFacadeState>>() {
+                let ctor = facade.borrow().constructor.clone();
+                ctor.set("globalPaths", init_global_paths_array(&ctx)?)?;
+            }
+            Ok(())
+        }),
+    )?;
+    module_ctor.set("runMain", Func::from(module_run_main))?;
+    module_ctor.set("wrap", Func::from(module_wrap))?;
+    let wrapper = Array::new(ctx.clone())?;
+    wrapper.set(
+        0,
+        "(function (exports, require, module, __filename, __dirname) { ",
+    )?;
+    wrapper.set(1, "\n});")?;
+    module_ctor.set("wrapper", wrapper)?;
     module_ctor.set("builtinModules", builtin_modules.clone())?;
     module_ctor.set("createRequire", Func::from(create_require_impl))?;
     module_ctor.set(
