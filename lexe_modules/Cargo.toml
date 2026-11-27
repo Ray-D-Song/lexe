@@ -1,7 +1,7 @@
 [package]
 name = "lexe_modules"
 description = "lexe Modules for rquickjs"
-version = "0.1.10"
+version = "0.1.11"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/Ray-D-Song/lexe"
@@ -155,7 +155,7 @@ v8-compat = ["napi", "dep:v8_compat", "lexe_napi/v8-compat"]
 [dependencies]
 lexe_hooking = { path = "../libs/lexe_hooking" }
 lexe_json = { path = "../libs/lexe_json" }
-lexe_utils = { version = "0.1.10", path = "../libs/lexe_utils", default-features = false }
+lexe_utils = { version = "0.1.11", path = "../libs/lexe_utils", default-features = false }
 once_cell = { version = "1", features = ["std"], default-features = false }
 rquickjs = { version = "=0.12.1", features = ["loader", "std"], default-features = false }
 simd-json = { version = "0.17", default-features = false }
@@ -163,51 +163,51 @@ tokio = { version = "1", default-features = false }
 tracing = { version = "0.1", default-features = false }
 url = { version = "2", features = ["std"], default-features = false }
 # Optional
-lexe_abort = { version = "0.1.10", path = "../modules/lexe_abort", optional = true }
-lexe_assert = { version = "0.1.10", path = "../modules/lexe_assert", optional = true }
-lexe_async_hooks = { version = "0.1.10", path = "../modules/lexe_async_hooks", optional = true }
-lexe_buffer = { version = "0.1.10", path = "../modules/lexe_buffer", optional = true }
-lexe_child_process = { version = "0.1.10", path = "../modules/lexe_child_process", optional = true }
-lexe_console = { version = "0.1.10", path = "../modules/lexe_console", optional = true }
-lexe_constants = { version = "0.1.10", path = "../modules/lexe_constants", optional = true }
-lexe_crypto = { version = "0.1.10", path = "../modules/lexe_crypto", default-features = false, optional = true }
-lexe_dgram = { version = "0.1.10", path = "../modules/lexe_dgram", optional = true }
-lexe_diagnostics_channel = { version = "0.1.10", path = "../modules/lexe_diagnostics_channel", optional = true }
-lexe_querystring = { version = "0.1.10", path = "../modules/lexe_querystring", optional = true }
-lexe_dns = { version = "0.1.10", path = "../modules/lexe_dns", optional = true }
-lexe_events = { version = "0.1.10", path = "../modules/lexe_events", optional = true }
-lexe_exceptions = { version = "0.1.10", path = "../modules/lexe_exceptions", optional = true }
-lexe_fetch = { version = "0.1.10", path = "../modules/lexe_fetch", default-features = false, optional = true }
-lexe_fs = { version = "0.1.10", path = "../modules/lexe_fs", optional = true }
-lexe_http = { version = "0.1.10", path = "../modules/lexe_http", default-features = false, optional = true }
-lexe_http2 = { version = "0.1.10", path = "../modules/lexe_http2", default-features = false, optional = true }
-lexe_inspector = { version = "0.1.10", path = "../modules/lexe_inspector", optional = true }
-lexe_intl = { version = "0.1.10", path = "../modules/lexe_intl", optional = true }
-lexe_navigator = { version = "0.1.10", path = "../modules/lexe_navigator", optional = true }
-lexe_net = { version = "0.1.10", path = "../modules/lexe_net", optional = true }
-lexe_os = { version = "0.1.10", path = "../modules/lexe_os", optional = true }
-lexe_path = { version = "0.1.10", path = "../modules/lexe_path", optional = true }
-lexe_process = { version = "0.1.10", path = "../modules/lexe_process", optional = true }
-lexe_perf_hooks = { version = "0.1.10", path = "../modules/lexe_perf_hooks", optional = true }
-lexe_sea = { version = "0.1.10", path = "../modules/lexe_sea", optional = true }
-lexe_ffi = { version = "0.1.10", path = "../modules/lexe_ffi", optional = true }
-lexe_stream_web = { version = "0.1.10", path = "../modules/lexe_stream_web", optional = true }
-lexe_string_decoder = { version = "0.1.10", path = "../modules/lexe_string_decoder", optional = true }
-lexe_temporal = { version = "0.1.10", path = "../modules/lexe_temporal", optional = true }
-lexe_timers = { version = "0.1.10", path = "../modules/lexe_timers", optional = true }
-lexe_tls = { version = "0.1.10", path = "../modules/lexe_tls", default-features = false, optional = true }
-lexe_tty = { version = "0.1.10", path = "../modules/lexe_tty", optional = true }
-lexe_url = { version = "0.1.10", path = "../modules/lexe_url", optional = true }
+lexe_abort = { version = "0.1.11", path = "../modules/lexe_abort", optional = true }
+lexe_assert = { version = "0.1.11", path = "../modules/lexe_assert", optional = true }
+lexe_async_hooks = { version = "0.1.11", path = "../modules/lexe_async_hooks", optional = true }
+lexe_buffer = { version = "0.1.11", path = "../modules/lexe_buffer", optional = true }
+lexe_child_process = { version = "0.1.11", path = "../modules/lexe_child_process", optional = true }
+lexe_console = { version = "0.1.11", path = "../modules/lexe_console", optional = true }
+lexe_constants = { version = "0.1.11", path = "../modules/lexe_constants", optional = true }
+lexe_crypto = { version = "0.1.11", path = "../modules/lexe_crypto", default-features = false, optional = true }
+lexe_dgram = { version = "0.1.11", path = "../modules/lexe_dgram", optional = true }
+lexe_diagnostics_channel = { version = "0.1.11", path = "../modules/lexe_diagnostics_channel", optional = true }
+lexe_querystring = { version = "0.1.11", path = "../modules/lexe_querystring", optional = true }
+lexe_dns = { version = "0.1.11", path = "../modules/lexe_dns", optional = true }
+lexe_events = { version = "0.1.11", path = "../modules/lexe_events", optional = true }
+lexe_exceptions = { version = "0.1.11", path = "../modules/lexe_exceptions", optional = true }
+lexe_fetch = { version = "0.1.11", path = "../modules/lexe_fetch", default-features = false, optional = true }
+lexe_fs = { version = "0.1.11", path = "../modules/lexe_fs", optional = true }
+lexe_http = { version = "0.1.11", path = "../modules/lexe_http", default-features = false, optional = true }
+lexe_http2 = { version = "0.1.11", path = "../modules/lexe_http2", default-features = false, optional = true }
+lexe_inspector = { version = "0.1.11", path = "../modules/lexe_inspector", optional = true }
+lexe_intl = { version = "0.1.11", path = "../modules/lexe_intl", optional = true }
+lexe_navigator = { version = "0.1.11", path = "../modules/lexe_navigator", optional = true }
+lexe_net = { version = "0.1.11", path = "../modules/lexe_net", optional = true }
+lexe_os = { version = "0.1.11", path = "../modules/lexe_os", optional = true }
+lexe_path = { version = "0.1.11", path = "../modules/lexe_path", optional = true }
+lexe_process = { version = "0.1.11", path = "../modules/lexe_process", optional = true }
+lexe_perf_hooks = { version = "0.1.11", path = "../modules/lexe_perf_hooks", optional = true }
+lexe_sea = { version = "0.1.11", path = "../modules/lexe_sea", optional = true }
+lexe_ffi = { version = "0.1.11", path = "../modules/lexe_ffi", optional = true }
+lexe_stream_web = { version = "0.1.11", path = "../modules/lexe_stream_web", optional = true }
+lexe_string_decoder = { version = "0.1.11", path = "../modules/lexe_string_decoder", optional = true }
+lexe_temporal = { version = "0.1.11", path = "../modules/lexe_temporal", optional = true }
+lexe_timers = { version = "0.1.11", path = "../modules/lexe_timers", optional = true }
+lexe_tls = { version = "0.1.11", path = "../modules/lexe_tls", default-features = false, optional = true }
+lexe_tty = { version = "0.1.11", path = "../modules/lexe_tty", optional = true }
+lexe_url = { version = "0.1.11", path = "../modules/lexe_url", optional = true }
 openssl = { version = "0.10", optional = true }
-lexe_util = { version = "0.1.10", path = "../modules/lexe_util", optional = true }
-lexe_v8 = { version = "0.1.10", path = "../modules/lexe_v8", optional = true }
-lexe_vm = { version = "0.1.10", path = "../modules/lexe_vm", optional = true }
-lexe_webassembly = { version = "0.1.10", path = "../modules/lexe_webassembly", optional = true }
-lexe_worker_threads = { version = "0.1.10", path = "../modules/lexe_worker_threads", optional = true }
-lexe_zlib = { version = "0.1.10", path = "../modules/lexe_zlib", optional = true }
-lexe_sqlite = { version = "0.1.10", path = "../modules/lexe_sqlite", optional = true }
-lexe_napi = { version = "0.1.10", path = "../modules/lexe_napi", optional = true }
-v8_compat = { version = "0.1.10", path = "../v8_compat", optional = true }
+lexe_util = { version = "0.1.11", path = "../modules/lexe_util", optional = true }
+lexe_v8 = { version = "0.1.11", path = "../modules/lexe_v8", optional = true }
+lexe_vm = { version = "0.1.11", path = "../modules/lexe_vm", optional = true }
+lexe_webassembly = { version = "0.1.11", path = "../modules/lexe_webassembly", optional = true }
+lexe_worker_threads = { version = "0.1.11", path = "../modules/lexe_worker_threads", optional = true }
+lexe_zlib = { version = "0.1.11", path = "../modules/lexe_zlib", optional = true }
+lexe_sqlite = { version = "0.1.11", path = "../modules/lexe_sqlite", optional = true }
+lexe_napi = { version = "0.1.11", path = "../modules/lexe_napi", optional = true }
+v8_compat = { version = "0.1.11", path = "../v8_compat", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 home = { version = "0.5", default-features = false }

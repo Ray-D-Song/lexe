@@ -2,7 +2,7 @@
 
 All notable changes to Lexe are documented in this file.
 
-## [Unreleased]
+## [0.1.11] - 2026-11-27
 
 - Expanded `node:crypto` and WebCrypto (`WEBCRYPTO`) compatibility (`docs/compatibility.md`):
   - Added classic APIs: `Hash`/`Hmac` constructors, one-shot `crypto.hash()`, `Sign`/`Verify`/`createSign`/`createVerify`, `pbkdf2`/`pbkdf2Sync`, `scrypt`/`scryptSync`, `generateKey`/`generateKeySync`, `generateKeyPair`/`generateKeyPairSync`, `DiffieHellman`/`DiffieHellmanGroup`/`createDiffieHellman`/`createDiffieHellmanGroup`/`getDiffieHellman`, `checkPrime`/`checkPrimeSync`/`generatePrime`/`generatePrimeSync`, `privateDecrypt` (`OAEP` / `RSA_NO_PADDING`, intentionally rejecting `RSA_PKCS1_PADDING`), `privateEncrypt`/`publicDecrypt`, streaming `chacha20-poly1305` cipher/decipher, `getCipherInfo()`, `Ed448`/`X448` `KeyObject` + sign/verify/diffieHellman, encrypted PKCS#8 PEM import/export (`passphrase`/`cipher`), and `prng`/`pseudoRandomBytes`/`rng`/`fips`/`getFips`/`DH_*`/`OPENSSL_VERSION_NUMBER` aliases & constants.
