@@ -292,12 +292,16 @@ async fn main() -> Result<ExitCode, Box<dyn Error + Send + Sync>> {
         .await
         .map_err(std::io::Error::other)?;
 
-    // Release module/context userdata that caches JS roots before dropping the
-    // context, then drop in the safe order (context before runtime).
-    vm.shutdown().await;
-
+    // Release module/context userdata that caches JS roots and drop the
+    // context, tear down V8 runtime state while JSRuntime is still live, then
+    // free JSRuntime.
     #[cfg(all(feature = "napi", feature = "v8-compat"))]
-    unsafe { v8_compat::shutdown_runtime_addr(v8_runtime_addr) }.map_err(std::io::Error::other)?;
+    vm.shutdown_with(|| unsafe { v8_compat::shutdown_runtime_addr(v8_runtime_addr) })
+        .await
+        .map_err(std::io::Error::other)?;
+
+    #[cfg(not(all(feature = "napi", feature = "v8-compat")))]
+    vm.shutdown().await;
 
     Ok(ExitCode::from(EXIT_CODE.load(Ordering::Relaxed)))
 }

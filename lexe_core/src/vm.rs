@@ -309,6 +309,17 @@ impl Vm {
     /// context must be dropped before the runtime. Field order alone would drop
     /// the runtime first.
     pub async fn shutdown(self) {
+        let _ = self
+            .shutdown_with(|| Ok::<(), std::convert::Infallible>(()))
+            .await;
+    }
+
+    /// Tear down the context first, run `before_runtime_free` while the
+    /// underlying `JSRuntime` is still alive, and then free the runtime.
+    pub async fn shutdown_with<E>(
+        self,
+        before_runtime_free: impl FnOnce() -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
         let rt_key = self.rt_key;
         let _ = self
             .ctx
@@ -330,7 +341,9 @@ impl Vm {
 
         let Vm { ctx, runtime, .. } = self;
         drop(ctx);
+        let res = before_runtime_free();
         drop(runtime);
+        res
     }
 }
 
