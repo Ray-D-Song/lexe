@@ -2,11 +2,7 @@
 
 ### `LEXE_ASYNC_HOOKS=value`
 
-Controls **public** `async_hooks.createHook()` user callbacks. When unset, user hook callbacks do not run.
-
-`AsyncLocalStorage` context propagation (Promises, `await`, microtasks, timers) works **without** this variable. Internal async tracking is enabled automatically while ALS instances are active.
-
-Set to `1` to enable user-facing `createHook()` lifecycle callbacks (init/before/after/destroy/promiseResolve).
+Deprecated (no longer required). `AsyncLocalStorage` context propagation and public `async_hooks.createHook()` callbacks both activate dynamically on demand without needing any environment variable, while keeping a zero-overhead fast path when neither is active.
 
 ### `LEXE_BIN_DIR=dir`
 

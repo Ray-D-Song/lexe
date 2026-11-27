@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc};
 
-use lexe_hooking::{
-    register_finalization_registry, set_async_tracking_active, AsyncTrackingState, HOOKING_MODE,
-};
+use lexe_hooking::{register_finalization_registry, set_async_tracking_active, AsyncTrackingState};
 use lexe_utils::{
     module::{export_default, ModuleInfo},
     result::ResultExt,
 };
 use rquickjs::{
     module::{Declarations, Exports, ModuleDef},
-    prelude::Func,
+    prelude::{Func, This},
     promise::PromiseHookType,
     qjs,
     runtime::PromiseHook,
@@ -28,8 +26,8 @@ type TriggerAsyncId = i64;
 
 const BOOTSTRAP_CONTEXT: (AsyncId, TriggerAsyncId) = (1, 1);
 
-/// User-facing hooks from `createHook()`. Only dispatched when
-/// `LEXE_ASYNC_HOOKS=1`.
+/// User-facing hooks from `createHook()`. Dispatched whenever at least one
+/// hook has been enabled via `.enable()`.
 struct Hook<'js> {
     enabled: Rc<RefCell<bool>>,
     init: Option<Function<'js>>,
@@ -40,7 +38,7 @@ struct Hook<'js> {
 }
 
 /// Internal hooks for AsyncLocalStorage (and other runtime consumers).
-/// Always dispatched when tracking is active, independent of HOOKING_MODE.
+/// Always dispatched when tracking is active.
 struct InternalHook<'js> {
     init: Option<Function<'js>>,
     before: Option<Function<'js>>,
@@ -53,6 +51,8 @@ struct AsyncHookState<'js> {
     internal_hooks: Vec<InternalHook<'js>>,
     /// Number of enabled AsyncLocalStorage (or other internal) consumers.
     internal_consumer_count: usize,
+    /// Number of currently enabled user hooks from `createHook()`.
+    enabled_user_hook_count: usize,
 }
 
 impl Default for AsyncHookState<'_> {
@@ -67,11 +67,8 @@ impl AsyncHookState<'_> {
             hooks: Vec::new(),
             internal_hooks: Vec::new(),
             internal_consumer_count: 0,
+            enabled_user_hook_count: 0,
         }
-    }
-
-    fn has_user_hooks_registered(&self) -> bool {
-        !self.hooks.is_empty()
     }
 }
 
@@ -127,14 +124,11 @@ fn allocate_async_id(ids: &mut AsyncHookIds<'_>) -> AsyncId {
     }
 }
 
-/// Tracking is active when internal consumers exist, or when user hooking mode
-/// is on and at least one createHook registration exists (matching prior
-/// HOOKING_MODE semantics once a hook object has been created).
+/// Tracking is active when internal consumers or enabled `createHook()`
+/// instances exist. When both counts are zero, promise/async Init fast-paths
+/// skip tracking completely.
 fn should_track(state: &AsyncHookState<'_>) -> bool {
-    if state.internal_consumer_count > 0 {
-        return true;
-    }
-    *HOOKING_MODE && state.has_user_hooks_registered()
+    state.internal_consumer_count > 0 || state.enabled_user_hook_count > 0
 }
 
 fn refresh_tracking_flag(ctx: &Ctx<'_>) -> Result<()> {
@@ -169,37 +163,61 @@ fn create_hook<'js>(ctx: Ctx<'js>, hooks_obj: Object<'js>) -> Result<Value<'js>>
         let mut state = binding.borrow_mut();
         state.hooks.push(hook);
     }
-    refresh_tracking_flag(&ctx)?;
 
     let obj = Object::new(ctx.clone())?;
     {
         let enabled_clone = enabled.clone();
         obj.set(
             "enable",
-            Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<()> {
-                *enabled_clone.borrow_mut() = true;
-                refresh_tracking_flag(&ctx)?;
-                Ok(())
-            }),
+            Function::new(
+                ctx.clone(),
+                move |this: This<Value<'js>>, ctx: Ctx<'js>| -> Result<Value<'js>> {
+                    let mut is_enabled = enabled_clone.borrow_mut();
+                    if !*is_enabled {
+                        *is_enabled = true;
+                        drop(is_enabled);
+                        {
+                            let binding =
+                                ctx.userdata::<RefCell<AsyncHookState>>().or_throw(&ctx)?;
+                            binding.borrow_mut().enabled_user_hook_count += 1;
+                        }
+                        refresh_tracking_flag(&ctx)?;
+                    }
+                    Ok(this.0)
+                },
+            ),
         )?;
     }
     {
         let enabled_clone = enabled.clone();
         obj.set(
             "disable",
-            Function::new(ctx.clone(), move |ctx: Ctx<'js>| -> Result<()> {
-                *enabled_clone.borrow_mut() = false;
-                refresh_tracking_flag(&ctx)?;
-                Ok(())
-            }),
+            Function::new(
+                ctx.clone(),
+                move |this: This<Value<'js>>, ctx: Ctx<'js>| -> Result<Value<'js>> {
+                    let mut is_enabled = enabled_clone.borrow_mut();
+                    if *is_enabled {
+                        *is_enabled = false;
+                        drop(is_enabled);
+                        {
+                            let binding =
+                                ctx.userdata::<RefCell<AsyncHookState>>().or_throw(&ctx)?;
+                            let mut state = binding.borrow_mut();
+                            state.enabled_user_hook_count =
+                                state.enabled_user_hook_count.saturating_sub(1);
+                        }
+                        refresh_tracking_flag(&ctx)?;
+                    }
+                    Ok(this.0)
+                },
+            ),
         )?;
     }
 
     Ok(obj.into())
 }
 
-/// Register an internal hook used by AsyncLocalStorage. Not gated by
-/// `LEXE_ASYNC_HOOKS`.
+/// Register an internal hook used by AsyncLocalStorage.
 fn register_internal_hook<'js>(ctx: Ctx<'js>, hooks_obj: Object<'js>) -> Result<()> {
     let hook = InternalHook {
         init: hooks_obj.get::<_, Function>("init").ok(),
@@ -324,13 +342,11 @@ fn has_enabled_destroy_hooks(ctx: &Ctx<'_>) -> Result<bool> {
     {
         return Ok(true);
     }
-    if !*HOOKING_MODE {
-        return Ok(false);
-    }
-    Ok(state
-        .hooks
-        .iter()
-        .any(|hook| *hook.enabled.as_ref().borrow() && hook.destroy.is_some()))
+    Ok(state.enabled_user_hook_count > 0
+        && state
+            .hooks
+            .iter()
+            .any(|hook| *hook.enabled.as_ref().borrow() && hook.destroy.is_some()))
 }
 
 fn has_enabled_init_hooks(ctx: &Ctx<'_>) -> Result<bool> {
@@ -339,13 +355,11 @@ fn has_enabled_init_hooks(ctx: &Ctx<'_>) -> Result<bool> {
     if state.internal_consumer_count > 0 && state.internal_hooks.iter().any(|h| h.init.is_some()) {
         return Ok(true);
     }
-    if !*HOOKING_MODE {
-        return Ok(false);
-    }
-    Ok(state
-        .hooks
-        .iter()
-        .any(|hook| *hook.enabled.as_ref().borrow() && hook.init.is_some()))
+    Ok(state.enabled_user_hook_count > 0
+        && state
+            .hooks
+            .iter()
+            .any(|hook| *hook.enabled.as_ref().borrow() && hook.init.is_some()))
 }
 
 fn push_async_context<'js>(
@@ -419,7 +433,7 @@ fn async_resource_emit_init<'js>(
         let bind_state = ctx.userdata::<RefCell<AsyncHookState>>().or_throw(&ctx)?;
         let state = bind_state.borrow();
         let internal = collect_internal_hooks(&state, HookKind::Init);
-        let user = if *HOOKING_MODE {
+        let user = if state.enabled_user_hook_count > 0 {
             collect_enabled_user_hooks(&state, HookKind::Init)
         } else {
             Vec::new()
@@ -460,7 +474,7 @@ fn async_resource_before<'js>(
         let bind_state = ctx.userdata::<RefCell<AsyncHookState>>().or_throw(&ctx)?;
         let state = bind_state.borrow();
         let internal = collect_internal_hooks(&state, HookKind::Before);
-        let user = if *HOOKING_MODE {
+        let user = if state.enabled_user_hook_count > 0 {
             collect_enabled_user_hooks(&state, HookKind::Before)
         } else {
             Vec::new()
@@ -481,7 +495,7 @@ fn async_resource_after(ctx: Ctx<'_>, async_id: u64) -> Result<()> {
         let bind_state = ctx.userdata::<RefCell<AsyncHookState>>().or_throw(&ctx)?;
         let state = bind_state.borrow();
         let internal = collect_internal_hooks(&state, HookKind::After);
-        let user = if *HOOKING_MODE {
+        let user = if state.enabled_user_hook_count > 0 {
             collect_enabled_user_hooks(&state, HookKind::After)
         } else {
             Vec::new()
@@ -551,7 +565,7 @@ fn async_resource_destroy(ctx: Ctx<'_>, async_id: u64) -> Result<()> {
         let bind_state = ctx.userdata::<RefCell<AsyncHookState>>().or_throw(&ctx)?;
         let state = bind_state.borrow();
         let internal = collect_internal_hooks(&state, HookKind::Destroy);
-        let user = if *HOOKING_MODE {
+        let user = if state.enabled_user_hook_count > 0 {
             collect_enabled_user_hooks(&state, HookKind::Destroy)
         } else {
             Vec::new()
@@ -1224,7 +1238,7 @@ fn invoke_async_hook<'js>(
         user_resolve,
     ) = {
         let state = bind_state.borrow();
-        let user = *HOOKING_MODE;
+        let user = state.enabled_user_hook_count > 0;
         (
             collect_internal_hooks(&state, HookKind::Init),
             collect_internal_hooks(&state, HookKind::Before),
@@ -1397,7 +1411,7 @@ pub(crate) fn dispatch_destroy_hooks(ctx: &Ctx<'_>, async_id: AsyncId) -> Result
         let bind_state = ctx.userdata::<RefCell<AsyncHookState>>().or_throw(ctx)?;
         let state = bind_state.borrow();
         let internal = collect_internal_hooks(&state, HookKind::Destroy);
-        let user = if *HOOKING_MODE {
+        let user = if state.enabled_user_hook_count > 0 {
             collect_enabled_user_hooks(&state, HookKind::Destroy)
         } else {
             Vec::new()

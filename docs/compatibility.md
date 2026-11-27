@@ -6,7 +6,7 @@
 | [Node.js API](https://nodejs.org/api/index.html) | Node.js | lexe | Key differences from Node.js |
 | --- | --- | --- | --- |
 | node:assert | ✔︎ | ✔︎ | — |
-| node:async_hooks | ✔︎ | ✔︎⚠️ | Public `createHook()` disabled by default (`LEXE_ASYNC_HOOKS=1`) ([details](#nodeasync_hooks)) |
+| node:async_hooks | ✔︎ | ✔︎ | `AsyncLocalStorage`, `AsyncResource`, and on-demand `createHook()` lifecycle tracking ([notes](#nodeasync_hooks)) |
 | node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`) due to QuickJS-ng `ArrayBuffer` limit ([details](#nodebuffer)) |
 | node:child_process | ✔︎ | ✔︎⚠️ | Missing internal `_forkChild` |
 | node:cluster | ✔︎ | ✘ | Not implemented |
@@ -109,10 +109,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 ### Node.js APIs
 
-#### `node:async_hooks`
-
-- User `createHook()` callbacks are disabled by default and only run when `LEXE_ASYNC_HOOKS=1` is set; by default only internal `AsyncLocalStorage` propagation is active.
-
 #### `node:buffer`
 
 - `constants.MAX_LENGTH` / `kMaxLength` is capped at `2147483647` (QuickJS 31-bit `ArrayBuffer` limit) rather than Node's platform limit.
@@ -193,19 +189,13 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
 
-- [ ] **1. `node:async_hooks` (`createHook()` default activation)**
-  - **Gap**: `AsyncLocalStorage` propagates unconditionally with low overhead; user `createHook()` callbacks only run when `LEXE_ASYNC_HOOKS=1` is set.
-  - **Options**:
-    - **A (Enable on-demand when `createHook().enable()` is called)**: Keep zero overhead when no hook is created/enabled, and activate Promise/async tracking dynamically as soon as any user `AsyncHook.enable()` is called (eliminating the `LEXE_ASYNC_HOOKS=1` gate while preserving default fast-path throughput).
-    - **B (Always keep `LEXE_ASYNC_HOOKS=1` opt-in)**: Preserve the explicit environment gate to guarantee zero accidental user-hook activation overhead in production services.
-
-- [ ] **2. `FETCH` policy boundaries & remaining WPT edge cases**
+- [ ] **1. `FETCH` policy boundaries & remaining WPT edge cases**
   - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
   - **Options**:
     - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
     - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
 
-- [ ] **3. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+- [ ] **2. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
   - **Gap**:
     - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
     - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).
@@ -216,6 +206,11 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
     - **B (Targeted deep work)**: Select specific engine/runtime capabilities to invest in (e.g., implementing a real CDP WebSocket inspector server, `ShadowRealm`, 64-bit `ArrayBuffer` fork in QuickJS-ng, or V8-independent `WebIDL` hardening).
 
 ## Other notes
+
+### `node:async_hooks`
+
+- Implements `AsyncLocalStorage`, `AsyncResource`, `createHook()`, `executionAsyncId()`, `executionAsyncResource()`, `triggerAsyncId()`, and `asyncWrapProviders`.
+- Async lifecycle tracking stays on a zero-overhead fast path when no `AsyncLocalStorage` instance or enabled `createHook()` hook is active, and activates dynamically on demand as soon as any `createHook().enable()` (or `AsyncLocalStorage`) is enabled without requiring `LEXE_ASYNC_HOOKS=1`.
 
 ### `node:https`
 

@@ -2397,7 +2397,6 @@ name = "lexe_hooking"
 version = "0.1.10"
 dependencies = [
  "lexe_utils",
- "once_cell",
  "rquickjs",
 ]
 

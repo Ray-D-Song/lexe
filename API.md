@@ -87,7 +87,7 @@
 
 [AsyncLocalStorage.snapshot](https://nodejs.org/api/async_context.html#static-method-asynclocalstoragesnapshot)
 
-> AsyncLocalStorage propagates across Promises, `await`, microtasks, and timers by default (no `LEXE_ASYNC_HOOKS` required). Public `createHook()` user callbacks still require `LEXE_ASYNC_HOOKS=1`.
+> AsyncLocalStorage propagates across Promises, `await`, microtasks, and timers by default, and `createHook()` activates tracking dynamically on demand when enabled (no `LEXE_ASYNC_HOOKS` required).
 
 ## buffer
 

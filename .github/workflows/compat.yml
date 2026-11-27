@@ -428,8 +428,6 @@ jobs:
             cargo build -p lexe --features napi
           fi
       - name: JS unit gates
-        env:
-          LEXE_ASYNC_HOOKS: "1"
         run: |
           for filter in events readline util module fs sqlite worker_threads child_process executable webassembly wasi; do
             ./target/debug/lexe test -d bundle/js/__tests__/unit --filter "$filter"

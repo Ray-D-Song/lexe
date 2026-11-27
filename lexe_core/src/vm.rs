@@ -150,8 +150,8 @@ impl Vm {
         .await?;
 
         // Always register the Promise hook when async-hooks is built in.
-        // The hook fast-paths when no AsyncLocalStorage consumers exist and
-        // user createHook tracking is inactive (LEXE_ASYNC_HOOKS).
+        // The hook fast-paths when no AsyncLocalStorage consumers or enabled
+        // createHook() instances exist.
         #[cfg(feature = "async-hooks")]
         runtime.set_promise_hook(Some(promise_hook_tracker())).await;
 

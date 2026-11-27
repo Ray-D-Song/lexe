@@ -193,8 +193,7 @@ it("disable clears and allows re-enable via run", () => {
 });
 
 it("works without relying on user createHook events", async () => {
-  // Unit suite sets LEXE_ASYNC_HOOKS=1, so also verify ALS while a
-  // disabled user hook is present does not break propagation.
+  // Verify ALS while a disabled user hook is present does not break propagation.
   const hook = createHook({
     init() {},
   });

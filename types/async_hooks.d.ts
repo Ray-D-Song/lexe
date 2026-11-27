@@ -312,8 +312,8 @@ declare module "async_hooks" {
    * This class creates stores that stay coherent through asynchronous operations.
    *
    * Lexe propagates stores across Promises, `await`, microtasks, and timers when
-   * an `AsyncLocalStorage` instance is active. Public `createHook()` callbacks still
-   * require `LEXE_ASYNC_HOOKS=1`.
+   * an `AsyncLocalStorage` instance is active. `createHook()` callbacks also
+   * activate dynamically on demand when `.enable()` is called.
    *
    * @see [source](https://nodejs.org/docs/latest-v22.x/api/async_context.html#class-asynclocalstorage)
    */

@@ -1,8 +1,8 @@
 import { spawnCapture } from "./test-utils";
 
 /**
- * HOOKING_MODE is a process-level once_cell Lazy. These behaviors must be
- * verified in separate Lexe processes so the first env read is controlled.
+ * Verify dynamic async_hooks activation in fresh Lexe processes where no env
+ * flag or prior test hook is active.
  */
 
 const runner = process.argv0;
@@ -34,24 +34,49 @@ it("ALS works without LEXE_ASYNC_HOOKS", async () => {
   expect(code).toBe(0);
 });
 
-it("createHook does not receive events without LEXE_ASYNC_HOOKS", async () => {
+it("createHook stays quiet until enabled and activates on demand without LEXE_ASYNC_HOOKS", async () => {
   const script = `
     import { createHook } from "async_hooks";
     let hits = 0;
-    createHook({
+    const hook = createHook({
       init() { hits++; },
       before() { hits++; },
       after() { hits++; },
       promiseResolve() { hits++; },
-      destroy() { hits++; },
-    }).enable();
+    });
+
     await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 5));
     if (hits !== 0) {
-      console.error("unexpected user hook hits:", hits);
+      console.error("unexpected hits before enable():", hits);
       process.exit(1);
     }
-    console.log("HOOKS_QUIET");
+
+    if (hook.enable() !== hook) {
+      console.error("enable() should return hook");
+      process.exit(1);
+    }
+
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    const hitsAfterEnable = hits;
+    if (hitsAfterEnable === 0) {
+      console.error("expected hits after enable(), got 0");
+      process.exit(1);
+    }
+
+    if (hook.disable() !== hook) {
+      console.error("disable() should return hook");
+      process.exit(1);
+    }
+
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 10));
+    if (hits !== hitsAfterEnable) {
+      console.error("unexpected hits after disable():", hits, hitsAfterEnable);
+      process.exit(1);
+    }
+    console.log("HOOKS_DYNAMIC_OK", hitsAfterEnable);
   `;
   const env = { ...process.env };
   delete env.LEXE_ASYNC_HOOKS;
@@ -61,38 +86,53 @@ it("createHook does not receive events without LEXE_ASYNC_HOOKS", async () => {
     { env }
   );
   expect(stderr).toBe("");
-  expect(stdout).toContain("HOOKS_QUIET");
+  expect(stdout).toContain("HOOKS_DYNAMIC_OK");
   expect(code).toBe(0);
 });
 
-it("createHook receives events with LEXE_ASYNC_HOOKS=1", async () => {
+it("overlapping hooks keep tracking active until the last hook disables", async () => {
   const script = `
     import { createHook } from "async_hooks";
-    let hits = 0;
-    createHook({
-      init() { hits++; },
-      before() { hits++; },
-      after() { hits++; },
-      promiseResolve() { hits++; },
-    }).enable();
+    let h1Hits = 0;
+    let h2Hits = 0;
+    const h1 = createHook({ init() { h1Hits++; } }).enable();
+    const h2 = createHook({ init() { h2Hits++; } }).enable();
+
     await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 10));
-    if (hits === 0) {
-      console.error("expected user hook hits, got 0");
+    await new Promise((r) => setTimeout(r, 5));
+    const h1BeforeDisable = h1Hits;
+    const h2BeforeDisable = h2Hits;
+
+    h1.disable();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+    if (h1Hits !== h1BeforeDisable) {
+      console.error("disabled h1 continued receiving hits");
       process.exit(1);
     }
-    console.log("HOOKS_HIT", hits);
+    if (h2Hits <= h2BeforeDisable) {
+      console.error("enabled h2 stopped receiving hits");
+      process.exit(1);
+    }
+
+    h2.disable();
+    const h2AfterDisable = h2Hits;
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 5));
+    if (h2Hits !== h2AfterDisable) {
+      console.error("disabled h2 continued receiving hits");
+      process.exit(1);
+    }
+    console.log("HOOKS_OVERLAP_OK");
   `;
-  const env = {
-    ...process.env,
-    LEXE_ASYNC_HOOKS: "1",
-  };
+  const env = { ...process.env };
+  delete env.LEXE_ASYNC_HOOKS;
   const { code, stdout, stderr } = await spawnCapture(
     runner,
     ["-e", script],
     { env }
   );
   expect(stderr).toBe("");
-  expect(stdout).toContain("HOOKS_HIT");
+  expect(stdout).toContain("HOOKS_OVERLAP_OK");
   expect(code).toBe(0);
 });

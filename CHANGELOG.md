@@ -13,6 +13,8 @@ All notable changes to Lexe are documented in this file.
   - Added `stripTypeScriptTypes()` (`strip`/`transform` modes, V3 source maps, `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`) and direct execution of `.ts`/`.mts`/`.cts` modules across CJS and ESM.
   - Added on-disk QuickJS bytecode compile cache (`enableCompileCache`, `flushCompileCache`, `getCompileCacheDir`, `NODE_COMPILE_CACHE`, `NODE_DISABLE_COMPILE_CACHE`) keyed by SHA-256 across CJS and ESM modules.
   - Added OS worker-thread `module.register(specifier[, parentURL][, options])` with async `initialize`, `transferList` (`MessagePort`), and chained `resolve`/`load` hooks, plus `Module._load` and legacy CJS loader helpers (`_resolveLookupPaths`, `_findPath`, `_stat`, `_initPaths`, `_pathCache`, `_preloadModules`, `_readPackage`, `globalPaths`, `runMain`, `wrap`, `wrapper`).
+- Enabled `node:async_hooks` `createHook()` dynamically on demand (`docs/compatibility.md`; `node:async_hooks` graduated to `✔︎`):
+  - Removed the `LEXE_ASYNC_HOOKS=1` gate (`HOOKING_MODE`) and activated async/Promise hook tracking on demand whenever `createHook().enable()` is called, returning `this` for `enable()`/`disable()` while preserving the zero-overhead fast path when no `AsyncLocalStorage` consumer or enabled user hook is active.
 
 ## [0.1.10] - 2026-11-27
 

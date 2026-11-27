@@ -1,17 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use std::cell::Cell;
-use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use lexe_utils::{object::ObjectExt, provider::ProviderType};
-use once_cell::sync::Lazy;
 use rquickjs::{Ctx, Exception, Function, JsLifetime, Object, Result, Value};
-
-/// When `LEXE_ASYNC_HOOKS=1`, public `createHook()` user callbacks run.
-/// Internal async context propagation (AsyncLocalStorage) does not require this.
-pub static HOOKING_MODE: Lazy<bool> =
-    Lazy::new(|| env::var("LEXE_ASYNC_HOOKS").as_deref() == Ok("1"));
 
 /// Process-wide allocator for async-resource hook IDs.
 ///
@@ -81,9 +74,9 @@ pub enum HookType {
 
 /// Dispatch async lifecycle events into the runtime dispatcher (when present).
 ///
-/// Does **not** gate on `LEXE_ASYNC_HOOKS`. Init is skipped when no
-/// consumers need tracking (cheap early exit). Before/After always reach the
-/// dispatcher so the execution stack can be balanced for already-mapped resources.
+/// Init is skipped when no consumers need tracking (cheap early exit). Before/After
+/// always reach the dispatcher so the execution stack can be balanced for
+/// already-mapped resources.
 pub fn invoke_async_hook(
     ctx: &Ctx<'_>,
     hook_type: HookType,
