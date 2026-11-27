@@ -8,6 +8,18 @@ function notImplemented(name: string): never {
   throw new Error(`node:http2.${name} is not implemented in lexe yet`);
 }
 
+export class Http2ServerRequest {
+  constructor() {
+    notImplemented("Http2ServerRequest");
+  }
+}
+
+export class Http2ServerResponse {
+  constructor() {
+    notImplemented("Http2ServerResponse");
+  }
+}
+
 export function createServer(..._args: unknown[]) {
   return notImplemented("createServer");
 }
@@ -20,8 +32,21 @@ export function connect(..._args: unknown[]) {
   return notImplemented("connect");
 }
 
+export function performServerHandshake(..._args: unknown[]) {
+  return notImplemented("performServerHandshake");
+}
+
 export function getDefaultSettings() {
-  return {};
+  return {
+    headerTableSize: 4096,
+    enablePush: true,
+    initialWindowSize: 65535,
+    maxFrameSize: 16384,
+    maxConcurrentStreams: 4294967295,
+    maxHeaderSize: 65535,
+    maxHeaderListSize: 65535,
+    enableConnectProtocol: false,
+  };
 }
 
 export function getPackedSettings(_settings?: object) {
@@ -48,9 +73,12 @@ export const constants = {
 export const sensitiveHeaders = Symbol("nodejs.http2.sensitiveHeaders");
 
 export default {
+  Http2ServerRequest,
+  Http2ServerResponse,
   createServer,
   createSecureServer,
   connect,
+  performServerHandshake,
   getDefaultSettings,
   getPackedSettings,
   getUnpackedSettings,

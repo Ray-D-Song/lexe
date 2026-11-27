@@ -320,14 +320,14 @@ where
         let response = dispatch_h2(ctx.clone(), server.clone(), parts).await;
         let (resp_parts, resp_body) = response.into_parts();
         let resp_status = resp_parts.status.as_u16();
+        let mut h2_resp_builder = http::Response::builder().status(resp_parts.status);
+        for (name, value) in resp_parts.headers.iter() {
+            if !name.as_str().starts_with(':') {
+                h2_resp_builder = h2_resp_builder.header(name, value);
+            }
+        }
         let mut send = respond
-            .send_response(
-                http::Response::builder()
-                    .status(resp_parts.status)
-                    .body(())
-                    .unwrap(),
-                false,
-            )
+            .send_response(h2_resp_builder.body(()).unwrap(), false)
             .map_err(|e| Exception::throw_message(&ctx, &e.to_string()))?;
         let body_bytes = http_body_util::BodyExt::collect(resp_body)
             .await
@@ -449,14 +449,22 @@ async fn dispatch_h2<'js>(
     pump.tick(&ctx);
 
     if server.borrow().has_listener_str("request") {
+        let (req_val, res_val) = match crate::compat::wrap_request_response(
+            &ctx,
+            req_stream.clone(),
+            res_stream.clone(),
+        ) {
+            Ok(pair) => pair,
+            Err(_) => (
+                req_stream.clone().into_value(),
+                res_stream.clone().into_value(),
+            ),
+        };
         let _ = Http2Server::emit_str(
             server.clone(),
             &ctx,
             "request",
-            vec![
-                req_stream.clone().into_value(),
-                res_stream.clone().into_value(),
-            ],
+            vec![req_val, res_val],
             false,
         );
     }
@@ -567,9 +575,13 @@ impl ModuleDef for Http2Module {
     fn declare(declare: &Declarations) -> Result<()> {
         declare.declare(stringify!(Http2Server))?;
         declare.declare(stringify!(Http2Stream))?;
+        declare.declare(stringify!(ClientHttp2Session))?;
+        declare.declare("Http2ServerRequest")?;
+        declare.declare("Http2ServerResponse")?;
         declare.declare("createServer")?;
         declare.declare("createSecureServer")?;
         declare.declare("connect")?;
+        declare.declare("performServerHandshake")?;
         declare.declare("getDefaultSettings")?;
         declare.declare("getPackedSettings")?;
         declare.declare("getUnpackedSettings")?;
@@ -587,10 +599,15 @@ impl ModuleDef for Http2Module {
             Class::<Http2Stream>::define(default)?;
             Http2Stream::add_event_emitter_prototype(ctx)?;
             crate::client::ClientHttp2Session::define_module(ctx, default)?;
+            crate::compat::init_compat_classes(ctx, default)?;
 
             default.set("createServer", Func::from(create_server))?;
             default.set("createSecureServer", Func::from(create_secure_server))?;
             default.set("connect", Func::from(crate::client::connect))?;
+            default.set(
+                "performServerHandshake",
+                Func::from(crate::compat::perform_server_handshake),
+            )?;
             default.set(
                 "getDefaultSettings",
                 Func::from(get_default_settings_export),

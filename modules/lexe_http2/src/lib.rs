@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 mod client;
+mod compat;
 mod constants;
 mod server;
 mod stream;
