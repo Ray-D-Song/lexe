@@ -43,7 +43,7 @@ fn group_integer_digits(int_digits: &str) -> String {
     let rem = int_digits.len() % 3;
     let first = if rem == 0 { 3 } else { rem };
     out.push_str(&int_digits[..first]);
-    for chunk in int_digits[first..].as_bytes().chunks(3) {
+    for chunk in int_digits.as_bytes()[first..].chunks(3) {
         out.push(',');
         out.push_str(std::str::from_utf8(chunk).unwrap_or(""));
     }

@@ -87,8 +87,8 @@
 | async/await | ✔︎ | — |
 | esm | ✔︎ | — |
 | cjs | ✔︎ | — |
-| Intl | ✔︎⚠️ | Partial date/time, number, collation, list, and segmentation support; missing other constructors and full ICU ([details](#intl)) |
-| Temporal | ✔︎⚠️ | Missing `PlainYearMonth`, `PlainMonthDay`, non-ISO calendar systems, and full `Intl`-backed `toLocaleString()` ([details](#temporal)) |
+| Intl | ✔︎⚠️ | Implements `DateTimeFormat`, `Collator`, `NumberFormat`, `ListFormat`, `Segmenter`, `Locale`, `PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `DurationFormat`, and `supportedValuesOf`; compact built-in CLDR subset without full ICU tables ([details](#intl)) |
+| Temporal | ✔︎⚠️ | Implements `Duration`, `Instant`, `PlainDate`, `PlainDateTime`, `PlainTime`, `PlainYearMonth`, `PlainMonthDay`, `ZonedDateTime`, and `Now`; ISO-8601 calendar only, without non-ISO calendars or full ICU `toLocaleString()` ([details](#temporal)) |
 
 ### Database driver compatibility
 
@@ -209,33 +209,26 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `Intl`
 
-- Implements partial `Intl.DateTimeFormat`, `Intl.Collator`, `Intl.NumberFormat`, `Intl.ListFormat`, and `Intl.Segmenter`, plus `Intl.supportedValuesOf()` and `Date.prototype.toLocaleString` with `timeZone`.
-- Missing `Intl.PluralRules`, `Intl.RelativeTimeFormat`, `Intl.DisplayNames`, `Intl.Locale`, `Intl.DurationFormat`, and full ICU locale/calendar/numbering-system support.
+- Implements `Intl.DateTimeFormat`, `Intl.Collator`, `Intl.NumberFormat`, `Intl.ListFormat`, `Intl.Segmenter`, `Intl.Locale`, `Intl.PluralRules`, `Intl.RelativeTimeFormat`, `Intl.DisplayNames`, `Intl.DurationFormat`, and `Intl.supportedValuesOf()` (`timeZone`, `calendar`, `collation`, `currency`, `numberingSystem`, `unit`), plus `Date.prototype.toLocaleString` with `timeZone`.
+- Uses a compact pure-Rust / built-in CLDR rule and label subset (no full ICU4X data tables; unknown/unlisted codes or locales fall back to `en-US` / code fallback).
 
 #### `Temporal`
 
-- Implements `Duration`, `Instant`, `PlainDate`, `PlainDateTime`, `PlainTime`, `ZonedDateTime`, and `Now` (backed by `jiff`).
-- Missing `PlainYearMonth`, `PlainMonthDay`, non-ISO calendar systems (ISO-8601 only), and full `Intl`-backed `toLocaleString()` formatting.
+- Implements `Duration`, `Instant`, `PlainDate`, `PlainDateTime`, `PlainTime`, `PlainYearMonth`, `PlainMonthDay`, `ZonedDateTime`, and `Now` (backed by `jiff`), including `PlainDate.prototype.toPlainYearMonth()` / `toPlainMonthDay()`.
+- Supports the `iso8601` calendar only (no non-ISO calendar systems or full ICU-backed `toLocaleString()`).
 
 ## Pending Decisions
 
 Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
 
-- [ ] **1. `Intl` + `Temporal` localization & remaining types**
-  - **Gap**: `Intl` lacks `PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `Locale`, `DurationFormat`, and full ICU locale/calendar/numbering-system data; `Temporal` lacks `PlainYearMonth`, `PlainMonthDay`, non-ISO calendars, and `Intl`-backed `toLocaleString()`.
-  - **Options**:
-    - **A (Pure-logic parity + minimal CLDR)**: Implement `Intl.Locale`, `Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`, and core constructors/rule subsets (`PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `DurationFormat`) without embedding heavy full ICU4X data blobs.
-    - **B (Full ICU4X static data)**: Bundle compiled ICU4X locale/calendar tables for full multi-locale/non-ISO calendar parity (significant binary size increase).
-    - **C (Accept partial / feature-gate heavy ICU)**: Fix `PlainYearMonth`/`PlainMonthDay`/`Intl.Locale` and optionally gate full ICU data behind a Cargo feature or external data path.
-
-- [ ] **2. `WASM-JS-API-2` & `WASM-WEB-API-2` engine capabilities**
+- [ ] **1. `WASM-JS-API-2` & `WASM-WEB-API-2` engine capabilities**
   - **Gap**: Backed by `wasmi` interpreter (no JIT, no GC/exceptions/threads/Memory64/JSPI/`v128` boundary, copied `Memory.buffer`, retained `externref`s, full-response buffering in `compileStreaming`/`instantiateStreaming`).
   - **Options**:
     - **A (Enhance on `wasmi`)**: Fix what is feasible inside `wasmi` (e.g., incremental/streamed Wasm framing or zero-copy/dirty-sync views where possible, `v128` boundary handling, `externref` cleanup), accepting spec limits (`GC`, `exceptions`, `Memory64`, `threads`).
     - **B (Add/switch to `wasmtime` backend)**: Support full JIT, shared linear memory, SIMD/GC/exceptions/threads (at large binary size, build time, and static-musl complexity cost), optionally via a Cargo feature.
     - **C (Keep `wasmi` as documented boundary)**: Maintain `wasmi` lightweight interpreter limits without heavy runtime replacement.
 
-- [ ] **3. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
+- [ ] **2. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
   - **Gap**:
     - Crypto/WebCrypto: Missing `createSign`/`createVerify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `DiffieHellman`, `crypto.hash()`, `X448`/`Ed448`/`Argon2`/`AES-OCB`/`ChaCha20-Poly1305`, some `deriveBits`/`deriveKey` edge cases, and `graviola` backend parity.
     - TLS/HTTPS: Rejects `pfx`, `ciphers`, `sigalgs`, `dhparam`, `crl`, `psk`, `ocsp`, `session`, `ticket`, async `SNICallback`, `ALPNCallback`, soft mTLS, encrypted private keys on rustls, TLS < 1.2, `renegotiate()`, and `TLSSocket.write()` `"drain"` backpressure; `https` depends on TLS feature builds.
@@ -244,26 +237,26 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
     - **B (Backend expansion / OpenSSL unification)**: Allow `tls-openssl` or broader multi-backend support for legacy options (`TLS < 1.2`, arbitrary `ciphers`, `renegotiate()`, `ocsp`/`crl`).
     - **C (Keep minimal crypto/TLS subset)**: Target only specific algorithms needed by common Node/WinterTC libraries and accept remaining gaps.
 
-- [ ] **4. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
+- [ ] **3. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
   - **Gap**: Missing `stripTypeScriptTypes`, `module.register()` (async loader hooks thread), `Module._load`, and on-disk bytecode compile cache (`enableCompileCache` reports `FAILED`).
   - **Options**:
     - **A (Implement lightweight/full features)**: Add `stripTypeScriptTypes` (decide lightweight lexer/stripper vs `oxc` full TS parser), `Module._load`, on-disk QuickJS bytecode compile cache (`enableCompileCache`), and `module.register` loader hooks.
     - **B (Selective subset)**: Add `stripTypeScriptTypes` + `Module._load` + disk compile cache while keeping `module.register` omitted (or async single-isolate hook adapter without dedicated loader worker overhead).
     - **C (Document current CJS/sync hooks boundary)**: Keep `registerHooks` (sync) without worker-based `module.register` or heavy parser deps.
 
-- [ ] **5. `node:async_hooks` (`createHook()` default activation)**
+- [ ] **4. `node:async_hooks` (`createHook()` default activation)**
   - **Gap**: `AsyncLocalStorage` propagates unconditionally with low overhead; user `createHook()` callbacks only run when `LEXE_ASYNC_HOOKS=1` is set.
   - **Options**:
     - **A (Enable on-demand when `createHook().enable()` is called)**: Keep zero overhead when no hook is created/enabled, and activate Promise/async tracking dynamically as soon as any user `AsyncHook.enable()` is called (eliminating the `LEXE_ASYNC_HOOKS=1` gate while preserving default fast-path throughput).
     - **B (Always keep `LEXE_ASYNC_HOOKS=1` opt-in)**: Preserve the explicit environment gate to guarantee zero accidental user-hook activation overhead in production services.
 
-- [ ] **6. `FETCH` policy boundaries & remaining WPT edge cases**
+- [ ] **5. `FETCH` policy boundaries & remaining WPT edge cases**
   - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
   - **Options**:
     - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
     - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
 
-- [ ] **7. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+- [ ] **6. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
   - **Gap**:
     - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
     - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).

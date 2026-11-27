@@ -4,6 +4,9 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Improved `Intl` and `Temporal` compatibility without heavy ICU data tables (`docs/compatibility.md`):
+  - Added `Intl.Locale` (BCP 47 parsing/canonicalization, `-u-` extension getters, options overrides, `maximize()`/`minimize()`, `getCalendars()`, `getCollations()`, `getHourCycles()`, `getNumberingSystems()`, `getTextInfo()`, `getWeekInfo()`, `getTimeZones()`), `Intl.PluralRules` (cardinal/ordinal CLDR rule subset, `selectRange`, `supportedLocalesOf`), `Intl.RelativeTimeFormat` (`always`/`auto`, `long`/`short`/`narrow`, `formatToParts`), `Intl.DisplayNames` (`language`, `region`, `script`, `currency`, `calendar`, `dateTimeField`), and `Intl.DurationFormat` (`long`/`short`/`narrow`/`digital`, `fractionalDigits`), and expanded `Intl.supportedValuesOf()` keys (`calendar`, `collation`, `currency`, `numberingSystem`, `unit`).
+  - Added `Temporal.PlainYearMonth` and `Temporal.PlainMonthDay` (ISO-8601 `iso8601` calendar, `from()`, `compare()`, `with()`, `add()`, `subtract()`, `until()`, `since()`, `toPlainDate()`, `overflow: "constrain" | "reject"`), `PlainDate.prototype.toPlainYearMonth()` / `toPlainMonthDay()`, and fixed `{ year }` parsing in `DateExt::date_with()`.
 - Completed `ENCODING` and `node:util` `TextDecoder` / `TextDecoderStream` compatibility (`ENCODING` and `node:util` now `✔︎` in `docs/compatibility.md`):
   - Integrated `encoding_rs` into `libs/lexe_encoding` (`Encoder::Whatwg` + streaming `IncrementalDecoder`), adding full WHATWG Encoding Standard support (`gbk`/`gb2312`, `gb18030`, `big5`, `shift_jis`, `euc-jp`, `iso-2022-jp`, `euc-kr`, `iso-8859-2`..`16`, `windows-1250`..`1258`, `windows-874`, `koi8-r`/`koi8-u`, `ibm866`, `macintosh`, `x-mac-cyrillic`, `x-user-defined`, and `replacement`) with lowercase canonical labels, streaming chunk state, and `fatal` `TypeError` handling.
 

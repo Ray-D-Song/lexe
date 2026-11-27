@@ -5,7 +5,9 @@ mod instant;
 mod now;
 mod plain_date;
 mod plain_date_time;
+mod plain_month_day;
 mod plain_time;
+mod plain_year_month;
 mod utils;
 mod zoned_date_time;
 
@@ -19,7 +21,9 @@ use crate::duration::Duration;
 use crate::instant::Instant;
 use crate::plain_date::PlainDate;
 use crate::plain_date_time::PlainDateTime;
+use crate::plain_month_day::PlainMonthDay;
 use crate::plain_time::PlainTime;
+use crate::plain_year_month::PlainYearMonth;
 use crate::zoned_date_time::ZonedDateTime;
 
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
@@ -29,7 +33,9 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     Class::<Instant>::define(&temporal)?;
     Class::<PlainDate>::define(&temporal)?;
     Class::<PlainDateTime>::define(&temporal)?;
+    Class::<PlainMonthDay>::define(&temporal)?;
     Class::<PlainTime>::define(&temporal)?;
+    Class::<PlainYearMonth>::define(&temporal)?;
     Class::<ZonedDateTime>::define(&temporal)?;
     temporal.set("Now", now::define_object(ctx)?)?;
 

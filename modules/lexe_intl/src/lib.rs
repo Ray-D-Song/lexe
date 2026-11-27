@@ -9,9 +9,14 @@
 mod cldr_data;
 mod collator;
 mod date_time_format;
+mod display_names;
+mod duration_format;
 mod list_format;
+mod locale;
 mod number_format;
 mod pattern_formatter;
+mod plural_rules;
+mod relative_time_format;
 mod segmenter;
 
 pub use collator::Collator;
@@ -19,8 +24,13 @@ pub use date_time_format::{
     format_date_in_timezone, parse_to_locale_string_options, DateTimeFormat, DateTimeFormatOptions,
     ToLocaleStringOptions,
 };
+pub use display_names::DisplayNames;
+pub use duration_format::DurationFormat;
 pub use list_format::ListFormat;
+pub use locale::Locale;
 pub use number_format::NumberFormat;
+pub use plural_rules::PluralRules;
+pub use relative_time_format::RelativeTimeFormat;
 pub use segmenter::Segmenter;
 
 use cldr_data::get_locale_data;
@@ -49,6 +59,11 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     Class::<NumberFormat>::define(&intl)?;
     Class::<ListFormat>::define(&intl)?;
     Class::<Collator>::define(&intl)?;
+    Class::<Locale>::define(&intl)?;
+    Class::<PluralRules>::define(&intl)?;
+    Class::<RelativeTimeFormat>::define(&intl)?;
+    Class::<DisplayNames>::define(&intl)?;
+    Class::<DurationFormat>::define(&intl)?;
 
     // Set Intl global
     globals.set("Intl", intl)?;
@@ -225,6 +240,122 @@ fn supported_values_of<'js>(ctx: Ctx<'js>, key: String) -> Result<Array<'js>> {
 
             for (i, tz) in timezones.available().enumerate() {
                 array.set(i, tz.as_str())?;
+            }
+        },
+        "calendar" => {
+            for (i, cal) in [
+                "buddhist",
+                "chinese",
+                "coptic",
+                "dangi",
+                "ethioaa",
+                "ethiopic",
+                "gregory",
+                "hebrew",
+                "indian",
+                "islamic",
+                "islamic-civil",
+                "islamic-rgsa",
+                "islamic-tbla",
+                "islamic-umalqura",
+                "iso8601",
+                "japanese",
+                "persian",
+                "roc",
+            ]
+            .iter()
+            .enumerate()
+            {
+                array.set(i, *cal)?;
+            }
+        },
+        "collation" => {
+            for (i, co) in [
+                "big5han", "compat", "dict", "ducet", "emoji", "eor", "gb2312", "phonebk",
+                "phonetic", "pinyin", "reformed", "search", "searchjl", "stroke", "trad", "unihan",
+                "zhuyin",
+            ]
+            .iter()
+            .enumerate()
+            {
+                array.set(i, *co)?;
+            }
+        },
+        "currency" => {
+            for (i, cur) in [
+                "AED", "ARS", "AUD", "BDT", "BRL", "CAD", "CHF", "CLP", "CNY", "COP", "CZK", "DKK",
+                "EGP", "EUR", "GBP", "HKD", "HUF", "IDR", "ILS", "INR", "JPY", "KES", "KRW", "MXN",
+                "MYR", "NGN", "NOK", "NZD", "PEN", "PHP", "PKR", "PLN", "RON", "RUB", "SAR", "SEK",
+                "SGD", "THB", "TRY", "TWD", "UAH", "USD", "VND", "ZAR",
+            ]
+            .iter()
+            .enumerate()
+            {
+                array.set(i, *cur)?;
+            }
+        },
+        "numberingSystem" => {
+            for (i, nu) in [
+                "arab", "arabext", "beng", "deva", "fullwide", "hanidec", "latn", "thai",
+            ]
+            .iter()
+            .enumerate()
+            {
+                array.set(i, *nu)?;
+            }
+        },
+        "unit" => {
+            for (i, u) in [
+                "acre",
+                "bit",
+                "byte",
+                "celsius",
+                "centimeter",
+                "day",
+                "degree",
+                "fahrenheit",
+                "fluid-ounce",
+                "foot",
+                "gallon",
+                "gigabit",
+                "gigabyte",
+                "gram",
+                "hectare",
+                "hour",
+                "inch",
+                "kilobit",
+                "kilobyte",
+                "kilogram",
+                "kilometer",
+                "liter",
+                "megabit",
+                "megabyte",
+                "meter",
+                "microsecond",
+                "mile",
+                "mile-scandinavian",
+                "milliliter",
+                "millimeter",
+                "millisecond",
+                "minute",
+                "month",
+                "nanosecond",
+                "ounce",
+                "percent",
+                "petabyte",
+                "pound",
+                "second",
+                "stone",
+                "terabit",
+                "terabyte",
+                "week",
+                "yard",
+                "year",
+            ]
+            .iter()
+            .enumerate()
+            {
+                array.set(i, *u)?;
             }
         },
         _ => {

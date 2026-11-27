@@ -16,6 +16,8 @@ use rquickjs::{
 
 use crate::duration::Duration;
 use crate::plain_date_time::PlainDateTime;
+use crate::plain_month_day::PlainMonthDay;
+use crate::plain_year_month::PlainYearMonth;
 use crate::utils::date::{fill_from_iter, DateExt};
 use crate::zoned_date_time::ZonedDateTime;
 
@@ -102,6 +104,16 @@ impl PlainDate {
         let time = extract_time(&ctx, &value.0)?;
         let dt = DateTime::from_parts(self.inner, time);
         Ok(PlainDateTime::new_object(dt))
+    }
+
+    #[qjs(rename = "toPlainMonthDay")]
+    fn to_plain_month_day(&self) -> PlainMonthDay {
+        PlainMonthDay::from_month_day(self.inner.month(), self.inner.day())
+    }
+
+    #[qjs(rename = "toPlainYearMonth")]
+    fn to_plain_year_month(&self) -> PlainYearMonth {
+        PlainYearMonth::from_year_month(self.inner.year(), self.inner.month())
     }
 
     #[allow(clippy::inherent_to_string)]

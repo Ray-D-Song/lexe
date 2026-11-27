@@ -1181,9 +1181,9 @@ export function encode(
 export function decode(value: string): Uint8Array;
 ```
 
-## Timezone-aware Intl
+## Intl and Temporal
 
-Lexe provides timezone support through the global `Intl.DateTimeFormat` and `Date.prototype.toLocaleString` APIs. There is no public `lexe:timezone` module.
+Lexe provides built-in `Intl` (`DateTimeFormat`, `Collator`, `NumberFormat`, `ListFormat`, `Segmenter`, `Locale`, `PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `DurationFormat`, and `supportedValuesOf` for `timeZone`, `calendar`, `collation`, `currency`, `numberingSystem`, `unit`) and `Temporal` (`Duration`, `Instant`, `PlainDate`, `PlainDateTime`, `PlainTime`, `PlainYearMonth`, `PlainMonthDay`, `ZonedDateTime`, `Now` in the `iso8601` calendar) using compact built-in rules rather than full ICU4X data tables. There is no public `lexe:timezone` module.
 
 ### Intl.DateTimeFormat
 
