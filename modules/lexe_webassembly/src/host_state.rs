@@ -1,25 +1,18 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Per-realm state shared between the `wasmi::Store` and every JS-facing
-//! wrapper object (`Module`/`Instance`/`Memory`/`Table`/`Global`/error
-//! classes) created for that realm.
-//!
-//! A [`HostState`] is always reached through an `Rc<HostState>` so that it can
-//! simultaneously be:
-//! - the `T` in `wasmi::Store<Rc<HostState>>` (so host function trampolines can
-//!   cheaply clone their way to it via `Caller::data()`), and
-//! - held directly by [`crate::realm::WasmRealm`] and by every wrapper class
-//!   instance that needs to validate "same realm" before an operation.
+//! Per-realm state shared between `wasmz` entities and every JS-facing
+//! wrapper object created for that realm.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
+use std::rc::{Rc, Weak};
 
 use rquickjs::{function::Constructor, qjs, Ctx, Function, Persistent, Value};
 
-/// A monotonically increasing identifier for a realm, used to key the
-/// thread-local active-caller stack in [`crate::store_access`].
+use crate::module::FuncSigMeta;
+
 pub type RealmId = u64;
 
 fn next_realm_id() -> RealmId {
@@ -28,72 +21,65 @@ fn next_realm_id() -> RealmId {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// The kind of wasmi extern a cached JS wrapper was created for. Used together
-/// with an opaque handle identity (see [`crate::store_access::handle_bits`]) as
-/// the wrapper-registry cache key so that re-exporting or re-importing the same
-/// underlying wasmi entity always yields the same JS wrapper object
-/// (`instance.exports.foo === instance.exports.alias`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WrapKind {
-    Func,
     Memory,
     Table,
     Global,
 }
 
-/// Persisted constructors captured once at realm-init time so that internal
-/// error classification never has to re-read (and thus never observes a
-/// user-replaced) `globalThis.WebAssembly` or `globalThis.Error`.
+/// Identifies an exported/re-exported Wasm function uniquely within a realm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FuncKey {
+    pub instance_id: u64,
+    pub func_idx: u32,
+}
+
+/// Metadata kept per JS-wrapped exported function so `Table.set` / re-exports /
+/// `funcref` conversions can resolve both the owner `Instance` and its full signature
+/// (including `v128` rejection at the JS boundary).
+#[derive(Clone)]
+pub struct ExportedFuncEntry {
+    pub instance: Weak<wasmz::Instance>,
+    pub func_idx: u32,
+    pub sig: FuncSigMeta,
+}
+
 pub struct ErrorConstructors {
     pub compile_error: Persistent<Constructor<'static>>,
     pub link_error: Persistent<Constructor<'static>>,
     pub runtime_error: Persistent<Constructor<'static>>,
 }
 
-/// Per-realm host state. See module docs.
+/// Sentinel trap message when a JS host callback already saved an uncaught JS exception on `HostState`.
+pub const JS_EXCEPTION_SENTINEL: &str = "__lexe_js_exception__";
+
 pub struct HostState {
     pub realm_id: RealmId,
-    /// Raw pointer to the QuickJS context that owns this realm. Deliberately
-    /// *not* wrapped in an owned `Ctx` (which would perform a real, held
-    /// `JS_DupContext`): `HostState` (and everything it owns, including every
-    /// `Persistent<Value/Object/Function/Constructor>` below) lives only in
-    /// this realm's entry in the `Runtime`-userdata-backed realm registry
-    /// (see `crate::realm`), never directly inside a JS-reachable class
-    /// instance, precisely so it never has to participate in QuickJS's GC
-    /// tracing at all. `rquickjs::Persistent`'s own documentation is explicit
-    /// that *it* (not the cycle collector) is what must not outlive the
-    /// `Runtime`: "ensure that no persistent links outlives the runtime,
-    /// otherwise Runtime will abort the process when dropped". The realm
-    /// registry satisfies that by living in `Ctx::store_userdata`, which
-    /// rquickjs's own `RawRuntime::drop` explicitly clears (dropping every
-    /// `HostState`, and every `Persistent` it owns) *before* calling
-    /// `JS_FreeRuntime` -- see `crate::realm` module docs for the full
-    /// reasoning and the bisection tests that led here.
-    ///
-    /// Reconstructing a transient `Ctx` from this pointer (via
-    /// [`Self::ctx`]) is only ever done synchronously, on the single thread
-    /// that owns this context, while the context is known to still be alive.
     ctx_ptr: NonNull<qjs::JSContext>,
     pub errors: ErrorConstructors,
 
-    // -- JS function import callback registry -----------------------------
     callbacks: RefCell<HashMap<u32, Persistent<Function<'static>>>>,
     next_callback_id: Cell<u32>,
 
-    // -- Wrapper identity cache (Func/Memory/Table/Global -> JS wrapper) ---
     wrappers: RefCell<HashMap<(WrapKind, u64), Persistent<Value<'static>>>>,
+    func_wrappers: RefCell<HashMap<FuncKey, Persistent<Value<'static>>>>,
+    func_by_object: RefCell<HashMap<usize, FuncKey>>,
+    func_entries: RefCell<HashMap<FuncKey, ExportedFuncEntry>>,
+    instances_by_id: RefCell<HashMap<u64, Weak<wasmz::Instance>>>,
 
-    // -- externref <-> JS object identity registry -------------------------
-    externref_by_object_ptr: RefCell<HashMap<usize, u32>>,
-    externref_objects: RefCell<HashMap<u32, Persistent<Value<'static>>>>,
-    externref_handles: RefCell<HashMap<u32, wasmi::ExternRef>>,
-    next_externref_id: Cell<u32>,
+    externref_by_object_ptr: RefCell<HashMap<usize, usize>>,
+    externref_objects: RefCell<HashMap<usize, Persistent<Value<'static>>>>,
+    next_externref_id: Cell<usize>,
 
-    // -- pending JS exception sentinel passthrough --------------------------
     pending_exception: RefCell<Option<Persistent<Value<'static>>>>,
 
-    // -- Memory synchronous-mirror bookkeeping (see crate::memory) ---------
     pub(crate) memory_mirrors: RefCell<HashMap<u64, crate::memory::MemoryMirrorEntry>>,
+
+    wasi_hosts: RefCell<HashMap<u64, Rc<RefCell<crate::wasi::WasiState>>>>,
+    next_wasi_id: Cell<u64>,
+    wasi_stub_ptrs: RefCell<HashSet<usize>>,
+    wasi_stubs: RefCell<Vec<Persistent<Value<'static>>>>,
 }
 
 impl HostState {
@@ -105,29 +91,44 @@ impl HostState {
             callbacks: RefCell::new(HashMap::new()),
             next_callback_id: Cell::new(0),
             wrappers: RefCell::new(HashMap::new()),
+            func_wrappers: RefCell::new(HashMap::new()),
+            func_by_object: RefCell::new(HashMap::new()),
+            func_entries: RefCell::new(HashMap::new()),
+            instances_by_id: RefCell::new(HashMap::new()),
             externref_by_object_ptr: RefCell::new(HashMap::new()),
             externref_objects: RefCell::new(HashMap::new()),
-            externref_handles: RefCell::new(HashMap::new()),
-            next_externref_id: Cell::new(0),
+            // 0 is reserved for WebAssembly null externref.
+            next_externref_id: Cell::new(1),
             pending_exception: RefCell::new(None),
             memory_mirrors: RefCell::new(HashMap::new()),
+            wasi_hosts: RefCell::new(HashMap::new()),
+            next_wasi_id: Cell::new(1),
+            wasi_stub_ptrs: RefCell::new(HashSet::new()),
+            wasi_stubs: RefCell::new(Vec::new()),
         }
     }
 
     /// Reconstructs a `Ctx<'js>` for this realm.
     ///
     /// # Safety
-    /// Must only be called on the thread that owns this realm's QuickJS
-    /// context, and only while that context is still alive (i.e. from within
-    /// code reachable while this `HostState` itself has not yet been dropped).
-    /// This crate upholds that invariant by only ever calling it synchronously
-    /// from within a wasmi host function trampoline or from JS-facing glue
-    /// that already holds a live `Ctx` for the same realm.
+    /// Caller must be executing synchronously on the QuickJS context's owning thread while the
+    /// context is alive.
     pub unsafe fn ctx<'js>(&self) -> Ctx<'js> {
         unsafe { Ctx::from_raw(self.ctx_ptr) }
     }
 
-    // -- callbacks ----------------------------------------------------------
+    pub fn register_instance(&self, instance: &Rc<wasmz::Instance>) {
+        self.instances_by_id
+            .borrow_mut()
+            .insert(instance.id(), Rc::downgrade(instance));
+    }
+
+    pub fn instance_by_id(&self, id: u64) -> Option<Rc<wasmz::Instance>> {
+        self.instances_by_id
+            .borrow()
+            .get(&id)
+            .and_then(Weak::upgrade)
+    }
 
     pub fn register_callback(&self, func: Function<'_>) -> u32 {
         let id = self.next_callback_id.get();
@@ -142,8 +143,6 @@ impl HostState {
         let persistent = self.callbacks.borrow().get(&id).cloned()?;
         persistent.restore(ctx).ok()
     }
-
-    // -- wrapper identity cache ----------------------------------------------
 
     pub fn cached_wrapper<'js>(
         &self,
@@ -161,100 +160,68 @@ impl HostState {
         self.wrappers.borrow_mut().insert((kind, bits), persistent);
     }
 
-    // -- externref registry ---------------------------------------------------
+    pub fn cached_func_wrapper<'js>(&self, ctx: &Ctx<'js>, key: FuncKey) -> Option<Value<'js>> {
+        let persistent = self.func_wrappers.borrow().get(&key).cloned()?;
+        persistent.restore(ctx).ok()
+    }
 
-    /// Returns the stable numeric id and cached `wasmi::ExternRef` for `value`,
-    /// allocating a fresh id/`ExternRef` pair the first time this particular JS
-    /// value is seen by this realm's externref table.
-    ///
-    /// Identity/dedup handling is split by whether `value` actually *has* a
-    /// stable identity in JS terms:
-    ///
-    /// - Objects, strings, symbols, and `BigInt`s are QuickJS ref-counted
-    ///   heap values: `JS_VALUE_GET_PTR` reads the real heap pointer stored
-    ///   in their `JSValue`, which is stable for as long as the value is
-    ///   alive (which it is here, since we hold our own `Persistent` to it)
-    ///   and safe to use as a dedup key -- two `JSValue`s of one of these
-    ///   kinds compare `===` in JS if and only if they carry the same
-    ///   pointer.
-    /// - Everything else (`undefined`, booleans, numbers) is a non-ref-
-    ///   -counted, inline-encoded `JSValue`: its `.u.ptr` union field is
-    ///   *not* a pointer at all, it is whatever bits the boolean/number/
-    ///   `undefined` payload happens to occupy that union slot with (and, on
-    ///   builds using NaN-boxing, may not even be independently addressable
-    ///   from the tag at all). Reusing `JS_VALUE_GET_PTR`'s output as a
-    ///   cross-type dedup key for these previously caused genuine identity
-    ///   collisions (e.g. `undefined` colliding with `null`, or `true`
-    ///   colliding with the number `1`). None of these kinds need identity
-    ///   preservation to be spec-correct in the first place -- JS `===` for
-    ///   them is by value, not by reference, and `externref_object` always
-    ///   hands back a `Persistent` that already holds the exact original
-    ///   value -- so we simply skip the ptr-keyed dedup step for them
-    ///   entirely and allocate a fresh id every time. This is always
-    ///   correct (never returns a wrong value) and merely forgoes reusing
-    ///   the same `wasmi::ExternRef` handle across repeated interning of an
-    ///   equal primitive, which is not observable from JS.
-    pub fn intern_externref(
-        &self,
-        store: &mut dyn wasmi::AsContextMut<Data = std::rc::Rc<HostState>>,
-        value: &Value<'_>,
-    ) -> wasmi::ExternRef {
+    pub fn cache_func_wrapper(&self, key: FuncKey, entry: ExportedFuncEntry, value: Value<'_>) {
+        let ctx = value.ctx().clone();
+        let ptr = unsafe { qjs::JS_VALUE_GET_PTR(value.as_raw()) } as usize;
+        let persistent = Persistent::save(&ctx, value);
+        self.func_by_object.borrow_mut().insert(ptr, key);
+        self.func_entries.borrow_mut().insert(key, entry);
+        self.func_wrappers.borrow_mut().insert(key, persistent);
+    }
+
+    pub fn unwrap_func_key(&self, value: &Value<'_>) -> Option<FuncKey> {
+        if !value.is_function() {
+            return None;
+        }
+        let ptr = unsafe { qjs::JS_VALUE_GET_PTR(value.as_raw()) } as usize;
+        self.func_by_object.borrow().get(&ptr).copied()
+    }
+
+    pub fn func_entry(&self, key: FuncKey) -> Option<ExportedFuncEntry> {
+        self.func_entries.borrow().get(&key).cloned()
+    }
+
+    pub fn intern_externref(&self, value: &Value<'_>) -> usize {
         let has_stable_identity_ptr =
             value.is_object() || value.is_string() || value.is_symbol() || value.is_big_int();
 
         if has_stable_identity_ptr {
             let ptr = unsafe { qjs::JS_VALUE_GET_PTR(value.as_raw()) } as usize;
             if let Some(id) = self.externref_by_object_ptr.borrow().get(&ptr).copied() {
-                if let Some(handle) = self.externref_handles.borrow().get(&id).copied() {
-                    return handle;
-                }
+                return id;
             }
-            let id = self.allocate_externref_id(store, value);
+            let id = self.allocate_externref_id(value);
             self.externref_by_object_ptr.borrow_mut().insert(ptr, id);
-            return *self
-                .externref_handles
-                .borrow()
-                .get(&id)
-                .expect("just inserted above");
+            return id;
         }
 
-        let id = self.allocate_externref_id(store, value);
-        *self
-            .externref_handles
-            .borrow()
-            .get(&id)
-            .expect("just inserted above")
+        self.allocate_externref_id(value)
     }
 
-    fn allocate_externref_id(
-        &self,
-        store: &mut dyn wasmi::AsContextMut<Data = std::rc::Rc<HostState>>,
-        value: &Value<'_>,
-    ) -> u32 {
-        let id = self.next_externref_id.get();
-        self.next_externref_id.set(id.wrapping_add(1));
-        let handle = wasmi::ExternRef::new(store.as_context_mut(), id);
+    fn allocate_externref_id(&self, value: &Value<'_>) -> usize {
+        let mut id = self.next_externref_id.get();
+        if id == 0 {
+            id = 1;
+        }
+        self.next_externref_id.set(id.wrapping_add(1).max(1));
         self.externref_objects
             .borrow_mut()
             .insert(id, Persistent::save(value.ctx(), value.clone()));
-        self.externref_handles.borrow_mut().insert(id, handle);
         id
     }
 
-    /// Recovers the JS object identity previously registered for a
-    /// `wasmi::ExternRef` produced by [`Self::intern_externref`] on this realm.
-    pub fn externref_object<'js>(
-        &self,
-        ctx: &Ctx<'js>,
-        store: &mut dyn wasmi::AsContextMut<Data = std::rc::Rc<HostState>>,
-        externref: wasmi::ExternRef,
-    ) -> Option<Value<'js>> {
-        let id = *externref.data(store.as_context()).downcast_ref::<u32>()?;
+    pub fn externref_object<'js>(&self, ctx: &Ctx<'js>, id: usize) -> Option<Value<'js>> {
+        if id == 0 {
+            return Some(Value::new_null(ctx.clone()));
+        }
         let persistent = self.externref_objects.borrow().get(&id).cloned()?;
         persistent.restore(ctx).ok()
     }
-
-    // -- pending exception sentinel -----------------------------------------
 
     pub fn set_pending_exception(&self, value: Value<'_>) {
         let ctx = value.ctx().clone();
@@ -264,5 +231,35 @@ impl HostState {
     pub fn take_pending_exception<'js>(&self, ctx: &Ctx<'js>) -> Option<Value<'js>> {
         let persistent = self.pending_exception.borrow_mut().take()?;
         persistent.restore(ctx).ok()
+    }
+
+    pub fn register_wasi(&self, state: crate::wasi::WasiState) -> u64 {
+        let id = self.next_wasi_id.get();
+        self.next_wasi_id.set(id.wrapping_add(1).max(1));
+        self.wasi_hosts
+            .borrow_mut()
+            .insert(id, Rc::new(RefCell::new(state)));
+        id
+    }
+
+    pub fn wasi_state(&self, id: u64) -> Option<Rc<RefCell<crate::wasi::WasiState>>> {
+        self.wasi_hosts.borrow().get(&id).cloned()
+    }
+
+    pub fn register_wasi_stub(&self, value: &Value<'_>) {
+        let ptr = unsafe { qjs::JS_VALUE_GET_PTR(value.as_raw()) } as usize;
+        if self.wasi_stub_ptrs.borrow_mut().insert(ptr) {
+            self.wasi_stubs
+                .borrow_mut()
+                .push(Persistent::save(value.ctx(), value.clone()));
+        }
+    }
+
+    pub fn is_wasi_stub(&self, value: &Value<'_>) -> bool {
+        if !value.is_function() {
+            return false;
+        }
+        let ptr = unsafe { qjs::JS_VALUE_GET_PTR(value.as_raw()) } as usize;
+        self.wasi_stub_ptrs.borrow().contains(&ptr)
     }
 }

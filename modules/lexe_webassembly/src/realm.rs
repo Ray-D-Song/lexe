@@ -85,39 +85,30 @@ use crate::host_state::{ErrorConstructors, HostState};
 /// reassigned, and cannot be deleted or redefined by user code.
 const HOLDER_KEY: &str = "\0lexe:webassembly_realm";
 
-/// The realm-scoped `wasmi::Store` plus the shared [`HostState`] every JS
-/// wrapper object for this realm needs to reach.
+/// The realm-scoped `wasmz::Engine` + `wasmz::Store` + [`HostState`].
 ///
-/// Lives *only* inside [`RealmRegistry`] (itself `Runtime`-userdata); see the
-/// module docs above for why.
+/// Lives *only* inside [`RealmRegistry`] (itself `Runtime`-userdata).
 pub struct WasmRealm {
     pub state: Rc<HostState>,
-    pub store: RefCell<wasmi::Store<Rc<HostState>>>,
+    pub store: wasmz::Store,
+    pub engine: wasmz::Engine,
 }
 
 impl WasmRealm {
     pub(crate) fn new(ctx: &Ctx<'_>, errors: ErrorConstructors) -> Self {
-        let engine = crate::engine::shared_engine();
+        let engine = crate::engine::new_engine().expect("wasmz Engine::new must succeed");
+        let store = wasmz::Store::new(&engine).expect("wasmz Store::new must succeed");
         let state = Rc::new(HostState::new(ctx, errors));
-        let store = wasmi::Store::new(&engine, state.clone());
         Self {
             state,
-            store: RefCell::new(store),
+            store,
+            engine,
         }
     }
 }
 
 impl Drop for WasmRealm {
-    fn drop(&mut self) {
-        // Release this realm's reverse Func-wrapper-identity entries before
-        // `self.state` (and every `Persistent<Value>` it owns -- callback,
-        // wrapper and externref registries) is itself dropped. Order does not
-        // matter for soundness here (both are pure, `Ctx`-independent
-        // bookkeeping maps), but doing it eagerly keeps the thread-local map
-        // bounded across the lifetime of a long-running process that creates
-        // and destroys many realms (e.g. repeated `vm` usage).
-        crate::func_wrapper::clear_realm(self.state.realm_id);
-    }
+    fn drop(&mut self) {}
 }
 
 /// A list of realm ids whose owning context has been torn down but whose
@@ -296,38 +287,6 @@ pub fn install<'js>(ctx: &Ctx<'js>, errors: ErrorConstructors) -> Result<Rc<Wasm
     )?;
     ctx.globals().prop(HOLDER_KEY, Property::from(holder))?;
     Ok(realm)
-}
-
-/// Runs `f` with access to this realm's Wasm execution context.
-///
-/// If a JS import callback for this realm is currently executing on this
-/// thread (i.e. we are being called *reentrantly*, from inside a host
-/// function trampoline that is itself inside a `wasmi::Func::call`), `f` is
-/// given that call's live `wasmi::Caller` instead of re-borrowing
-/// [`WasmRealm::store`] -- doing the latter would panic, since the outer
-/// `Func::call` already holds `self.store.borrow_mut()` for its own dynamic
-/// extent. Otherwise `f` is given ordinary mutable access to the realm's
-/// `Store` via a fresh `RefCell` borrow.
-///
-/// This is the single choke point every `Memory`/`Table`/`Global` JS-facing
-/// method and every exported-function call path routes through, so that
-/// "host callback reads/writes Memory/Table/Global, or calls back into a
-/// Wasm export" (see the implementation plan's reentrancy section) never
-/// double-borrows the `Store`.
-pub fn with_context_mut<R>(
-    realm: &WasmRealm,
-    f: impl FnOnce(&mut dyn wasmi::AsContextMut<Data = Rc<HostState>>) -> R,
-) -> R {
-    if let Some(ptr) = crate::store_access::active_caller(realm.state.realm_id) {
-        // SAFETY: `ptr` is only non-null while the `ActiveCallerGuard` that
-        // pushed it (in the host trampoline currently executing on this same
-        // thread) is still alive, which strictly encloses this call.
-        let caller: &mut wasmi::Caller<'static, Rc<HostState>> = unsafe { &mut *ptr };
-        f(caller)
-    } else {
-        let mut store = realm.store.borrow_mut();
-        f(&mut *store)
-    }
 }
 
 /// Fetches the realm installed for `ctx`.

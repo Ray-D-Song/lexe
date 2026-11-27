@@ -160,7 +160,8 @@ async fn main() -> Result<(), Error> {
 | util / util/types | ✔︎ | ⚠️ | `util` | `lexe_util` |
 | v8 | ✔︎ | ⚠️ | `v8` | `lexe_v8` |
 | vm | ✔︎ | ⚠️ | `vm` | `lexe_vm` |
-| WebAssembly | ✔︎ | ⚠️ | `webassembly` | `lexe_webassembly` |
+| wasi | ✔︎ | ⚠️ | `webassembly` | `lexe_webassembly` (WASI Preview 1 via `wasmz`) |
+| WebAssembly | ✔︎ | ⚠️ | `webassembly` | `lexe_webassembly` (backed by `wasmz`) |
 | worker_threads | ✔︎ | ⚠️ | N/A | OS-thread isolates; structured-clone postMessage; SAB hooks |
 | zlib | ✔︎ | ⚠️ | `zlib` | `lexe_zlib` |
 | Other modules | ✔︎ | ✘ | N/A | N/A |

@@ -241,115 +241,40 @@ impl HostState {
     }
 }
 
-/// Classifies a `wasmi::Error` produced while instantiating or running a
-/// module into the appropriate WebAssembly JS error category. A JS import
-/// callback exception is *not* handled here: it must be intercepted via the
-/// pending-exception sentinel before it ever reaches this classification (see
-/// `crate::realm::sentinel`).
-pub enum ErrorClass {
-    Link,
-    Runtime,
-    Compile,
-}
-
-pub fn classify_wasmi_error(error: &wasmi::Error) -> ErrorClass {
-    use wasmi::errors::ErrorKind;
-    if error.as_trap_code().is_some() {
-        return ErrorClass::Runtime;
-    }
-    match error.kind() {
-        ErrorKind::Linker(_) | ErrorKind::Instantiation(_) => ErrorClass::Link,
-        ErrorKind::Wasm(_) | ErrorKind::Translation(_) | ErrorKind::Read(_) => ErrorClass::Compile,
-        ErrorKind::TrapCode(_) => ErrorClass::Runtime,
-        ErrorKind::Global(_) | ErrorKind::Memory(_) | ErrorKind::Table(_) => ErrorClass::Link,
-        _ => ErrorClass::Runtime,
-    }
-}
-
-pub fn throw_for_wasmi_error(
+/// Classifies a `wasmz::Error` into Compile / Link / Runtime or unwraps a
+/// preserved pending JS exception thrown inside a host import callback.
+pub fn throw_wasmz_error(
     ctx: &Ctx<'_>,
     host: &HostState,
-    error: wasmi::Error,
+    error: wasmz::Error,
 ) -> rquickjs::Error {
-    let class = classify_wasmi_error(&error);
-    let message = error.to_string();
-    match class {
-        ErrorClass::Compile => host.throw_compile_error(ctx, message),
-        ErrorClass::Link => host.throw_link_error(ctx, message),
-        ErrorClass::Runtime => host.throw_runtime_error(ctx, message),
-    }
-}
-
-/// Private sentinel [`wasmi::errors::HostError`] used to smuggle a JS import
-/// callback's original thrown value (or a wrapped internal validation error)
-/// back across the `wasmi::Func::call` boundary without wasmi ever seeing --
-/// or this crate ever classifying -- the real payload as a `RuntimeError`.
-/// See `crate::instance::call_js_import` (where it is produced) and
-/// [`throw_for_wasmi_error_or_sentinel`] (where it is unwrapped again).
-#[derive(Debug)]
-pub struct PendingJsExceptionSentinel;
-
-impl std::fmt::Display for PendingJsExceptionSentinel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "pending JS exception (should never be observed directly)"
-        )
-    }
-}
-
-impl wasmi::errors::HostError for PendingJsExceptionSentinel {}
-
-/// Converts an `rquickjs::Result` failure produced while running JS code on
-/// behalf of a host callback (import trampoline, or memory/table/global sync
-/// pass) into a `wasmi::Error` suitable for returning from that callback.
-///
-/// If `err` already represents a live JS exception (i.e. `ctx.throw(..)` was
-/// called, including by every `HostState::throw_*` helper) its exact value is
-/// captured into [`HostState::set_pending_exception`] and a
-/// [`PendingJsExceptionSentinel`] is returned so the original value/identity
-/// can be restored and re-thrown by [`throw_for_wasmi_error_or_sentinel`] once
-/// control returns to the outer `wasmi` call. Any other (rare, purely
-/// internal) `rquickjs::Error` is downgraded to a plain message-only
-/// `wasmi::Error` instead, since there is no JS value to preserve.
-pub fn to_wasmi_error(ctx: &Ctx<'_>, host: &HostState, err: rquickjs::Error) -> wasmi::Error {
-    if err.is_exception() {
-        host.set_pending_exception(ctx.catch());
-        return wasmi::Error::host(PendingJsExceptionSentinel);
-    }
-    wasmi::Error::new(err.to_string())
-}
-
-/// The inverse of [`throw_for_wasmi_error`]: checks for the private
-/// [`PendingJsExceptionSentinel`] first and, if found, restores and re-throws
-/// the original JS value/identity exactly as thrown (never wrapped in a
-/// `RuntimeError`). Otherwise classifies and throws normally.
-pub fn throw_for_wasmi_error_or_sentinel(
-    ctx: &Ctx<'_>,
-    host: &HostState,
-    mut error: wasmi::Error,
-) -> rquickjs::Error {
-    if error.downcast_mut::<PendingJsExceptionSentinel>().is_some() {
+    if matches!(error.kind(), wasmz::ErrorKind::HostTrap) {
         if let Some(value) = host.take_pending_exception(ctx) {
             return ctx.throw(value);
         }
-        // The sentinel fired but no pending exception was recorded (should
-        // not happen); fall through to generic classification rather than
-        // silently losing the failure.
     }
-    throw_for_wasmi_error(ctx, host, error)
+    match error.kind() {
+        wasmz::ErrorKind::Compile => host.throw_compile_error(ctx, error.message()),
+        wasmz::ErrorKind::Link => host.throw_link_error(ctx, error.message()),
+        wasmz::ErrorKind::Runtime | wasmz::ErrorKind::HostTrap | wasmz::ErrorKind::Unknown => {
+            host.throw_runtime_error(ctx, error.message())
+        },
+    }
+}
+
+/// Captures any live JS exception from `err` onto `host` and returns a sentinel
+/// message for `wasmz::TrappableHostFunc`.
+pub fn capture_js_error_for_wasmz(ctx: &Ctx<'_>, host: &HostState, err: rquickjs::Error) -> String {
+    if err.is_exception() {
+        host.set_pending_exception(ctx.catch());
+        return crate::host_state::JS_EXCEPTION_SENTINEL.to_string();
+    }
+    err.to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use lexe_test::test_sync_with;
-
-    #[test]
-    fn out_of_bounds_memory_access_classifies_as_runtime() {
-        let error = wasmi::Error::from(wasmi::TrapCode::MemoryOutOfBounds);
-        assert!(matches!(classify_wasmi_error(&error), ErrorClass::Runtime));
-    }
 
     /// Regression test for the reviewed bug: `new
     /// WebAssembly.CompileError(message)` (and `LinkError`/`RuntimeError`)

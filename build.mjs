@@ -139,6 +139,8 @@ const ES_BUILD_OPTIONS = {
     "node:util",
     "v8",
     "node:v8",
+    "wasi",
+    "node:wasi",
     "constants",
     "node:constants",
     "vm",

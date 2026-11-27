@@ -1477,34 +1477,46 @@ export function print(value: any): void;
 
 [URL.createObjectURL](https://developer.mozilla.org/en-US/docs/Web/API/URL/createObjectURL_static) and [URL.revokeObjectURL](https://developer.mozilla.org/en-US/docs/Web/API/URL/revokeObjectURL_static) accept a `Blob` or `File` and return `blob:nodedata:<uuid>` URLs, as in Node; `buffer.resolveObjectURL()` resolves them.
 
+## WASI
+
+[WASI](https://nodejs.org/api/wasi.html) (`node:wasi` / `wasi`)
+
+Lexe implements WASI Preview 1 (`version: "preview1"`) backed by `wasmz`:
+
+- `new WASI({ version: "preview1", args, env, preopens, returnOnExit, stdin, stdout, stderr })`
+- `wasi.wasiImport` (all 46 `wasi_snapshot_preview1` functions; individual properties can be overridden with custom JS functions before instantiation) and `wasi.getImportObject()`
+- `wasi.start(instance)` (runs `_start`, returns numeric exit code when `returnOnExit: true` or exits process on `proc_exit`) and `wasi.initialize(instance)` (runs `_initialize` on reactor modules)
+
+Not implemented: WASI Preview 2 (`version: "preview2"` / Component Model).
+
 ## WEBASSEMBLY
 
 [WebAssembly](https://developer.mozilla.org/en-US/docs/WebAssembly/Reference/JavaScript_interface)
 
-Lexe installs a fresh, realm-scoped `WebAssembly` global on every QuickJS context, backed by [`wasmi`](https://github.com/wasmi-labs/wasmi) `1.1.0`.
+Lexe installs a fresh, realm-scoped `WebAssembly` global on every QuickJS context, backed by `wasmz`.
 
 Implemented:
 
 - `WebAssembly.compile`, `instantiate` (both overloads), `validate`, `compileStreaming`, `instantiateStreaming`.
-- `WebAssembly.Module` (including `Module.imports`/`Module.exports`/`Module.customSections`), `Instance`, `Memory`, `Table`, `Global`.
+- `WebAssembly.Module` (including `Module.imports`/`Module.exports`/`Module.customSections`), `Instance`, `Memory` (including `shared: true` when `maximum` is specified), `Table`, `Global`.
 - `WebAssembly.CompileError`, `LinkError`, `RuntimeError`.
 - JS function imports and Wasm function exports, including reentrant calls from a JS import callback back into the same instance.
-- The multi-value, bulk-memory, reference-types (`externref`/`funcref`), mutable-globals, and SIMD proposals (SIMD executes inside Wasm only; a `v128` value crossing the JS/Wasm boundary throws `TypeError`).
-- A synchronously-mirrored, non-shared `wasm32` linear `Memory`, bidirectionally visible from JS and Wasm.
+- Multi-value, bulk memory, reference types (`externref`/`funcref`), mutable globals, GC, exception handling, typed function references, threads/shared memory, `Memory64`, and internal `v128` SIMD (a `v128` value crossing the JS/Wasm boundary throws `TypeError`).
+- A synchronously-mirrored linear `Memory`, bidirectionally visible from JS and Wasm.
 
 > [!NOTE]
 > Numeric/BigInt mapping: `i32` round-trips through JS `Number` using `ToInt32` semantics (matching Node/browsers' wraparound behavior for out-of-range values); `f32`/`f64` round-trip through `Number`; `i64` only accepts/returns `BigInt` (never `Number`); a multi-result export returns a plain JS `Array`, and a multi-result import callback must return an array with at least that many elements.
 >
 > Memory model: each `Memory` lazily materializes a QuickJS `ArrayBuffer` "mirror" the first time `.buffer` is read. Wasm's actual linear memory is copied into the mirror immediately before returning from an exported call or before invoking a JS import callback, and copied back out immediately after -- so JS and Wasm always observe each other's writes at every boundary crossing, at the cost of a full-buffer copy per crossing rather than a zero-copy view. A `grow()` (including `grow(0)`, and including a Wasm-internal `memory.grow`) detaches the previous mirror `ArrayBuffer` and creates a new one.
 >
-> Every `Instance`/`Memory`/`Table`/`Global`/exported-function object is scoped to the QuickJS context (realm) that created it; passing one into a different realm's `WebAssembly` APIs (e.g. across a `vm.runInNewContext` boundary) throws `LinkError` rather than silently mixing `wasmi` stores.
+> Every `Instance`/`Memory`/`Table`/`Global`/exported-function object is scoped to the QuickJS context (realm) that created it; passing one into a different realm's `WebAssembly` APIs (e.g. across a `vm.runInNewContext` boundary) throws `LinkError` rather than silently mixing `wasmz` stores.
 >
-> `externref` lifetime: to preserve JS identity for every Wasm reference safely, Lexe retains the `Persistent<Value>` associated with an `externref` until its WebAssembly realm is torn down. `wasmi` 1.1.0 does not expose the complete set of roots required to reclaim individual entries safely (including Wasm-private tables, globals, and active frames). Consequently, a long-lived realm that continuously stores distinct JS values as `externref` can grow its retained memory until realm teardown; applications with that pattern should use bounded/reused references or periodically recreate the realm.
+> `externref` lifetime: to preserve JS identity for every Wasm reference safely, Lexe retains the `Persistent<Value>` associated with an `externref` until its WebAssembly realm is torn down.
 
-Not implemented (out of scope for this batch): `WebAssembly.Function`, `Tag`, `Exception`, JSPI (`Suspending`/`promising`), the garbage-collection, exception-handling, and function-references proposals, shared memory/threads, `Memory64`, WASI, and the `.wasm` ESM loader. `WebAssembly.validate`/`compile` reject modules using any of these as a `CompileError` (or `false`, for `validate`) rather than passing them through to `wasmi` or risking a panic. Lexe does not provide a WebAssembly-level security sandbox or execution-time/memory quota beyond what `wasmi`'s interpreter itself enforces.
+Not implemented: `WebAssembly.Function`, `Tag`, `Exception`, JSPI (`Suspending`/`promising`), `v128` crossing the JS/Wasm boundary, and `.wasm` ESM loading. Lexe does not provide a WebAssembly-level security sandbox or execution-time/memory quota beyond what `wasmz` enforces.
 
 > [!IMPORTANT]
-> This implementation requires `wasmi 1.1.0` and Rust `1.86` or newer (the `lexe_webassembly` crate's own `rust-version`; it does not raise the minimum for any other workspace crate).
+> Building `lexe_webassembly` requires Zig `0.17.1` (to compile `wasmz`) and Rust `1.86` or newer.
 
 ## WEBCRYPTO
 

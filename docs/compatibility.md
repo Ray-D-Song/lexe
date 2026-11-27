@@ -51,7 +51,7 @@
 | node:util/types | ✔︎ | ✔︎ | — |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; structured-clone-backed serialization; missing V8 heap snapshots and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
-| node:wasi | ✔︎ | ✘ | Not implemented |
+| node:wasi | ✔︎ | ✔︎⚠️ | WASI Preview 1 (`WASI({ version: 'preview1', args, env, preopens, returnOnExit, stdin, stdout, stderr })`, `wasiImport`, `getImportObject()`, `start()`, `initialize()`, JS overrides); backed by `wasmz` (no WASI Preview 2) ([details](#nodewasi)) |
 | node:worker_threads | ✔︎ | ✔︎⚠️ | Missing V8 `Worker.prototype.getHeapSnapshot()` ([details](#nodeworker_threads)) |
 | node:zlib | ✔︎ | ✔︎ | — |
 
@@ -76,7 +76,7 @@
 | STREAMS | ✔︎ | — |
 | URL | ✔︎ | — |
 | URLPATTERN | ✔︎ | — |
-| WASM-JS-API-2 | ✔︎⚠️ | `wasmi` interpreter; missing GC/exceptions/threads/Memory64/JSPI/`v128` boundary; copied `Memory.buffer`; retained `externref`s ([details](#wasm-js-api-2)) |
+| WASM-JS-API-2 | ✔︎⚠️ | `wasmz` engine (GC, exception handling, typed function references, shared memory, Memory64, multi-value, bulk memory, reference types, SIMD); missing JS constructors `WebAssembly.Function`/`Tag`/`Exception`, JSPI (`Suspending`/`promising`), and `v128` JS boundary; synchronously mirrored `Memory.buffer`; retained `externref`s ([details](#wasm-js-api-2)) |
 | WASM-WEB-API-2 | ✔︎⚠️ | `compileStreaming`/`instantiateStreaming` buffer the full `Response` before compiling (no incremental streaming compilation) ([details](#wasm-web-api-2)) |
 | WEBCRYPTO | ✔︎⚠️ | Missing `X448`, `Ed448`, `Argon2`, `AES-OCB`, `ChaCha20-Poly1305` and some `deriveBits`/`deriveKey` WPT edge cases ([details](#webcrypto)) |
 | WEBIDL | ✔︎⚠️ | Provides `DOMException` and core coercions; lacks full WebIDL prototype/branding/dictionary/overload compliance ([details](#webidl)) |
@@ -161,6 +161,11 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `setFlagsFromString()` is a no-op; `cachedDataVersionTag()`, `serialize()`, `deserialize()`, `Serializer`, `Deserializer`, `DefaultSerializer`, and `DefaultDeserializer` are implemented (backed by structured clone wire format rather than V8 binary snapshots).
 - Missing V8-specific heap snapshots (`writeHeapSnapshot`, `getHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, and coverage APIs (`takeCoverage`, `stopCoverage`).
 
+#### `node:wasi`
+
+- Implements WASI Preview 1 (`version: "preview1"`) backed by `wasmz`: `new WASI({ version, args, env, preopens, returnOnExit, stdin, stdout, stderr })`, `wasi.wasiImport` (46 Preview 1 functions, overridable with custom JS functions), `wasi.getImportObject()`, `wasi.start(instance)` (returns exit code when `returnOnExit: true`), and `wasi.initialize(instance)`.
+- WASI Preview 2 (`preview2` / Component Model) is not supported.
+
 #### `node:worker_threads`
 
 - Uses **OS-thread worker isolates** (QuickJS per thread) with structured-clone `postMessage`, in-process `MessageChannel`, environment data sync, `SHARE_ENV`, `postMessageToThread()`, `moveMessagePortToContext()`, piped worker stdio (`stdin`, `stdout`, `stderr`), QuickJS-backed `resourceLimits` (`stackSizeMb` via QuickJS max stack size, `maxOldGenerationSizeMb` via `JS_SetMemoryLimit`), and **SharedArrayBuffer** hooks for shared memory within the process.
@@ -183,9 +188,9 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `WASM-JS-API-2`
 
-- Backed by the `wasmi` interpreter rather than V8.
-- Missing `WebAssembly.Function`, `Tag`, `Exception`, JSPI (`Suspending`/`promising`), Wasm GC, exception handling, typed function references, shared memory/threads, and `Memory64`.
-- `v128` SIMD values cannot cross the JS/Wasm boundary (`TypeError`).
+- Backed by `wasmz` (`wasmz` bytecode VM) rather than V8.
+- Supports GC types (`struct`/`array`/`i31`), exception handling, typed function references, shared memory (`new WebAssembly.Memory({ initial, maximum, shared: true })`), threads/atomics, `Memory64`, multi-value, bulk memory, reference types (`externref`/`funcref`), and internal `v128` SIMD.
+- Missing JS-level constructors/helpers (`WebAssembly.Function`, `Tag`, `Exception`, JSPI `Suspending`/`promising`) and crossing `v128` SIMD values at the JS/Wasm boundary (`TypeError`).
 - `Memory.buffer` uses a synchronously copied mirror `ArrayBuffer` instead of zero-copy shared memory, and `externref` entries are retained until realm teardown.
 
 #### `WASM-WEB-API-2`
@@ -221,14 +226,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
 
-- [ ] **1. `WASM-JS-API-2` & `WASM-WEB-API-2` engine capabilities**
-  - **Gap**: Backed by `wasmi` interpreter (no JIT, no GC/exceptions/threads/Memory64/JSPI/`v128` boundary, copied `Memory.buffer`, retained `externref`s, full-response buffering in `compileStreaming`/`instantiateStreaming`).
-  - **Options**:
-    - **A (Enhance on `wasmi`)**: Fix what is feasible inside `wasmi` (e.g., incremental/streamed Wasm framing or zero-copy/dirty-sync views where possible, `v128` boundary handling, `externref` cleanup), accepting spec limits (`GC`, `exceptions`, `Memory64`, `threads`).
-    - **B (Add/switch to `wasmtime` backend)**: Support full JIT, shared linear memory, SIMD/GC/exceptions/threads (at large binary size, build time, and static-musl complexity cost), optionally via a Cargo feature.
-    - **C (Keep `wasmi` as documented boundary)**: Maintain `wasmi` lightweight interpreter limits without heavy runtime replacement.
-
-- [ ] **2. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
+- [ ] **1. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
   - **Gap**:
     - Crypto/WebCrypto: Missing `createSign`/`createVerify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `DiffieHellman`, `crypto.hash()`, `X448`/`Ed448`/`Argon2`/`AES-OCB`/`ChaCha20-Poly1305`, some `deriveBits`/`deriveKey` edge cases, and `graviola` backend parity.
     - TLS/HTTPS: Rejects `pfx`, `ciphers`, `sigalgs`, `dhparam`, `crl`, `psk`, `ocsp`, `session`, `ticket`, async `SNICallback`, `ALPNCallback`, soft mTLS, encrypted private keys on rustls, TLS < 1.2, `renegotiate()`, and `TLSSocket.write()` `"drain"` backpressure; `https` depends on TLS feature builds.
@@ -237,26 +235,26 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
     - **B (Backend expansion / OpenSSL unification)**: Allow `tls-openssl` or broader multi-backend support for legacy options (`TLS < 1.2`, arbitrary `ciphers`, `renegotiate()`, `ocsp`/`crl`).
     - **C (Keep minimal crypto/TLS subset)**: Target only specific algorithms needed by common Node/WinterTC libraries and accept remaining gaps.
 
-- [ ] **3. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
+- [ ] **2. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
   - **Gap**: Missing `stripTypeScriptTypes`, `module.register()` (async loader hooks thread), `Module._load`, and on-disk bytecode compile cache (`enableCompileCache` reports `FAILED`).
   - **Options**:
     - **A (Implement lightweight/full features)**: Add `stripTypeScriptTypes` (decide lightweight lexer/stripper vs `oxc` full TS parser), `Module._load`, on-disk QuickJS bytecode compile cache (`enableCompileCache`), and `module.register` loader hooks.
     - **B (Selective subset)**: Add `stripTypeScriptTypes` + `Module._load` + disk compile cache while keeping `module.register` omitted (or async single-isolate hook adapter without dedicated loader worker overhead).
     - **C (Document current CJS/sync hooks boundary)**: Keep `registerHooks` (sync) without worker-based `module.register` or heavy parser deps.
 
-- [ ] **4. `node:async_hooks` (`createHook()` default activation)**
+- [ ] **3. `node:async_hooks` (`createHook()` default activation)**
   - **Gap**: `AsyncLocalStorage` propagates unconditionally with low overhead; user `createHook()` callbacks only run when `LEXE_ASYNC_HOOKS=1` is set.
   - **Options**:
     - **A (Enable on-demand when `createHook().enable()` is called)**: Keep zero overhead when no hook is created/enabled, and activate Promise/async tracking dynamically as soon as any user `AsyncHook.enable()` is called (eliminating the `LEXE_ASYNC_HOOKS=1` gate while preserving default fast-path throughput).
     - **B (Always keep `LEXE_ASYNC_HOOKS=1` opt-in)**: Preserve the explicit environment gate to guarantee zero accidental user-hook activation overhead in production services.
 
-- [ ] **5. `FETCH` policy boundaries & remaining WPT edge cases**
+- [ ] **4. `FETCH` policy boundaries & remaining WPT edge cases**
   - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
   - **Options**:
     - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
     - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
 
-- [ ] **6. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+- [ ] **5. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
   - **Gap**:
     - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
     - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).

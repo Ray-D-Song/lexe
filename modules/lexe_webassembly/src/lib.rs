@@ -1,19 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! `lexe_webassembly`: the core WebAssembly JavaScript API
-//! (`WebAssembly.compile`/`instantiate`/`validate`/`compileStreaming`/
-//! `instantiateStreaming`, `Module`/`Instance`/`Memory`/`Table`/`Global`,
-//! `CompileError`/`LinkError`/`RuntimeError`), backed by `wasmi` 1.1.0.
-//!
-//! See `API.md` at the workspace root for the full list of what is (and,
-//! explicitly, is not) implemented, the JS/Wasm numeric value mapping, and
-//! the `Memory` synchronous-mirror model.
-//!
-//! [`init`] is the single entry point this crate exposes to
-//! `lexe_modules`/`lexe_core`: it installs a fresh,
-//! independent `WebAssembly` global (and its private per-realm `wasmi::Store`
-//! state, see `realm`) on the given QuickJS context.
+//! `lexe_webassembly`: the core WebAssembly JavaScript API and `node:wasi`,
+//! backed by `wasmz`.
 
 mod buffer_source;
 mod descriptor;
@@ -30,6 +19,7 @@ mod store_access;
 mod table;
 mod top_level;
 mod value_conv;
+pub mod wasi;
 
 use std::{any::Any, sync::Arc};
 
@@ -78,7 +68,7 @@ fn extract_wasm_module_handle(
     };
     let borrow = cls.borrow();
     Ok(Some(Arc::new((
-        Arc::clone(&borrow.inner),
+        Arc::clone(&borrow.bytes),
         Arc::clone(&borrow.metadata),
     ))))
 }
@@ -87,14 +77,17 @@ fn rebuild_wasm_module_value<'js>(
     ctx: &Ctx<'js>,
     handle: &Arc<dyn Any + Send + Sync>,
 ) -> Result<Option<Value<'js>>> {
-    let Some(pair) = handle.downcast_ref::<(Arc<wasmi::Module>, Arc<module::ModuleMetadata>)>()
-    else {
+    let Some(pair) = handle.downcast_ref::<(Arc<Vec<u8>>, Arc<module::ModuleMetadata>)>() else {
         return Ok(None);
     };
+    let realm = realm::realm(ctx)?;
+    let inner = wasmz::Module::compile(&realm.engine, &pair.0)
+        .map_err(|err| realm.state.throw_compile_error(ctx, err.to_string()))?;
     let instance = Class::instance(
         ctx.clone(),
         WasmModule {
-            inner: Arc::clone(&pair.0),
+            inner: std::rc::Rc::new(inner),
+            bytes: Arc::clone(&pair.0),
             metadata: Arc::clone(&pair.1),
         },
     )?;

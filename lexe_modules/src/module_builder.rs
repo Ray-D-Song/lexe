@@ -280,7 +280,9 @@ impl ModuleBuilder {
         }
         #[cfg(feature = "webassembly")]
         {
-            builder = builder.with_global(crate::modules::webassembly::init);
+            builder = builder
+                .with_global(crate::modules::webassembly::init)
+                .with_module(crate::modules::webassembly::wasi::WasiModule);
         }
         #[cfg(feature = "worker-threads")]
         {

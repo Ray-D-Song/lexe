@@ -1,6 +1,6 @@
 [package]
 name = "lexe_webassembly"
-description = "lexe core WebAssembly JS API (WebAssembly.compile/instantiate/validate, Module/Instance/Memory/Table/Global) backed by wasmi"
+description = "lexe core WebAssembly JS API (WebAssembly.compile/instantiate/validate, Module/Instance/Memory/Table/Global) and node:wasi backed by wasmz"
 version = "0.1.9"
 edition = "2021"
 rust-version = "1.86"
@@ -13,13 +13,9 @@ path = "src/lib.rs"
 
 [dependencies]
 lexe_utils = { version = "0.1.9", path = "../../libs/lexe_utils", default-features = false }
-rquickjs = { version = "=0.12.1", features = ["std"], default-features = false }
-# Pinned to the exact release wasmi 1.1.0 depends on so validation performed via
-# `wasmparser::Validator` during our pre-check pass observes identical feature gating
-# semantics to the validation wasmi performs internally during `Module::new`.
-wasmparser = { version = "=0.239.0", default-features = false, features = ["validate", "features", "std"] }
-wasmi = { version = "=1.1.0", default-features = false, features = ["std", "simd"] }
-once_cell = { version = "1", features = ["std"], default-features = false }
+rquickjs = { version = "=0.12.1", features = ["loader", "std"], default-features = false }
+wasmparser = { version = "=0.239.0", default-features = false, features = ["validate", "features", "std", "simd"] }
+wasmz = { path = "../../../wasmz/crates/wasmz" }
 
 [dev-dependencies]
 lexe_test = { path = "../../libs/lexe_test" }

@@ -105,9 +105,9 @@ describe("WebAssembly.validate", () => {
     expect(WebAssembly.validate(new Uint8Array([0, 1, 2, 3]).buffer)).toBe(false);
   });
 
-  it("returns false for out-of-scope proposals (shared memory, memory64, GC, tags)", () => {
+  it("accepts wasmz-supported proposals (shared memory, memory64, GC, tags, function references)", () => {
     for (const name of ["shared-memory", "memory64", "gc-types", "tag", "function-references"]) {
-      expect(WebAssembly.validate(loadWasm(name))).toBe(false);
+      expect(WebAssembly.validate(loadWasm(name))).toBe(true);
     }
   });
 
@@ -669,5 +669,23 @@ describe("WebAssembly.Module structuredClone", () => {
     expect(cloned).toBeInstanceOf(WebAssembly.Module);
     const inst = new WebAssembly.Instance(cloned);
     expect((inst.exports.add as (a: number, b: number) => number)(19, 23)).toEqual(42);
+  });
+});
+
+describe("wasmz proposal support", () => {
+  it("supports shared WebAssembly.Memory with maximum specified", () => {
+    const shared = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+    expect(shared.buffer.byteLength).toBe(65536);
+    expect(shared.grow(1)).toBe(1);
+    expect(shared.buffer.byteLength).toBe(2 * 65536);
+  });
+
+  it("compiles and instantiates shared-memory, memory64, gc-types, tag, and function-references fixtures", () => {
+    for (const name of ["shared-memory", "memory64", "gc-types", "tag", "function-references"]) {
+      const mod = new WebAssembly.Module(loadWasm(name));
+      expect(mod).toBeInstanceOf(WebAssembly.Module);
+      const inst = new WebAssembly.Instance(mod);
+      expect(inst).toBeInstanceOf(WebAssembly.Instance);
+    }
   });
 });

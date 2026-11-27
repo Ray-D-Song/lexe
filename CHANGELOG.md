@@ -4,6 +4,9 @@ All notable changes to Lexe are documented in this file.
 
 ## [Unreleased]
 
+- Replaced `wasmi` with `wasmz` in `lexe_webassembly` and implemented `node:wasi` (`docs/compatibility.md`):
+  - Switched `WebAssembly` runtime backend from `wasmi` to `wasmz`, adding Wasm GC, exception handling, typed function references, shared memory (`new WebAssembly.Memory({ initial, maximum, shared: true })`), threads/atomics, and `Memory64` support alongside multi-value, bulk-memory, reference types, and internal SIMD.
+  - Added `node:wasi` / `wasi` (`WASI` class with `version: "preview1"`, `args`, `env`, `preopens`, `returnOnExit`, `stdin`/`stdout`/`stderr`, `wasiImport`, `getImportObject()`, `start()`, `initialize()`, and per-function JS override support).
 - Improved `Intl` and `Temporal` compatibility without heavy ICU data tables (`docs/compatibility.md`):
   - Added `Intl.Locale` (BCP 47 parsing/canonicalization, `-u-` extension getters, options overrides, `maximize()`/`minimize()`, `getCalendars()`, `getCollations()`, `getHourCycles()`, `getNumberingSystems()`, `getTextInfo()`, `getWeekInfo()`, `getTimeZones()`), `Intl.PluralRules` (cardinal/ordinal CLDR rule subset, `selectRange`, `supportedLocalesOf`), `Intl.RelativeTimeFormat` (`always`/`auto`, `long`/`short`/`narrow`, `formatToParts`), `Intl.DisplayNames` (`language`, `region`, `script`, `currency`, `calendar`, `dateTimeField`), and `Intl.DurationFormat` (`long`/`short`/`narrow`/`digital`, `fractionalDigits`), and expanded `Intl.supportedValuesOf()` keys (`calendar`, `collation`, `currency`, `numberingSystem`, `unit`).
   - Added `Temporal.PlainYearMonth` and `Temporal.PlainMonthDay` (ISO-8601 `iso8601` calendar, `from()`, `compare()`, `with()`, `add()`, `subtract()`, `until()`, `since()`, `toPlainDate()`, `overflow: "constrain" | "reject"`), `PlainDate.prototype.toPlainYearMonth()` / `toPlainMonthDay()`, and fixed `{ year }` parsing in `DateExt::date_with()`.
