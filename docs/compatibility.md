@@ -101,7 +101,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 **Legend**
 
-- ⚠️ = partially supported in Lexe
+- ⚠️ = partially supported in Lexe (open architectural/tradeoff items tracked in [Pending Decisions](#pending-decisions))
 - ⏱ = planned partial support
 - \* = Not native
 
@@ -227,6 +227,68 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - Implements `Duration`, `Instant`, `PlainDate`, `PlainDateTime`, `PlainTime`, `ZonedDateTime`, and `Now` (backed by `jiff`).
 - Missing `PlainYearMonth`, `PlainMonthDay`, non-ISO calendar systems (ISO-8601 only), and full `Intl`-backed `toLocaleString()` formatting.
+
+## Pending Decisions
+
+Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
+
+- [ ] **1. `ENCODING` + `node:util` (`TextDecoder` / `TextDecoderStream`) legacy encodings**
+  - **Gap**: Currently only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus non-standard `hex`/`base64`) are supported; WHATWG legacy encodings (`shift_jis`, `euc-jp`, `iso-2022-jp`, `gbk`, `gb18030`, `big5`, `euc-kr`, `iso-8859-*`, remaining `windows-125*`, `replacement`) are missing.
+  - **Options**:
+    - **A (Full WHATWG via `encoding_rs`)**: Integrate `encoding_rs` cleanly to achieve full `ENCODING` & `util.TextDecoder` parity (`✔︎`), adding legacy encoding lookup tables to release binaries.
+    - **B (Optional feature / keep minimal core)**: Keep default binaries slim and gate full WHATWG legacy encodings behind a Cargo feature flag, documenting the intentional core limit.
+
+- [ ] **2. `Intl` + `Temporal` localization & remaining types**
+  - **Gap**: `Intl` lacks `PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `Locale`, `DurationFormat`, and full ICU locale/calendar/numbering-system data; `Temporal` lacks `PlainYearMonth`, `PlainMonthDay`, non-ISO calendars, and `Intl`-backed `toLocaleString()`.
+  - **Options**:
+    - **A (Pure-logic parity + minimal CLDR)**: Implement `Intl.Locale`, `Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`, and core constructors/rule subsets (`PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `DurationFormat`) without embedding heavy full ICU4X data blobs.
+    - **B (Full ICU4X static data)**: Bundle compiled ICU4X locale/calendar tables for full multi-locale/non-ISO calendar parity (significant binary size increase).
+    - **C (Accept partial / feature-gate heavy ICU)**: Fix `PlainYearMonth`/`PlainMonthDay`/`Intl.Locale` and optionally gate full ICU data behind a Cargo feature or external data path.
+
+- [ ] **3. `WASM-JS-API-2` & `WASM-WEB-API-2` engine capabilities**
+  - **Gap**: Backed by `wasmi` interpreter (no JIT, no GC/exceptions/threads/Memory64/JSPI/`v128` boundary, copied `Memory.buffer`, retained `externref`s, full-response buffering in `compileStreaming`/`instantiateStreaming`).
+  - **Options**:
+    - **A (Enhance on `wasmi`)**: Fix what is feasible inside `wasmi` (e.g., incremental/streamed Wasm framing or zero-copy/dirty-sync views where possible, `v128` boundary handling, `externref` cleanup), accepting spec limits (`GC`, `exceptions`, `Memory64`, `threads`).
+    - **B (Add/switch to `wasmtime` backend)**: Support full JIT, shared linear memory, SIMD/GC/exceptions/threads (at large binary size, build time, and static-musl complexity cost), optionally via a Cargo feature.
+    - **C (Keep `wasmi` as documented boundary)**: Maintain `wasmi` lightweight interpreter limits without heavy runtime replacement.
+
+- [ ] **4. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
+  - **Gap**:
+    - Crypto/WebCrypto: Missing `createSign`/`createVerify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `DiffieHellman`, `crypto.hash()`, `X448`/`Ed448`/`Argon2`/`AES-OCB`/`ChaCha20-Poly1305`, some `deriveBits`/`deriveKey` edge cases, and `graviola` backend parity.
+    - TLS/HTTPS: Rejects `pfx`, `ciphers`, `sigalgs`, `dhparam`, `crl`, `psk`, `ocsp`, `session`, `ticket`, async `SNICallback`, `ALPNCallback`, soft mTLS, encrypted private keys on rustls, TLS < 1.2, `renegotiate()`, and `TLSSocket.write()` `"drain"` backpressure; `https` depends on TLS feature builds.
+  - **Options**:
+    - **A (Pure additive crypto + non-security TLS fixes)**: Implement missing crypto APIs (`crypto.hash()`, `createSign`/`createVerify`, `generateKeyPair*`, `scrypt*`, `pbkdf2*`, `DiffieHellman`, PKCS#12 `pfx` parsing, `ChaCha20-Poly1305`, `Argon2`, `X448`/`Ed448`, RSA decrypts) + `TLSSocket.write()` backpressure/`drain`, async `SNICallback`/`ALPNCallback`, `session`/`ticket`/soft mTLS, while intentionally keeping TLS < 1.2 and weak cipher strings disabled for security.
+    - **B (Backend expansion / OpenSSL unification)**: Allow `tls-openssl` or broader multi-backend support for legacy options (`TLS < 1.2`, arbitrary `ciphers`, `renegotiate()`, `ocsp`/`crl`).
+    - **C (Keep minimal crypto/TLS subset)**: Target only specific algorithms needed by common Node/WinterTC libraries and accept remaining gaps.
+
+- [ ] **5. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
+  - **Gap**: Missing `stripTypeScriptTypes`, `module.register()` (async loader hooks thread), `Module._load`, and on-disk bytecode compile cache (`enableCompileCache` reports `FAILED`).
+  - **Options**:
+    - **A (Implement lightweight/full features)**: Add `stripTypeScriptTypes` (decide lightweight lexer/stripper vs `oxc` full TS parser), `Module._load`, on-disk QuickJS bytecode compile cache (`enableCompileCache`), and `module.register` loader hooks.
+    - **B (Selective subset)**: Add `stripTypeScriptTypes` + `Module._load` + disk compile cache while keeping `module.register` omitted (or async single-isolate hook adapter without dedicated loader worker overhead).
+    - **C (Document current CJS/sync hooks boundary)**: Keep `registerHooks` (sync) without worker-based `module.register` or heavy parser deps.
+
+- [ ] **6. `node:async_hooks` (`createHook()` default activation)**
+  - **Gap**: `AsyncLocalStorage` propagates unconditionally with low overhead; user `createHook()` callbacks only run when `LEXE_ASYNC_HOOKS=1` is set.
+  - **Options**:
+    - **A (Enable on-demand when `createHook().enable()` is called)**: Keep zero overhead when no hook is created/enabled, and activate Promise/async tracking dynamically as soon as any user `AsyncHook.enable()` is called (eliminating the `LEXE_ASYNC_HOOKS=1` gate while preserving default fast-path throughput).
+    - **B (Always keep `LEXE_ASYNC_HOOKS=1` opt-in)**: Preserve the explicit environment gate to guarantee zero accidental user-hook activation overhead in production services.
+
+- [ ] **7. `FETCH` policy boundaries & remaining WPT edge cases**
+  - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
+  - **Options**:
+    - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
+    - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
+
+- [ ] **8. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+  - **Gap**:
+    - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
+    - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).
+    - `node:sea`: Lexe compiles into its own SEA container format rather than Node's ELF/Mach-O/PE postject blob format.
+    - `WEBIDL` & `XHR`: Partial WebIDL (`idlharness` skipped); omits `XMLHttpRequest` (matching Node.js).
+  - **Options**:
+    - **A (Accept as documented engine/runtime positioning)**: Fix lightweight conformance gaps (e.g. QuickJS inspector CDP protocol if desired, `WEBIDL` constructor/branding helpers, `Error.captureStackTrace`/`CallSite` real frames), while explicitly documenting QuickJS 31-bit limits, Lexe SEA container format, no `ShadowRealm`/V8 heap snapshots, and no `XMLHttpRequest` as intentional design boundaries (or moving non-issue items out of `⚠️`).
+    - **B (Targeted deep work)**: Select specific engine/runtime capabilities to invest in (e.g., implementing a real CDP WebSocket inspector server, `ShadowRealm`, 64-bit `ArrayBuffer` fork in QuickJS-ng, or V8-independent `WebIDL` hardening).
 
 ## Other notes
 
