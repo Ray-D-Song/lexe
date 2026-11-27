@@ -3609,8 +3609,11 @@ impl ModuleDef for HttpModule {
             "setMaxIdleHTTPParsers",
             "validateHeaderName",
             "validateHeaderValue",
-            // Node 22+ client-side WebSocket.
+            // Node 22+ client-side WebSocket and Event classes.
             "WebSocket",
+            "CloseEvent",
+            "MessageEvent",
+            "_connectionListener",
             // Client entrypoints
             "get",
             "request",
@@ -3622,6 +3625,7 @@ impl ModuleDef for HttpModule {
     }
     fn evaluate<'js>(ctx: &Ctx<'js>, exports: &Exports<'js>) -> Result<()> {
         lexe_buffer::init(ctx)?;
+        lexe_events::init(ctx)?;
         export_default(ctx, exports, |default| {
             Class::<Server>::define(default)?;
             Class::<IncomingMessage>::define(default)?;
@@ -3698,6 +3702,21 @@ impl ModuleDef for HttpModule {
             default.set("STATUS_CODES", status_codes)?;
             default.set("validateHeaderName", Func::from(validate_header_name))?;
             default.set("validateHeaderValue", Func::from(validate_header_value))?;
+            let globals = ctx.globals();
+            default.set("CloseEvent", globals.get::<_, Value>("CloseEvent")?)?;
+            default.set("MessageEvent", globals.get::<_, Value>("MessageEvent")?)?;
+            let connection_listener: rquickjs::Function = ctx.eval(
+                r#"(function connectionListener(socket) {
+  const server = this;
+  if (!socket || typeof socket !== "object") return;
+  socket.server = server;
+  socket._server = server;
+  if (server && server.timeout && typeof socket.setTimeout === "function") {
+    socket.setTimeout(server.timeout);
+  }
+})"#,
+            )?;
+            default.set("_connectionListener", connection_listener)?;
             #[cfg(any(
                 feature = "tls-ring",
                 feature = "tls-aws-lc",

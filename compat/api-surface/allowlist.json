@@ -9,18 +9,6 @@
     "cluster": {
       "unimplemented": true
     },
-    "console": {
-      "missingExports": [
-        "_ignoreErrors",
-        "_stderr",
-        "_stderrErrorHandler",
-        "_stdout",
-        "_stdoutErrorHandler",
-        "_times",
-        "context",
-        "createTask"
-      ]
-    },
     "crypto": {
       "missingExports": [
         "Certificate",
@@ -77,34 +65,13 @@
         "_createSocketHandle"
       ]
     },
-    "events": {
-      "missingExports": [
-        "init",
-        "kMaxEventTargetListeners",
-        "kMaxEventTargetListenersWarned",
-        "usingDomains"
-      ]
-    },
     "fs": {
-      "missingExports": [
-        "F_OK",
-        "R_OK",
-        "W_OK",
-        "X_OK"
-      ],
       "platformTypeMismatches": {
         "linux": [
           "lchmod:undefined!=function",
           "lchmodSync:undefined!=function"
         ]
       }
-    },
-    "http": {
-      "missingExports": [
-        "CloseEvent",
-        "MessageEvent",
-        "_connectionListener"
-      ]
     },
     "inspector": {
       "missingExports": [
@@ -120,26 +87,7 @@
     },
     "net": {
       "missingExports": [
-        "Stream",
-        "_createServerHandle",
-        "_normalizeArgs"
-      ]
-    },
-    "perf_hooks": {
-      "missingConstants": [
-        "NODE_PERFORMANCE_ENTRY_TYPE_DNS",
-        "NODE_PERFORMANCE_ENTRY_TYPE_GC",
-        "NODE_PERFORMANCE_ENTRY_TYPE_HTTP",
-        "NODE_PERFORMANCE_ENTRY_TYPE_HTTP2",
-        "NODE_PERFORMANCE_ENTRY_TYPE_NET",
-        "NODE_PERFORMANCE_MILESTONE_BOOTSTRAP_COMPLETE",
-        "NODE_PERFORMANCE_MILESTONE_ENVIRONMENT",
-        "NODE_PERFORMANCE_MILESTONE_LOOP_EXIT",
-        "NODE_PERFORMANCE_MILESTONE_LOOP_START",
-        "NODE_PERFORMANCE_MILESTONE_NODE_START",
-        "NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN",
-        "NODE_PERFORMANCE_MILESTONE_TIME_ORIGIN_TIMESTAMP",
-        "NODE_PERFORMANCE_MILESTONE_V8_START"
+        "_createServerHandle"
       ]
     },
     "process": {
@@ -161,16 +109,9 @@
         "_stopProfilerIdleNotifier",
         "_tickCallback",
         "binding",
-        "debugPort",
         "domain",
         "execve",
-        "getgroups",
-        "initgroups",
-        "moduleLoadList",
-        "openStdin",
-        "reallyExit",
-        "setgroups",
-        "threadCpuUsage"
+        "moduleLoadList"
       ],
       "esmExtraOverCjs": [
         "addListener",
@@ -190,14 +131,6 @@
     "repl": {
       "unimplemented": true
     },
-    "stream": {
-      "missingExports": [
-        "_isArrayBufferView",
-        "_isUint8Array",
-        "_uint8ArrayToBuffer",
-        "promises"
-      ]
-    },
     "test": {
       "missingExports": [
         "assert",
@@ -205,14 +138,6 @@
         "snapshot"
       ],
       "isBuiltinBareMismatch": true
-    },
-    "util": {
-      "missingExports": [
-        "_errnoException",
-        "_exceptionWithHostPort",
-        "getCallSite",
-        "isArray"
-      ]
     },
     "v8": {
       "missingExports": [
@@ -227,216 +152,6 @@
         "stopCoverage",
         "takeCoverage",
         "writeHeapSnapshot"
-      ]
-    },
-    "worker_threads": {
-      "missingExports": [
-        "isInternalThread"
-      ],
-      "typeMismatches": [
-        "workerData:null!=undefined"
-      ]
-    },
-    "zlib": {
-      "missingExports": [
-        "DEFLATE",
-        "DEFLATERAW",
-        "GUNZIP",
-        "GZIP",
-        "INFLATE",
-        "INFLATERAW",
-        "UNZIP",
-        "ZLIB_VERNUM",
-        "ZSTD_CLEVEL_DEFAULT",
-        "ZSTD_COMPRESS",
-        "ZSTD_DECOMPRESS",
-        "ZSTD_btlazy2",
-        "ZSTD_btopt",
-        "ZSTD_btultra",
-        "ZSTD_btultra2",
-        "ZSTD_c_chainLog",
-        "ZSTD_c_checksumFlag",
-        "ZSTD_c_compressionLevel",
-        "ZSTD_c_contentSizeFlag",
-        "ZSTD_c_dictIDFlag",
-        "ZSTD_c_enableLongDistanceMatching",
-        "ZSTD_c_hashLog",
-        "ZSTD_c_jobSize",
-        "ZSTD_c_ldmBucketSizeLog",
-        "ZSTD_c_ldmHashLog",
-        "ZSTD_c_ldmHashRateLog",
-        "ZSTD_c_ldmMinMatch",
-        "ZSTD_c_minMatch",
-        "ZSTD_c_nbWorkers",
-        "ZSTD_c_overlapLog",
-        "ZSTD_c_searchLog",
-        "ZSTD_c_strategy",
-        "ZSTD_c_targetLength",
-        "ZSTD_c_windowLog",
-        "ZSTD_d_windowLogMax",
-        "ZSTD_dfast",
-        "ZSTD_e_continue",
-        "ZSTD_e_end",
-        "ZSTD_e_flush",
-        "ZSTD_error_GENERIC",
-        "ZSTD_error_checksum_wrong",
-        "ZSTD_error_corruption_detected",
-        "ZSTD_error_dictionaryCreation_failed",
-        "ZSTD_error_dictionary_corrupted",
-        "ZSTD_error_dictionary_wrong",
-        "ZSTD_error_dstBuffer_null",
-        "ZSTD_error_dstSize_tooSmall",
-        "ZSTD_error_frameParameter_unsupported",
-        "ZSTD_error_frameParameter_windowTooLarge",
-        "ZSTD_error_init_missing",
-        "ZSTD_error_literals_headerWrong",
-        "ZSTD_error_maxSymbolValue_tooLarge",
-        "ZSTD_error_maxSymbolValue_tooSmall",
-        "ZSTD_error_memory_allocation",
-        "ZSTD_error_noForwardProgress_destFull",
-        "ZSTD_error_noForwardProgress_inputEmpty",
-        "ZSTD_error_no_error",
-        "ZSTD_error_parameter_combination_unsupported",
-        "ZSTD_error_parameter_outOfBound",
-        "ZSTD_error_parameter_unsupported",
-        "ZSTD_error_prefix_unknown",
-        "ZSTD_error_srcSize_wrong",
-        "ZSTD_error_stabilityCondition_notRespected",
-        "ZSTD_error_stage_wrong",
-        "ZSTD_error_tableLog_tooLarge",
-        "ZSTD_error_version_unsupported",
-        "ZSTD_error_workSpace_tooSmall",
-        "ZSTD_fast",
-        "ZSTD_greedy",
-        "ZSTD_lazy",
-        "ZSTD_lazy2",
-        "codes"
-      ],
-      "missingConstants": [
-        "BROTLI_DECODE",
-        "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES",
-        "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP",
-        "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES",
-        "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1",
-        "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2",
-        "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS",
-        "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET",
-        "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1",
-        "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2",
-        "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE",
-        "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT",
-        "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY",
-        "BROTLI_DECODER_ERROR_FORMAT_DISTANCE",
-        "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE",
-        "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE",
-        "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE",
-        "BROTLI_DECODER_ERROR_FORMAT_PADDING_1",
-        "BROTLI_DECODER_ERROR_FORMAT_PADDING_2",
-        "BROTLI_DECODER_ERROR_FORMAT_RESERVED",
-        "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET",
-        "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME",
-        "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM",
-        "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS",
-        "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS",
-        "BROTLI_DECODER_ERROR_UNREACHABLE",
-        "BROTLI_DECODER_NEEDS_MORE_INPUT",
-        "BROTLI_DECODER_NEEDS_MORE_OUTPUT",
-        "BROTLI_DECODER_NO_ERROR",
-        "BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION",
-        "BROTLI_DECODER_PARAM_LARGE_WINDOW",
-        "BROTLI_DECODER_RESULT_ERROR",
-        "BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT",
-        "BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT",
-        "BROTLI_DECODER_RESULT_SUCCESS",
-        "BROTLI_DECODER_SUCCESS",
-        "BROTLI_DEFAULT_MODE",
-        "BROTLI_DEFAULT_WINDOW",
-        "BROTLI_ENCODE",
-        "BROTLI_LARGE_MAX_WINDOW_BITS",
-        "BROTLI_MAX_INPUT_BLOCK_BITS",
-        "BROTLI_MAX_WINDOW_BITS",
-        "BROTLI_MIN_INPUT_BLOCK_BITS",
-        "BROTLI_MIN_WINDOW_BITS",
-        "BROTLI_MODE_FONT",
-        "BROTLI_MODE_GENERIC",
-        "BROTLI_MODE_TEXT",
-        "BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING",
-        "BROTLI_PARAM_LARGE_WINDOW",
-        "BROTLI_PARAM_LGBLOCK",
-        "BROTLI_PARAM_LGWIN",
-        "BROTLI_PARAM_NDIRECT",
-        "BROTLI_PARAM_NPOSTFIX",
-        "DEFLATE",
-        "DEFLATERAW",
-        "GUNZIP",
-        "GZIP",
-        "INFLATE",
-        "INFLATERAW",
-        "UNZIP",
-        "ZLIB_VERNUM",
-        "ZSTD_CLEVEL_DEFAULT",
-        "ZSTD_COMPRESS",
-        "ZSTD_DECOMPRESS",
-        "ZSTD_btlazy2",
-        "ZSTD_btopt",
-        "ZSTD_btultra",
-        "ZSTD_btultra2",
-        "ZSTD_c_chainLog",
-        "ZSTD_c_checksumFlag",
-        "ZSTD_c_compressionLevel",
-        "ZSTD_c_contentSizeFlag",
-        "ZSTD_c_dictIDFlag",
-        "ZSTD_c_enableLongDistanceMatching",
-        "ZSTD_c_hashLog",
-        "ZSTD_c_jobSize",
-        "ZSTD_c_ldmBucketSizeLog",
-        "ZSTD_c_ldmHashLog",
-        "ZSTD_c_ldmHashRateLog",
-        "ZSTD_c_ldmMinMatch",
-        "ZSTD_c_minMatch",
-        "ZSTD_c_nbWorkers",
-        "ZSTD_c_overlapLog",
-        "ZSTD_c_searchLog",
-        "ZSTD_c_strategy",
-        "ZSTD_c_targetLength",
-        "ZSTD_c_windowLog",
-        "ZSTD_d_windowLogMax",
-        "ZSTD_dfast",
-        "ZSTD_e_continue",
-        "ZSTD_e_end",
-        "ZSTD_e_flush",
-        "ZSTD_error_GENERIC",
-        "ZSTD_error_checksum_wrong",
-        "ZSTD_error_corruption_detected",
-        "ZSTD_error_dictionaryCreation_failed",
-        "ZSTD_error_dictionary_corrupted",
-        "ZSTD_error_dictionary_wrong",
-        "ZSTD_error_dstBuffer_null",
-        "ZSTD_error_dstSize_tooSmall",
-        "ZSTD_error_frameParameter_unsupported",
-        "ZSTD_error_frameParameter_windowTooLarge",
-        "ZSTD_error_init_missing",
-        "ZSTD_error_literals_headerWrong",
-        "ZSTD_error_maxSymbolValue_tooLarge",
-        "ZSTD_error_maxSymbolValue_tooSmall",
-        "ZSTD_error_memory_allocation",
-        "ZSTD_error_noForwardProgress_destFull",
-        "ZSTD_error_noForwardProgress_inputEmpty",
-        "ZSTD_error_no_error",
-        "ZSTD_error_parameter_combination_unsupported",
-        "ZSTD_error_parameter_outOfBound",
-        "ZSTD_error_parameter_unsupported",
-        "ZSTD_error_prefix_unknown",
-        "ZSTD_error_srcSize_wrong",
-        "ZSTD_error_stabilityCondition_notRespected",
-        "ZSTD_error_stage_wrong",
-        "ZSTD_error_tableLog_tooLarge",
-        "ZSTD_error_version_unsupported",
-        "ZSTD_error_workSpace_tooSmall",
-        "ZSTD_fast",
-        "ZSTD_greedy",
-        "ZSTD_lazy",
-        "ZSTD_lazy2"
       ]
     }
   },

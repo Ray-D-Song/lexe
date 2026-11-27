@@ -652,7 +652,7 @@ const UTIL_EXTRAS_JS: &str = r#"(function () {
   function getCallSites(frames) {
     const limit = frames === undefined ? 10 : frames;
     const previousLimit = Error.stackTraceLimit;
-    Error.stackTraceLimit = limit + 1;
+    Error.stackTraceLimit = limit + 2;
     // Capture a plain stack rather than using `captureStackTrace(holder, fn)`:
     // the filtered form trims everything up to `fn`, and since this helper is
     // the innermost frame it would leave nothing at all.
@@ -663,7 +663,7 @@ const UTIL_EXTRAS_JS: &str = r#"(function () {
       const match = /^\s*at\s+(?:(.*?)\s+\()?(.*?):(\d+):(\d+)\)?$/.exec(line);
       if (!match) continue;
       // Skip this helper's own frame.
-      if (match[1] === "getCallSites") continue;
+      if (match[1] === "getCallSites" || match[1] === "getCallSite") continue;
       const scriptName = match[2];
       const lineNumber = Number(match[3]);
       const column = Number(match[4]);
@@ -678,6 +678,78 @@ const UTIL_EXTRAS_JS: &str = r#"(function () {
       if (sites.length >= limit) break;
     }
     return sites;
+  }
+
+  function getCallSite(frames) {
+    return getCallSites(frames);
+  }
+
+  function isArray(ar) {
+    return Array.isArray(ar);
+  }
+
+  // Fallback mapping for BSD/macOS libuv negative errno values when not in SYSTEM_ERRORS.
+  const EXTRA_ERRNO_CODES = new Map([
+    [-35, "EAGAIN"],
+    [-47, "EAFNOSUPPORT"],
+    [-48, "EADDRINUSE"],
+    [-49, "EADDRNOTAVAIL"],
+    [-50, "ENETDOWN"],
+    [-51, "ENETUNREACH"],
+    [-53, "ECONNABORTED"],
+    [-54, "ECONNRESET"],
+    [-55, "ENOBUFS"],
+    [-56, "EISCONN"],
+    [-57, "ENOTCONN"],
+    [-60, "ETIMEDOUT"],
+    [-61, "ECONNREFUSED"],
+    [-62, "ELOOP"],
+    [-63, "ENAMETOOLONG"],
+    [-65, "EHOSTUNREACH"],
+    [-66, "ENOTEMPTY"],
+  ]);
+
+  function resolveErrnoCode(err) {
+    if (typeof err === "number") {
+      const hit = SYSTEM_ERRORS.get(err);
+      if (hit) return hit[0];
+      const extra = EXTRA_ERRNO_CODES.get(err);
+      if (extra) return extra;
+      return "Unknown system error " + err;
+    }
+    return String(err);
+  }
+
+  function _errnoException(err, syscall, original) {
+    const code = resolveErrnoCode(err);
+    const suffix = original ? " " + original : "";
+    const error = new Error(`${syscall} ${code}${suffix}`);
+    error.errno = err;
+    error.code = code;
+    error.syscall = syscall;
+    return error;
+  }
+
+  function _exceptionWithHostPort(err, syscall, address, port, additional) {
+    const code = resolveErrnoCode(err);
+    let details = "";
+    if (port && port > 0) {
+      details = `${address}:${port}`;
+    } else if (address !== undefined) {
+      details = String(address);
+    }
+    if (additional) {
+      details += ` - Local (${additional})`;
+    }
+    const error = new Error(`${syscall} ${code}${details ? " " + details : ""}`);
+    error.errno = err;
+    error.code = code;
+    error.syscall = syscall;
+    error.address = address;
+    if (port !== undefined) {
+      error.port = port;
+    }
+    return error;
   }
 
   // --- aborted ------------------------------------------------------------
@@ -739,6 +811,10 @@ const UTIL_EXTRAS_JS: &str = r#"(function () {
     convertProcessSignalToExitCode,
     diff,
     getCallSites,
+    getCallSite,
+    isArray,
+    _errnoException,
+    _exceptionWithHostPort,
     aborted,
     callbackify,
     _extend,
@@ -807,6 +883,10 @@ fn install_util_extras<'js>(ctx: &Ctx<'js>, default: &Object<'js>) -> Result<()>
         "convertProcessSignalToExitCode",
         "diff",
         "getCallSites",
+        "getCallSite",
+        "isArray",
+        "_errnoException",
+        "_exceptionWithHostPort",
         "aborted",
         "callbackify",
         "_extend",
@@ -1712,6 +1792,10 @@ impl ModuleDef for UtilModule {
         declare.declare("convertProcessSignalToExitCode")?;
         declare.declare("diff")?;
         declare.declare("getCallSites")?;
+        declare.declare("getCallSite")?;
+        declare.declare("isArray")?;
+        declare.declare("_errnoException")?;
+        declare.declare("_exceptionWithHostPort")?;
         declare.declare("aborted")?;
         declare.declare("transferableAbortController")?;
         declare.declare("transferableAbortSignal")?;

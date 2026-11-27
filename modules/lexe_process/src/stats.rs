@@ -192,12 +192,41 @@ fn raw_cpu_micros() -> (f64, f64) {
 }
 
 pub fn cpu_usage<'js>(ctx: Ctx<'js>, prev: Opt<Value<'js>>) -> Result<Object<'js>> {
-    let (mut user, mut system) = raw_cpu_micros();
+    build_cpu_usage(&ctx, raw_cpu_micros(), prev)
+}
+
+pub fn thread_cpu_usage<'js>(ctx: Ctx<'js>, prev: Opt<Value<'js>>) -> Result<Object<'js>> {
+    build_cpu_usage(&ctx, raw_thread_cpu_micros(), prev)
+}
+
+#[cfg(target_os = "linux")]
+fn raw_thread_cpu_micros() -> (f64, f64) {
+    unsafe {
+        let mut ru: libc::rusage = std::mem::zeroed();
+        if libc::getrusage(libc::RUSAGE_THREAD, &raw mut ru) == 0 {
+            let user = (ru.ru_utime.tv_sec as f64) * 1_000_000.0 + (ru.ru_utime.tv_usec as f64);
+            let system = (ru.ru_stime.tv_sec as f64) * 1_000_000.0 + (ru.ru_stime.tv_usec as f64);
+            return (user, system);
+        }
+    }
+    raw_cpu_micros()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn raw_thread_cpu_micros() -> (f64, f64) {
+    raw_cpu_micros()
+}
+
+fn build_cpu_usage<'js>(
+    ctx: &Ctx<'js>,
+    (mut user, mut system): (f64, f64),
+    prev: Opt<Value<'js>>,
+) -> Result<Object<'js>> {
     if let Some(prev_val) = prev.0 {
         if !prev_val.is_undefined() {
             let Some(prev_obj) = prev_val.as_object() else {
                 return Err(throw_coded(
-                    &ctx,
+                    ctx,
                     true,
                     "ERR_INVALID_ARG_TYPE",
                     "The \"previousValue\" argument must be of type object",
@@ -206,7 +235,7 @@ pub fn cpu_usage<'js>(ctx: Ctx<'js>, prev: Opt<Value<'js>>) -> Result<Object<'js
             let prev_user: Value = prev_obj.get("user")?;
             let Some(pu) = prev_user.as_number() else {
                 return Err(throw_coded(
-                    &ctx,
+                    ctx,
                     true,
                     "ERR_INVALID_ARG_TYPE",
                     "The \"previousValue.user\" property must be of type number",
@@ -214,7 +243,7 @@ pub fn cpu_usage<'js>(ctx: Ctx<'js>, prev: Opt<Value<'js>>) -> Result<Object<'js
             };
             if !pu.is_finite() || pu < 0.0 {
                 return Err(throw_coded(
-                    &ctx,
+                    ctx,
                     false,
                     "ERR_INVALID_ARG_VALUE",
                     "The value of \"previousValue.user\" is out of range",
@@ -223,7 +252,7 @@ pub fn cpu_usage<'js>(ctx: Ctx<'js>, prev: Opt<Value<'js>>) -> Result<Object<'js
             let prev_sys: Value = prev_obj.get("system")?;
             let Some(ps) = prev_sys.as_number() else {
                 return Err(throw_coded(
-                    &ctx,
+                    ctx,
                     true,
                     "ERR_INVALID_ARG_TYPE",
                     "The \"previousValue.system\" property must be of type number",
@@ -231,7 +260,7 @@ pub fn cpu_usage<'js>(ctx: Ctx<'js>, prev: Opt<Value<'js>>) -> Result<Object<'js
             };
             if !ps.is_finite() || ps < 0.0 {
                 return Err(throw_coded(
-                    &ctx,
+                    ctx,
                     false,
                     "ERR_INVALID_ARG_VALUE",
                     "The value of \"previousValue.system\" is out of range",
@@ -242,7 +271,7 @@ pub fn cpu_usage<'js>(ctx: Ctx<'js>, prev: Opt<Value<'js>>) -> Result<Object<'js
         }
     }
 
-    let obj = Object::new(ctx)?;
+    let obj = Object::new(ctx.clone())?;
     obj.set("user", user as u64 as f64)?;
     obj.set("system", system as u64 as f64)?;
     Ok(obj)

@@ -128,11 +128,13 @@ const PROCESS_NAMED_EXPORTS: &[&str] = &[
     "uptime",
     "memoryUsage",
     "cpuUsage",
+    "threadCpuUsage",
     "resourceUsage",
     "constrainedMemory",
     "availableMemory",
     "umask",
     "title",
+    "debugPort",
     "config",
     "features",
     "allowedNodeEnvironmentFlags",
@@ -153,6 +155,8 @@ const PROCESS_NAMED_EXPORTS: &[&str] = &[
     "versions",
     "exitCode",
     "exit",
+    "reallyExit",
+    "openStdin",
     "kill",
     "nextTick",
     "stdin",
@@ -166,7 +170,17 @@ const PROCESS_NAPI_EXPORTS: &[&str] = &["dlopen"];
 
 #[cfg(unix)]
 const PROCESS_UNIX_EXPORTS: &[&str] = &[
-    "getuid", "getgid", "geteuid", "getegid", "setuid", "setgid", "seteuid", "setegid",
+    "getuid",
+    "getgid",
+    "geteuid",
+    "getegid",
+    "setuid",
+    "setgid",
+    "seteuid",
+    "setegid",
+    "getgroups",
+    "setgroups",
+    "initgroups",
 ];
 
 #[cfg(feature = "napi")]
@@ -355,6 +369,20 @@ fn exit(ctx: Ctx<'_>, code: Value<'_>) -> Result<()> {
     std::process::exit(code.into())
 }
 
+fn really_exit(ctx: Ctx<'_>, code: Opt<Value<'_>>) -> Result<()> {
+    let resolved = match code.0 {
+        Some(v) => to_exit_code(&ctx, &v)?,
+        None => None,
+    }
+    .unwrap_or_else(|| EXIT_CODE.load(Ordering::Relaxed));
+    std::process::exit(resolved.into())
+}
+
+fn open_stdin(ctx: Ctx<'_>) -> Result<Value<'_>> {
+    let process: Object = ctx.globals().get("process")?;
+    process.get("stdin")
+}
+
 fn uptime() -> f64 {
     let elapsed = time::now_nanos().saturating_sub(time::origin_nanos());
     (elapsed as f64) / 1_000_000_000.0
@@ -477,6 +505,105 @@ fn setegid(id: u32) -> i32 {
     unsafe { libc::setegid(id) }
 }
 
+#[cfg(unix)]
+fn getgroups(ctx: Ctx<'_>) -> Result<Vec<u32>> {
+    let len = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if len < 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(Exception::throw_message(&ctx, &format!("getgroups: {err}")));
+    }
+    let mut gids = vec![0 as libc::gid_t; len as usize];
+    if len > 0 {
+        let got = unsafe { libc::getgroups(len, gids.as_mut_ptr()) };
+        if got < 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(Exception::throw_message(&ctx, &format!("getgroups: {err}")));
+        }
+        gids.truncate(got as usize);
+    }
+    #[allow(clippy::unnecessary_cast)]
+    let out = gids.into_iter().map(|g| g as u32).collect();
+    Ok(out)
+}
+
+#[cfg(unix)]
+fn resolve_gid(ctx: &Ctx<'_>, val: Value<'_>) -> Result<libc::gid_t> {
+    if let Some(n) = val.as_int() {
+        return Ok(n as libc::gid_t);
+    }
+    if let Some(f) = val.as_number() {
+        if f.is_finite() && f >= 0.0 {
+            return Ok(f as libc::gid_t);
+        }
+    }
+    if let Some(s) = val.as_string() {
+        let name = s.to_string()?;
+        let cname = std::ffi::CString::new(name.as_str())
+            .map_err(|_| Exception::throw_type(ctx, "group name contains NUL bytes"))?;
+        let grp = unsafe { libc::getgrnam(cname.as_ptr()) };
+        if grp.is_null() {
+            return Err(Exception::throw_message(
+                ctx,
+                &format!("setgroups: group '{name}' does not exist"),
+            ));
+        }
+        return Ok(unsafe { (*grp).gr_gid });
+    }
+    Err(Exception::throw_type(
+        ctx,
+        "group argument must be a number or string",
+    ))
+}
+
+#[cfg(unix)]
+fn setgroups<'js>(ctx: Ctx<'js>, groups: Array<'js>) -> Result<()> {
+    let mut gids = Vec::with_capacity(groups.len());
+    for item in groups.iter::<Value>() {
+        gids.push(resolve_gid(&ctx, item?)?);
+    }
+    let rc = unsafe { libc::setgroups(gids.len() as _, gids.as_ptr()) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(Exception::throw_message(&ctx, &format!("setgroups: {err}")));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn initgroups<'js>(ctx: Ctx<'js>, user: Value<'js>, extra_group: Value<'js>) -> Result<()> {
+    let gid = resolve_gid(&ctx, extra_group)?;
+    let uname = if let Some(s) = user.as_string() {
+        s.to_string()?
+    } else if let Some(uid) = user.as_int() {
+        let pw = unsafe { libc::getpwuid(uid as libc::uid_t) };
+        if pw.is_null() {
+            return Err(Exception::throw_message(
+                &ctx,
+                &format!("initgroups: uid {uid} not found"),
+            ));
+        }
+        unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) }
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        return Err(Exception::throw_type(
+            &ctx,
+            "user argument must be a string or number",
+        ));
+    };
+    let cuser = std::ffi::CString::new(uname.as_str())
+        .map_err(|_| Exception::throw_type(&ctx, "user contains NUL bytes"))?;
+    let rc = unsafe { libc::initgroups(cuser.as_ptr(), gid as _) };
+    if rc != 0 {
+        let err = std::io::Error::last_os_error();
+        return Err(Exception::throw_message(
+            &ctx,
+            &format!("initgroups: {err}"),
+        ));
+    }
+    Ok(())
+}
+
 pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     let globals = ctx.globals();
     BasePrimordials::init(ctx)?;
@@ -550,6 +677,7 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     mem_fn.set("rss", Func::from(stats::memory_usage_rss))?;
     process.set("memoryUsage", mem_fn)?;
     process.set("cpuUsage", Func::from(stats::cpu_usage))?;
+    process.set("threadCpuUsage", Func::from(stats::thread_cpu_usage))?;
     process.set("resourceUsage", Func::from(stats::resource_usage))?;
     process.set("constrainedMemory", Func::from(stats::constrained_memory))?;
     process.set("availableMemory", Func::from(stats::available_memory))?;
@@ -570,6 +698,7 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         .configurable()
         .enumerable(),
     )?;
+    process.set("debugPort", 9229i32)?;
     process.set("config", stats::build_config_obj(ctx)?)?;
     process.set("features", stats::build_features_obj(ctx)?)?;
     process.set(
@@ -624,6 +753,8 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         .enumerable(),
     )?;
     process.set("exit", Func::from(exit))?;
+    process.set("reallyExit", Func::from(really_exit))?;
+    process.set("openStdin", Func::from(open_stdin))?;
     process.set("emitWarning", Func::from(emit_warning))?;
     process.set(
         "kill",
@@ -640,6 +771,9 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
         process.set("setgid", Func::from(setgid))?;
         process.set("seteuid", Func::from(seteuid))?;
         process.set("setegid", Func::from(setegid))?;
+        process.set("getgroups", Func::from(getgroups))?;
+        process.set("setgroups", Func::from(setgroups))?;
+        process.set("initgroups", Func::from(initgroups))?;
     }
 
     process.set("nextTick", Func::from(next_tick))?;

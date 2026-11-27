@@ -17,6 +17,17 @@ import finished from "readable-stream/lib/internal/streams/end-of-stream.js";
 import { pipeline } from "readable-stream/lib/internal/streams/pipeline.js";
 
 import { inherits } from "node:util";
+// @ts-ignore
+import * as streamPromises from "node:stream/promises";
+
+const BufferCtor = (globalThis as any).Buffer;
+const _isArrayBufferView = ArrayBuffer.isView;
+const _isUint8Array = (value: unknown): value is Uint8Array => value instanceof Uint8Array;
+const _uint8ArrayToBuffer = (chunk: Uint8Array) =>
+  BufferCtor && BufferCtor.isBuffer(chunk)
+    ? chunk
+    : BufferCtor.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+const promises = (streamPromises as any).default ?? streamPromises;
 
 inherits(Stream, EE);
 Stream.Readable = Readable;
@@ -26,6 +37,10 @@ Stream.Transform = Transform;
 Stream.PassThrough = PassThrough;
 Stream.finished = finished;
 Stream.pipeline = pipeline;
+Stream.promises = promises;
+Stream._isArrayBufferView = _isArrayBufferView;
+Stream._isUint8Array = _isUint8Array;
+Stream._uint8ArrayToBuffer = _uint8ArrayToBuffer;
 Stream.Stream = Stream;
 
 // Web stream adapters — bridge bundled Node.js streams to native web streams
@@ -517,4 +532,8 @@ export {
   getDefaultHighWaterMark,
   setDefaultHighWaterMark,
   destroy,
+  promises,
+  _isArrayBufferView,
+  _isUint8Array,
+  _uint8ArrayToBuffer,
 };

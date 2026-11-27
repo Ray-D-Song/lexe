@@ -8,6 +8,7 @@ use rquickjs::{
 };
 
 mod brotli;
+mod constants;
 mod stream;
 mod zlib;
 mod zstd;
@@ -101,6 +102,14 @@ const STREAM_CLASSES: &[&str] = &[
 
 /// Legacy top-level zlib constants mirrored from `zlib.constants`.
 const LEGACY_CONSTANTS: &[&str] = &[
+    "DEFLATE",
+    "DEFLATERAW",
+    "GUNZIP",
+    "GZIP",
+    "INFLATE",
+    "INFLATERAW",
+    "UNZIP",
+    "ZLIB_VERNUM",
     "Z_NO_FLUSH",
     "Z_PARTIAL_FLUSH",
     "Z_SYNC_FLUSH",
@@ -152,6 +161,14 @@ const STREAM_GLUE_JS: &str = r#"(function () {
     // Node exposes zlib mode/flush/strategy constants; callers mostly pass them
     // straight back, so stable numeric values are enough.
     const c = {
+      DEFLATE: 1,
+      INFLATE: 2,
+      GZIP: 3,
+      GUNZIP: 4,
+      DEFLATERAW: 5,
+      INFLATERAW: 6,
+      UNZIP: 7,
+      ZLIB_VERNUM: 4880,
       Z_NO_FLUSH: 0,
       Z_PARTIAL_FLUSH: 1,
       Z_SYNC_FLUSH: 2,
@@ -424,6 +441,10 @@ impl ModuleDef for ZlibModule {
         for &name in LEGACY_CONSTANTS {
             declare.declare(name)?;
         }
+        for &(name, _) in constants::ZSTD_CONSTANTS {
+            declare.declare(name)?;
+        }
+        declare.declare("codes")?;
         declare.declare("constants")?;
 
         declare.declare("default")?;
@@ -490,6 +511,18 @@ impl ModuleDef for ZlibModule {
                 let val: Value = constants_obj.get(name)?;
                 default.set(name, val)?;
             }
+            let codes: Value = ctx.eval(
+                r#"Object.freeze({
+  0: "Z_OK", 1: "Z_STREAM_END", 2: "Z_NEED_DICT",
+  Z_OK: 0, Z_STREAM_END: 1, Z_NEED_DICT: 2,
+  Z_ERRNO: -1, Z_STREAM_ERROR: -2, Z_DATA_ERROR: -3,
+  Z_MEM_ERROR: -4, Z_BUF_ERROR: -5, Z_VERSION_ERROR: -6,
+  "-1": "Z_ERRNO", "-2": "Z_STREAM_ERROR", "-3": "Z_DATA_ERROR",
+  "-4": "Z_MEM_ERROR", "-5": "Z_BUF_ERROR", "-6": "Z_VERSION_ERROR"
+})"#,
+            )?;
+            default.set("codes", codes)?;
+            constants::apply_constants(&constants_obj, default)?;
             default.set("constants", constants_obj)?;
 
             Ok(())

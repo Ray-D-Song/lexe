@@ -731,6 +731,37 @@ impl<'js> Console<'js> {
         let text = self.build_table(&ctx, data.0, columns.0)?;
         self.write_line(&ctx, false, &text)
     }
+
+    #[qjs(get, enumerable, rename = "_stdout")]
+    pub fn get_stdout(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        if let Some(s) = &self.stdout {
+            return Ok(s.clone().into_value());
+        }
+        if let Ok(proc_obj) = ctx.globals().get::<_, Object>("process") {
+            if let Ok(val) = proc_obj.get::<_, Value>("stdout") {
+                return Ok(val);
+            }
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+
+    #[qjs(get, enumerable, rename = "_stderr")]
+    pub fn get_stderr(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        if let Some(s) = &self.stderr {
+            return Ok(s.clone().into_value());
+        }
+        if let Ok(proc_obj) = ctx.globals().get::<_, Object>("process") {
+            if let Ok(val) = proc_obj.get::<_, Value>("stderr") {
+                return Ok(val);
+            }
+        }
+        Ok(Value::new_undefined(ctx))
+    }
+
+    #[qjs(get, enumerable, rename = "_ignoreErrors")]
+    pub fn get_ignore_errors(&self) -> bool {
+        self.ignore_errors
+    }
 }
 
 pub fn log_fatal<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<()> {
@@ -869,6 +900,14 @@ const CONSOLE_METHOD_NAMES: &[&str] = &[
     "profile",
     "profileEnd",
     "timeStamp",
+    "context",
+    "createTask",
+    "_stdout",
+    "_stderr",
+    "_ignoreErrors",
+    "_times",
+    "_stdoutErrorHandler",
+    "_stderrErrorHandler",
 ];
 
 pub struct ConsoleModule;
@@ -947,6 +986,14 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
   ];
   const noopNames = ["profile", "profileEnd", "timeStamp"];
 
+  const defaultErrorHandler = () => {};
+  const sharedTimes = new Map();
+  Object.defineProperties(ConsoleProto, {
+    _times: { value: sharedTimes, writable: true, enumerable: true, configurable: true },
+    _stdoutErrorHandler: { value: defaultErrorHandler, writable: true, enumerable: true, configurable: true },
+    _stderrErrorHandler: { value: defaultErrorHandler, writable: true, enumerable: true, configurable: true },
+  });
+
   const namespaceProto = Object.create(Object.prototype);
   const globalConsole = Object.create(namespaceProto);
 
@@ -978,6 +1025,68 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     });
     globalConsole[name] = fn;
   }
+
+  globalConsole.context = function context(options) {
+    const opts = options && typeof options === "object" ? options : {};
+    const stdout = opts.stdout !== undefined ? opts.stdout : globalThis.process?.stdout;
+    const stderr = opts.stderr !== undefined ? opts.stderr : stdout;
+    return new ConsoleCtor({ ...opts, stdout, stderr });
+  };
+
+  globalConsole.createTask = function createTask(name) {
+    if (typeof name !== "string") {
+      const err = new TypeError('The "name" argument must be of type string. Received ' + typeof name);
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
+    }
+    return {
+      run(fn) {
+        if (typeof fn !== "function") {
+          const err = new TypeError('The "fn" argument must be of type function. Received ' + typeof fn);
+          err.code = "ERR_INVALID_ARG_TYPE";
+          throw err;
+        }
+        return fn();
+      },
+    };
+  };
+
+  Object.defineProperties(globalConsole, {
+    _stdout: {
+      enumerable: true,
+      configurable: true,
+      get() { return implObj._stdout; },
+    },
+    _stderr: {
+      enumerable: true,
+      configurable: true,
+      get() { return implObj._stderr; },
+    },
+    _ignoreErrors: {
+      value: true,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    },
+    _times: {
+      value: sharedTimes,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    },
+    _stdoutErrorHandler: {
+      value: defaultErrorHandler,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    },
+    _stderrErrorHandler: {
+      value: defaultErrorHandler,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    },
+  });
 
   Object.defineProperty(globalConsole, "Console", {
     value: ConsoleCtor,

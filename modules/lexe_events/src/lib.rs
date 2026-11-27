@@ -1147,6 +1147,10 @@ impl ModuleDef for EventsModule {
         declare.declare("captureRejectionSymbol")?;
         declare.declare("captureRejections")?;
         declare.declare("defaultMaxListeners")?;
+        declare.declare("init")?;
+        declare.declare("kMaxEventTargetListeners")?;
+        declare.declare("kMaxEventTargetListenersWarned")?;
+        declare.declare("usingDomains")?;
         declare.declare("default")?;
 
         Ok(())
@@ -1282,6 +1286,37 @@ impl ModuleDef for EventsModule {
     }
   }
 
+  EventEmitter.init = function init(opts) {
+    if (this && typeof this === "object") {
+      if (this._events === undefined) {
+        this._events = Object.create(null);
+        this._eventsCount = 0;
+      }
+      if (this._maxListeners === undefined) {
+        this._maxListeners = undefined;
+      }
+      if (opts !== undefined && opts !== null && typeof opts === "object") {
+        const cr = opts.captureRejections;
+        if (cr !== undefined) {
+          if (typeof cr !== "boolean") {
+            const err = new TypeError(
+              'The "options.captureRejections" property must be of type boolean. Received type ' +
+                typeof cr
+            );
+            err.code = "ERR_INVALID_ARG_TYPE";
+            throw err;
+          }
+          Object.defineProperty(this, captureSym, {
+            value: cr,
+            writable: true,
+            configurable: true,
+            enumerable: false,
+          });
+        }
+      }
+    }
+  };
+  EventEmitter.usingDomains = false;
   EventEmitter.EventEmitter = EventEmitter;
   EventEmitter.EventEmitterAsyncResource = EventEmitterAsyncResource;
 
@@ -1667,6 +1702,14 @@ impl ModuleDef for EventsModule {
         )?;
         exports.export("captureRejections", false)?;
         exports.export("defaultMaxListeners", 10i32)?;
+        exports.export("init", ctor.get::<_, Function>("init")?)?;
+        let k_max_et_listeners: Value = ctx.eval("Symbol('events.maxEventTargetListeners')")?;
+        let k_max_et_warned: Value = ctx.eval("Symbol('events.maxEventTargetListenersWarned')")?;
+        ctor.set("kMaxEventTargetListeners", k_max_et_listeners.clone())?;
+        ctor.set("kMaxEventTargetListenersWarned", k_max_et_warned.clone())?;
+        exports.export("kMaxEventTargetListeners", k_max_et_listeners)?;
+        exports.export("kMaxEventTargetListenersWarned", k_max_et_warned)?;
+        exports.export("usingDomains", false)?;
         exports.export("listenerCount", listener_count_fn)?;
         exports.export("EventEmitterAsyncResource", eear_ctor)?;
 

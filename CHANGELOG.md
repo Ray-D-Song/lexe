@@ -2,6 +2,22 @@
 
 All notable changes to Lexe are documented in this file.
 
+## [Unreleased]
+
+- Resolved remaining Node.js API-surface compatibility gaps and graduated `node:console`, `node:events`, `node:fs`, `node:http`, `node:perf_hooks`, `node:util`, `node:worker_threads`, `node:zlib`, `node:buffer`, `node:sea`, `ECMASCRIPT`, `WEBIDL`, and `XHR` in `docs/compatibility.md`:
+  - `node:console`: Added `console.context()`, `console.createTask()`, and internal stream/timer fields (`_stdout`, `_stderr`, `_ignoreErrors`, `_times`, `_stdoutErrorHandler`, `_stderrErrorHandler`).
+  - `node:events`: Added `init()`, `usingDomains`, `kMaxEventTargetListeners`, and `kMaxEventTargetListenersWarned`.
+  - `node:fs`: Exposed top-level `F_OK`/`R_OK`/`W_OK`/`X_OK` aliases alongside `fs.constants`.
+  - `node:http`: Exported `CloseEvent`, `MessageEvent`, and `_connectionListener`.
+  - `node:net`: Exported `net.Stream` alias and `net._normalizeArgs()`.
+  - `node:perf_hooks`: Added all 13 `NODE_PERFORMANCE_ENTRY_TYPE_*` and `NODE_PERFORMANCE_MILESTONE_*` constants.
+  - `node:process`: Added `debugPort`, `reallyExit()`, `openStdin()`, `threadCpuUsage()`, and Unix `getgroups()`/`setgroups()`/`initgroups()`.
+  - `node:stream`: Exported `stream.promises` and internal buffer helpers (`_isArrayBufferView`, `_isUint8Array`, `_uint8ArrayToBuffer`).
+  - `node:util`: Added `isArray`, `getCallSite`, `_errnoException()`, and `_exceptionWithHostPort()`.
+  - `node:worker_threads`: Aligned main-thread `workerData` to `null` and exported `isInternalThread`.
+  - `node:zlib`: Added `zlib.codes`, top-level `DEFLATE`/`GZIP`/`ZLIB_VERNUM` aliases, all 53 `BROTLI_*` constants, and all 63 `ZSTD_*` constants.
+  - Documented resolved engine/runtime positioning boundaries in `docs/compatibility.md` (`Pending Decisions` cleared).
+
 ## [0.1.11] - 2026-11-27
 
 - Expanded `node:crypto` and WebCrypto (`WEBCRYPTO`) compatibility (`docs/compatibility.md`):

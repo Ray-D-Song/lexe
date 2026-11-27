@@ -7,35 +7,35 @@
 | --- | --- | --- | --- |
 | node:assert | ✔︎ | ✔︎ | — |
 | node:async_hooks | ✔︎ | ✔︎ | `AsyncLocalStorage`, `AsyncResource`, and on-demand `createHook()` lifecycle tracking ([notes](#nodeasync_hooks)) |
-| node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`) due to QuickJS-ng `ArrayBuffer` limit ([details](#nodebuffer)) |
+| node:buffer | ✔︎ | ✔︎ | 31-bit `MAX_LENGTH` (`2147483647`) due to QuickJS-ng `ArrayBuffer` limit ([notes](#nodebuffer)) |
 | node:child_process | ✔︎ | ✔︎⚠️ | Missing internal `_forkChild` |
 | node:cluster | ✔︎ | ✘ | Not implemented |
-| node:console | ✔︎ | ✔︎⚠️ | Missing `context`, `createTask`, and internal stream/timer fields |
+| node:console | ✔︎ | ✔︎ | — |
 | node:constants | ✔︎ | ✔︎ | — |
 | node:crypto | ✔︎ | ✔︎⚠️ | WebCrypto + classic APIs (`hash`, `Hash`/`Hmac`, `createSign`/`createVerify`, `pbkdf2*`, `scrypt*`, `generateKey*`/`generateKeyPair*`, `DiffieHellman*`, `checkPrime*`/`generatePrime*`, RSA encrypt/decrypt, `chacha20-poly1305`, `getCipherInfo`, Ed448/X448); omits OpenSSL engine/FIPS/SPKAC `Certificate` ([details](#nodecrypto)) |
 | node:dgram | ✔︎ | ✔︎⚠️ | Missing internal `_createSocketHandle` |
 | node:diagnostics_channel | ✔︎ | ✔︎ | — |
 | node:dns | ✔︎ | ✔︎ | — |
 | node:dns/promises | ✔︎ | ✔︎ | — |
-| node:events | ✔︎ | ✔︎⚠️ | Missing `kMaxEventTargetListeners`, `kMaxEventTargetListenersWarned`, and legacy `init`/`usingDomains` |
-| node:fs | ✔︎ | ✔︎⚠️ | Missing deprecated top-level `F_OK`/`R_OK`/`W_OK`/`X_OK` aliases (available on `fs.constants`) |
+| node:events | ✔︎ | ✔︎ | — |
+| node:fs | ✔︎ | ✔︎ | `lchmod`/`lchmodSync` return `ENOTSUP` on Linux |
 | node:fs/promises | ✔︎ | ✔︎ | — |
-| node:http | ✔︎ | ✔︎⚠️ | Missing `CloseEvent`, `MessageEvent`, and internal `_connectionListener` |
+| node:http | ✔︎ | ✔︎ | — |
 | node:http2 | ✔︎ | ✔︎⚠️ | Native HTTP/2 surface; `performServerHandshake`, server push, and streaming server request bodies are unimplemented ([notes](#nodehttp2)) |
 | node:https | ✔︎ | — | Requires TLS feature build; follows `node:tls` security policy ([notes](#nodehttps)) |
 | node:inspector | ✔︎ | ✔︎⚠️ | `url()` returns `undefined`; `Session` shim reports unavailable protocol operations ([details](#nodeinspector)) |
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
 | node:module | ✔︎ | ✔︎ | TypeScript stripping, worker `register`, on-disk bytecode compile cache, `Module._load`, and CJS/ESM loader ([notes](#nodemodule)) |
-| node:net | ✔︎ | ✔︎⚠️ | Missing legacy `Stream` alias and internal `_createServerHandle`/`_normalizeArgs` |
+| node:net | ✔︎ | ✔︎⚠️ | Missing internal `_createServerHandle` |
 | node:os | ✔︎ | ✔︎ | — |
 | node:path | ✔︎ | ✔︎ | — |
-| node:perf_hooks | ✔︎ | ✔︎⚠️ | Missing 13 internal `constants` keys |
-| node:process | ✔︎ | ✔︎⚠️ | Runtime identity; missing `debugPort`, `reallyExit`, `threadCpuUsage`, `getgroups`/`setgroups`, and internal hooks ([notes](#nodeprocess)) |
+| node:perf_hooks | ✔︎ | ✔︎ | — |
+| node:process | ✔︎ | ✔︎⚠️ | Runtime identity; missing `execve`, deprecated `domain`, and internal C++/V8 hooks (`binding`, `_linkedBinding`, `moduleLoadList`, `_debugProcess`, etc.) ([notes](#nodeprocess)) |
 | node:querystring | ✔︎ | ✔︎ | — |
 | node:readline | ✔︎ | ✔︎ | — |
 | node:readline/promises | ✔︎ | ✔︎ | — |
 | node:repl | ✔︎ | ✘ | Not implemented |
-| node:sea | ✔︎ | ✔︎⚠️ | Asset APIs supported; Lexe uses its own compiled SEA container format |
+| node:sea | ✔︎ | ✔︎ | Asset APIs supported; Lexe uses its own compiled SEA container format ([notes](#nodesea)) |
 | node:sqlite | ✔︎ | ✔︎ | — |
 | node:stream | ✔︎ | ✔︎\* | JS polyfill (not native) |
 | node:stream/promises | ✔︎ | ✔︎\* | JS polyfill (not native) |
@@ -47,13 +47,13 @@
 | node:tls | ✔︎ | ✔︎ | Supports `pfx`/encrypted PEMs, async `SNICallback`, `ALPNCallback`, soft mTLS (`requestCert: true, rejectUnauthorized: false`), TLS session resumption, `rootCertificates`/`getCACertificates()`, and write backpressure; intentionally disables TLS < 1.2, weak `ciphers`/`sigalgs`/`dhparam`/`crl`/`psk`/`ocsp`, and `renegotiate()` ([notes](#nodetls)) |
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎ | — |
-| node:util | ✔︎ | ✔︎⚠️ | Missing `getCallSite`, deprecated `isArray`, and internal `_errnoException`/`_exceptionWithHostPort` |
+| node:util | ✔︎ | ✔︎ | — |
 | node:util/types | ✔︎ | ✔︎ | — |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; structured-clone-backed serialization; missing V8 heap snapshots and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✔︎⚠️ | WASI Preview 1 (`WASI({ version: 'preview1', args, env, preopens, returnOnExit, stdin, stdout, stderr })`, `wasiImport`, `getImportObject()`, `start()`, `initialize()`, JS overrides); backed by `wasmz` (no WASI Preview 2) ([details](#nodewasi)) |
-| node:worker_threads | ✔︎ | ✔︎⚠️ | Missing V8 `Worker.prototype.getHeapSnapshot()` ([details](#nodeworker_threads)) |
-| node:zlib | ✔︎ | ✔︎⚠️ | Missing Zstandard (`ZSTD_*`) bindings/constants, `codes`, and top-level `DEFLATE`/`GZIP` aliases |
+| node:worker_threads | ✔︎ | ✔︎ | OS-thread worker isolates, `SHARE_ENV`, piped stdio, `resourceLimits`, and `SharedArrayBuffer`; omits V8-only `Worker.prototype.getHeapSnapshot()` ([notes](#nodeworker_threads)) |
+| node:zlib | ✔︎ | ✔︎ | — |
 
 | [lexe API](https://github.com/Ray-D-Song/lexe/blob/main/API.md) | Node.js | lexe |
 | --- | --- | --- |
@@ -67,7 +67,7 @@
 | COMPRESSION | ✔︎ | — |
 | CONSOLE | ✔︎ | — |
 | DOM | ✔︎ | — |
-| ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
+| ECMASCRIPT | ✔︎ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`, stub `Error.captureStackTrace`/`CallSite` fields) ([notes](#ecmascript)) |
 | ENCODING | ✔︎ | — |
 | FETCH | ✔︎ | Supports HTTP/1.1 & HTTP/2 streaming, `file:` / `blob:` / `data:` URLs, SRI `integrity`, and in-memory `caches` (`CacheStorage`/`Cache`); intentionally omits browser-origin policies (CORS preflight, `credentials`, `referrer`, `forbidden-header`) ([notes](#fetch)) |
 | FILEAPI | ✔︎ | — |
@@ -79,8 +79,8 @@
 | WASM-JS-API-2 | ✔︎⚠️ | `wasmz` engine (GC, exception handling, typed function references, shared memory, Memory64, multi-value, bulk memory, reference types, SIMD); missing JS constructors `WebAssembly.Function`/`Tag`/`Exception`, JSPI (`Suspending`/`promising`), and `v128` JS boundary; synchronously mirrored `Memory.buffer`; retained `externref`s ([details](#wasm-js-api-2)) |
 | WASM-WEB-API-2 | ✔︎⚠️ | `compileStreaming`/`instantiateStreaming` buffer the full `Response` before compiling (no incremental streaming compilation) ([details](#wasm-web-api-2)) |
 | WEBCRYPTO | ✔︎ | Supports standard & modern WebCrypto (`Ed448`, `X448`, `Argon2`, `ChaCha20-Poly1305`); omits `AES-OCB` and backend parity on `graviola` ([notes](#webcrypto)) |
-| WEBIDL | ✔︎⚠️ | Provides `DOMException` and core coercions; lacks full WebIDL prototype/branding/dictionary/overload compliance ([details](#webidl)) |
-| XHR | ✔︎⚠️ | Implements `FormData` and `ProgressEvent`; `XMLHttpRequest` is not implemented (Node.js also omits XHR) ([details](#xhr)) |
+| WEBIDL | ✔︎ | Provides `DOMException` and core coercions; skips full WebIDL `idlharness` prototype/branding/overload conformance ([notes](#webidl)) |
+| XHR | ✔︎ | Implements `FormData` and `ProgressEvent`; omits `XMLHttpRequest` matching Node.js ([notes](#xhr)) |
 
 | Other features | lexe | Key differences from standard / Node.js |
 | --- | --- | --- |
@@ -101,17 +101,13 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 **Legend**
 
-- ⚠️ = partially supported in Lexe (open architectural/tradeoff items tracked in [Pending Decisions](#pending-decisions))
+- ⚠️ = partially supported in Lexe (internal-only exports, accepted engine/security constraints, or targeted feature subsets; see details/notes below)
 - ⏱ = planned partial support
 - \* = Not native
 
 ## Partial support details
 
 ### Node.js APIs
-
-#### `node:buffer`
-
-- `constants.MAX_LENGTH` / `kMaxLength` is capped at `2147483647` (QuickJS 31-bit `ArrayBuffer` limit) rather than Node's platform limit.
 
 #### `node:crypto`
 
@@ -121,7 +117,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 #### `node:inspector`
 
 - `url()` always returns `undefined`. A `Session` shim supports startup probes but reports `ERR_INSPECTOR_NOT_AVAILABLE` for protocol requests.
-- No Inspector debugging protocol; `open()`, `close()`, `waitForDebugger()`, and `console` are not implemented.
+- No CDP/WebSocket debugging protocol server; `open()`, `close()`, `waitForDebugger()`, `Network`, and `console` are omitted by design.
 
 #### `node:v8`
 
@@ -134,19 +130,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Implements WASI Preview 1 (`version: "preview1"`) backed by `wasmz`: `new WASI({ version, args, env, preopens, returnOnExit, stdin, stdout, stderr })`, `wasi.wasiImport` (46 Preview 1 functions, overridable with custom JS functions), `wasi.getImportObject()`, `wasi.start(instance)` (returns exit code when `returnOnExit: true`), and `wasi.initialize(instance)`.
 - WASI Preview 2 (`preview2` / Component Model) is not supported.
 
-#### `node:worker_threads`
-
-- Uses **OS-thread worker isolates** (QuickJS per thread) with structured-clone `postMessage`, in-process `MessageChannel`, environment data sync, `SHARE_ENV`, `postMessageToThread()`, `moveMessagePortToContext()`, piped worker stdio (`stdin`, `stdout`, `stderr`), QuickJS-backed `resourceLimits` (`stackSizeMb` via QuickJS max stack size, `maxOldGenerationSizeMb` via `JS_SetMemoryLimit`), and **SharedArrayBuffer** hooks for shared memory within the process.
-- Missing `Worker.prototype.getHeapSnapshot()` (V8 engine-specific).
-
 ### Web Platform APIs
-
-#### `ECMASCRIPT`
-
-- Powered by QuickJS-ng rather than V8: `ArrayBuffer` maximum length is `2147483647` (31-bit limit).
-- Full ES2024 RegExp `/v` (`unicodeSets`) is supported, including `--`/`&&`/nested character classes, `\q{...}`, and Unicode 17.0.0 emoji properties of strings (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_*`, `RGI_Emoji`).
-- `ShadowRealm` is not implemented.
-- V8-specific `Error.captureStackTrace` and `CallSite` methods (`isEval`, `isNative`, `isConstructor`, `isToplevel`, `getEvalOrigin`, `getMethodName`, `getTypeName`, `getThis`) are stub polyfills.
 
 #### `WASM-JS-API-2`
 
@@ -158,14 +142,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 #### `WASM-WEB-API-2`
 
 - `compileStreaming()` and `instantiateStreaming()` validate `Response.ok` and `Content-Type: application/wasm`, then buffer the entire response via `response.arrayBuffer()` before compiling (no incremental streaming compilation).
-
-#### `WEBIDL`
-
-- Exposes `DOMException` and basic JS/Rust type conversions, but lacks full WebIDL prototype, branding, dictionary, and overload compliance (`idlharness` WPT tests are skipped).
-
-#### `XHR`
-
-- Implements `FormData` and `ProgressEvent`; `XMLHttpRequest` is not implemented (Node.js also omits `XMLHttpRequest`, while WinterTC groups `FormData` under XHR).
 
 ### Other features
 
@@ -181,19 +157,37 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 ## Pending Decisions
 
-Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
-
-- [ ] **1. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
-  - **Gap**:
-    - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
-    - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).
-    - `node:sea`: Lexe compiles into its own SEA container format rather than Node's ELF/Mach-O/PE postject blob format.
-    - `WEBIDL` & `XHR`: Partial WebIDL (`idlharness` skipped); omits `XMLHttpRequest` (matching Node.js).
-  - **Options**:
-    - **A (Accept as documented engine/runtime positioning)**: Fix lightweight conformance gaps (e.g. QuickJS inspector CDP protocol if desired, `WEBIDL` constructor/branding helpers, `Error.captureStackTrace`/`CallSite` real frames), while explicitly documenting QuickJS 31-bit limits, Lexe SEA container format, no `ShadowRealm`/V8 heap snapshots, and no `XMLHttpRequest` as intentional design boundaries (or moving non-issue items out of `⚠️`).
-    - **B (Targeted deep work)**: Select specific engine/runtime capabilities to invest in (e.g., implementing a real CDP WebSocket inspector server, `ShadowRealm`, 64-bit `ArrayBuffer` fork in QuickJS-ng, or V8-independent `WebIDL` hardening).
+All previously tracked architectural/product decisions have been resolved: QuickJS engine limits (`ArrayBuffer` 31-bit limit, no `ShadowRealm`/V8 heap snapshots), no CDP inspector server, Lexe's native SEA container format, no `XMLHttpRequest`, and compact WebIDL coercions are accepted as documented runtime positioning. Remaining internal-only or platform/engine API-surface exclusions are enforced in [`compat/api-surface/allowlist.json`](../compat/api-surface/allowlist.json).
 
 ## Other notes
+
+### `node:buffer`
+
+- `constants.MAX_LENGTH` / `kMaxLength` is capped at `2147483647` (QuickJS 31-bit `ArrayBuffer` limit) rather than Node's platform limit.
+
+### `node:sea`
+
+- Asset APIs (`isSea`, `getAsset`, `getAssetAsBlob`, `getRawAsset`) are supported; Lexe compiles into its own self-contained SEA executable container format rather than Node's postject ELF/Mach-O/PE resource layout.
+
+### `node:worker_threads`
+
+- Uses **OS-thread worker isolates** (QuickJS per thread) with structured-clone `postMessage`, in-process `MessageChannel`, environment data sync, `SHARE_ENV`, `postMessageToThread()`, `moveMessagePortToContext()`, piped worker stdio (`stdin`, `stdout`, `stderr`), QuickJS-backed `resourceLimits` (`stackSizeMb` via QuickJS max stack size, `maxOldGenerationSizeMb` via `JS_SetMemoryLimit`), and **SharedArrayBuffer** hooks for shared memory within the process.
+- Omits `Worker.prototype.getHeapSnapshot()` (V8 engine-specific).
+
+### `ECMASCRIPT`
+
+- Powered by QuickJS-ng rather than V8: `ArrayBuffer` maximum length is `2147483647` (31-bit limit).
+- Full ES2024 RegExp `/v` (`unicodeSets`) is supported, including `--`/`&&`/nested character classes, `\q{...}`, and Unicode 17.0.0 emoji properties of strings (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_*`, `RGI_Emoji`).
+- `ShadowRealm` is not implemented (intentional engine boundary).
+- V8-specific `Error.captureStackTrace` and `CallSite` methods (`isEval`, `isNative`, `isConstructor`, `isToplevel`, `getEvalOrigin`, `getMethodName`, `getTypeName`, `getThis`) are lightweight stub polyfills.
+
+### `WEBIDL`
+
+- Exposes `DOMException` and core JS/Rust type coercions; omits full WebIDL prototype, branding, dictionary, and overload machinery (`idlharness` WPT suites are excluded).
+
+### `XHR`
+
+- Implements `FormData` and `ProgressEvent`; omits `XMLHttpRequest` intentionally (matching Node.js; server/CLI runtimes use `fetch()` or `node:http`/`node:https`).
 
 ### `node:async_hooks`
 

@@ -742,7 +742,44 @@ const NET_SOCKET_GLUE_JS: &str = r#"(function () {
     };
   }
 
-  return { build, makeConnect };
+  const normalizedArgsSymbol = Symbol("normalizedArgs");
+
+  function toNumber(x) {
+    return (x = Number(x)) >= 0 ? x : false;
+  }
+
+  function isPipeName(s) {
+    return typeof s === "string" && toNumber(s) === false;
+  }
+
+  function normalizeArgs(args) {
+    let arr;
+    if (args.length === 0) {
+      arr = [{}, null];
+      arr[normalizedArgsSymbol] = true;
+      return arr;
+    }
+
+    const arg0 = args[0];
+    let options = {};
+    if (typeof arg0 === "object" && arg0 !== null) {
+      options = arg0;
+    } else if (isPipeName(arg0)) {
+      options.path = arg0;
+    } else {
+      options.port = arg0;
+      if (args.length > 1 && typeof args[1] === "string") {
+        options.host = args[1];
+      }
+    }
+
+    const cb = args[args.length - 1];
+    arr = typeof cb !== "function" ? [options, null] : [options, cb];
+    arr[normalizedArgsSymbol] = true;
+    return arr;
+  }
+
+  return { build, makeConnect, normalizeArgs };
 })()"#;
 
 pub struct NetModule;
@@ -762,6 +799,8 @@ impl ModuleDef for NetModule {
         declare.declare("getDefaultAutoSelectFamilyAttemptTimeout")?;
         declare.declare("setDefaultAutoSelectFamilyAttemptTimeout")?;
         declare.declare(stringify!(Socket))?;
+        declare.declare("Stream")?;
+        declare.declare("_normalizeArgs")?;
         declare.declare(stringify!(Server))?;
         declare.declare("default")?;
 
@@ -780,8 +819,11 @@ impl ModuleDef for NetModule {
             let glue: Object = ctx.eval(NET_SOCKET_GLUE_JS)?;
             let build = glue.get::<_, Function>("build")?;
             let make_connect = glue.get::<_, Function>("makeConnect")?;
+            let normalize_args: Value = glue.get("normalizeArgs")?;
             let socket_class: Function = build.call((handle_ctor,))?;
             default.set("Socket", socket_class.clone())?;
+            default.set("Stream", socket_class.clone())?;
+            default.set("_normalizeArgs", normalize_args)?;
             // The server constructs accepted sockets through the same class.
             ctx.globals()
                 .set("__lexeNetSocketClass", socket_class.clone())?;

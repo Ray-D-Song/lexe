@@ -4,3 +4,4 @@
 import { finished, pipeline } from "readable-stream/lib/stream/promises.js";
 
 export { finished, pipeline };
+export default { finished, pipeline };

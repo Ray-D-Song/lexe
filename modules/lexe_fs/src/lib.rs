@@ -815,6 +815,10 @@ impl ModuleDef for FsModule {
         declare.declare("close")?;
         declare.declare("closeSync")?;
         declare.declare("constants")?;
+        declare.declare("F_OK")?;
+        declare.declare("R_OK")?;
+        declare.declare("W_OK")?;
+        declare.declare("X_OK")?;
         declare.declare("copyFile")?;
         declare.declare("copyFileSync")?;
         declare.declare("cp")?;
@@ -937,6 +941,10 @@ impl ModuleDef for FsModule {
             let promises = Object::new(ctx.clone())?;
             export_promises(ctx, &promises)?;
             export_constants(ctx, default)?;
+            default.set("F_OK", CONSTANT_F_OK)?;
+            default.set("R_OK", CONSTANT_R_OK)?;
+            default.set("W_OK", CONSTANT_W_OK)?;
+            default.set("X_OK", CONSTANT_X_OK)?;
 
             default.set("promises", promises.clone())?;
 

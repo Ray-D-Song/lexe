@@ -97,6 +97,8 @@ const ES_BUILD_OPTIONS = {
     "node:stream",
     "stream/consumers",
     "node:stream/consumers",
+    "stream/promises",
+    "node:stream/promises",
     "stream/web",
     "node:stream/web",
     "readline",

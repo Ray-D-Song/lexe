@@ -70,11 +70,12 @@ function readThreadId(): number {
 }
 
 export const isMainThread = readIsMainThread();
+export const isInternalThread = false;
 export const threadId = readThreadId();
 
 /** Populated in worker child before the worker script is imported. */
 export let workerData: unknown = isMainThread
-  ? undefined
+  ? null
   : (globalThis as { workerData?: unknown }).workerData;
 
 (globalThis as { __lexeSetWorkerData?: (v: unknown) => void }).__lexeSetWorkerData = (
@@ -906,6 +907,7 @@ export function receiveMessageOnPort(_port: unknown): undefined {
 
 const defaultExport = {
   isMainThread,
+  isInternalThread,
   parentPort,
   workerData,
   threadId,
