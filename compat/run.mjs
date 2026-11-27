@@ -6,6 +6,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { compareApiSurface } from "./api-surface/check.mjs";
+
 const HTTP_CHECK_TIMEOUT_MS = 5_000;
 const BUILD_TIMEOUT_MS = 120_000;
 const SCRIPT_TIMEOUT_MS = 60_000;
@@ -99,6 +101,11 @@ const cases = {
     parity: "parity.mjs",
     buildCommand: "node build-extension.mjs",
   },
+  "api-surface": {
+    directory: "compat/api-surface",
+    probe: "probe.mjs",
+    allowlist: "allowlist.json",
+  },
   "napi-hello": {
     directory: "compat/napi-hello",
     buildCommand: "yarn build",
@@ -143,7 +150,7 @@ const cases = {
 const testCase = cases[name];
 if (!testCase || !lexePath) {
   throw new Error(
-    "Usage: node compat/run.mjs <next|vite-plus|better-sqlite3|mysql2|node-postgres|v8-hello|napi-hello|node-sqlite> <lexe>"
+    "Usage: node compat/run.mjs <next|vite-plus|better-sqlite3|mysql2|node-postgres|v8-hello|napi-hello|node-sqlite|api-surface> <lexe>"
   );
 }
 
@@ -155,6 +162,8 @@ if (name === "next") {
   await runNextStandalone(directory, lexe, logPath, root);
 } else if (name === "node-sqlite") {
   await runNodeSqliteCompat(testCase, directory, lexe, logPath, root);
+} else if (name === "api-surface") {
+  await runApiSurfaceCompat(testCase, directory, lexe, logPath, root);
 } else if (
   name === "better-sqlite3" ||
   name === "mysql2" ||
@@ -377,6 +386,83 @@ async function runVitePlusBuild(testCase, directory, lexe, logPath, root) {
   console.log(
     `${name} compatibility build passed (version×${versionLoops}, build×${buildLoops})`
   );
+}
+
+async function runApiSurfaceCompat(testCase, directory, lexe, logPath, root) {
+  const logParts = [];
+  const probePath = path.join(directory, testCase.probe);
+  const allowlistPath = path.join(directory, testCase.allowlist);
+
+  try {
+    await assertLexeExecutable(lexe, logParts);
+
+    console.log(`[compat-api-surface] Node probe: ${process.execPath} ${testCase.probe}`);
+    const nodeResult = await spawnCompatChild(
+      process.execPath,
+      [probePath],
+      { cwd: root, env: { ...process.env } },
+      NODE_BASELINE_TIMEOUT_MS,
+      logParts
+    );
+    validateCompatRun("api-surface/probe.mjs", "Node probe", nodeResult, {
+      maxDurationMs: NODE_BASELINE_TIMEOUT_MS,
+      expectCode: 0,
+      logPath,
+      root,
+      logParts,
+      lexeNotStarted: true,
+    });
+    const nodePayload = parseParityJson(nodeResult.stdout, "Node API surface");
+
+    console.log(`[compat-api-surface] Lexe probe: ${lexe} ${testCase.probe}`);
+    const lexeResult = await spawnCompatChild(
+      lexe,
+      [probePath],
+      { cwd: root, env: { ...process.env } },
+      SCRIPT_TIMEOUT_MS,
+      logParts
+    );
+    validateCompatRun("api-surface/probe.mjs", "Lexe probe", lexeResult, {
+      maxDurationMs: SCRIPT_TIMEOUT_MS,
+      expectCode: 0,
+      logPath,
+      root,
+      logParts,
+      lexeNotStarted: false,
+    });
+    if (TEARDOWN_GUARD.test(lexeResult.stderr)) {
+      throw new Error(
+        `api-surface/probe.mjs Lexe probe stderr matched teardown guard ${TEARDOWN_GUARD}. ` +
+          `See ${path.relative(root, logPath)}.`
+      );
+    }
+    const lexePayload = parseParityJson(lexeResult.stdout, "Lexe API surface");
+
+    const allowlist = JSON.parse(await fs.readFile(allowlistPath, "utf8"));
+    const result = compareApiSurface(nodePayload, lexePayload, allowlist);
+    for (const w of result.warnings) {
+      logParts.push(`WARN: ${w}`);
+      console.warn(w);
+    }
+    for (const f of result.failures) {
+      logParts.push(`FAIL: ${f}`);
+      console.error(`FAIL: ${f}`);
+    }
+    const summaryLine =
+      `API surface check: ${result.summary.modulesChecked} modules, ${result.summary.globalsChecked} globals, ` +
+      `${result.summary.failureCount} failures, ${result.summary.staleCount} stale allowlist entries.`;
+    logParts.push(summaryLine);
+    console.log(summaryLine);
+
+    if (!result.ok) {
+      throw new Error(
+        `API surface parity check failed (${result.summary.failureCount} failures, ${result.summary.staleCount} stale). ` +
+          `See ${path.relative(root, logPath)}.`
+      );
+    }
+  } finally {
+    await writeLog(logPath, logParts);
+  }
 }
 
 async function runNodeSqliteCompat(testCase, directory, lexe, logPath, root) {

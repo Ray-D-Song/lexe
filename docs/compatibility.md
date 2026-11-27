@@ -8,29 +8,29 @@
 | node:assert | ✔︎ | ✔︎ | — |
 | node:async_hooks | ✔︎ | ✔︎⚠️ | Public `createHook()` disabled by default (`LEXE_ASYNC_HOOKS=1`) ([details](#nodeasync_hooks)) |
 | node:buffer | ✔︎ | ✔︎⚠️ | 31-bit `MAX_LENGTH` (`2147483647`) due to QuickJS-ng `ArrayBuffer` limit ([details](#nodebuffer)) |
-| node:child_process | ✔︎ | — |
+| node:child_process | ✔︎ | ✔︎⚠️ | Missing internal `_forkChild` |
 | node:cluster | ✔︎ | ✘ | Not implemented |
-| node:console | ✔︎ | ✔︎ | — |
+| node:console | ✔︎ | ✔︎⚠️ | Missing `context`, `createTask`, and internal stream/timer fields |
 | node:constants | ✔︎ | ✔︎ | — |
 | node:crypto | ✔︎ | ✔︎⚠️ | WebCrypto and partial classic ciphers, signatures, keys, X.509, ECDH, and HKDF; algorithm/backend limitations remain ([details](#nodecrypto)) |
-| node:dgram | ✔︎ | ✔︎ | — |
+| node:dgram | ✔︎ | ✔︎⚠️ | Missing internal `_createSocketHandle` |
 | node:diagnostics_channel | ✔︎ | ✔︎ | — |
 | node:dns | ✔︎ | ✔︎ | — |
 | node:dns/promises | ✔︎ | ✔︎ | — |
-| node:events | ✔︎ | ✔︎ | — |
-| node:fs | ✔︎ | ✔︎ | — |
+| node:events | ✔︎ | ✔︎⚠️ | Missing `kMaxEventTargetListeners`, `kMaxEventTargetListenersWarned`, and legacy `init`/`usingDomains` |
+| node:fs | ✔︎ | ✔︎⚠️ | Missing deprecated top-level `F_OK`/`R_OK`/`W_OK`/`X_OK` aliases (available on `fs.constants`) |
 | node:fs/promises | ✔︎ | ✔︎ | — |
-| node:http | ✔︎ | ✔︎ | — |
-| node:http2 | ✔︎ | ✔︎ | Native HTTP/2 ([notes](#nodehttp2)) |
+| node:http | ✔︎ | ✔︎⚠️ | Missing `CloseEvent`, `MessageEvent`, and internal `_connectionListener` |
+| node:http2 | ✔︎ | ✔︎⚠️ | Native HTTP/2 surface; `performServerHandshake`, server push, and streaming server request bodies are unimplemented ([notes](#nodehttp2)) |
 | node:https | ✔︎ | ✔︎⚠️ | Inherits `node:tls` limitations; requires TLS feature build ([details](#nodehttps)) |
 | node:inspector | ✔︎ | ✔︎⚠️ | `url()` returns `undefined`; `Session` shim reports unavailable protocol operations ([details](#nodeinspector)) |
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
 | node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
-| node:net | ✔︎ | ✔︎ | — |
+| node:net | ✔︎ | ✔︎⚠️ | Missing legacy `Stream` alias and internal `_createServerHandle`/`_normalizeArgs` |
 | node:os | ✔︎ | ✔︎ | — |
 | node:path | ✔︎ | ✔︎ | — |
-| node:perf_hooks | ✔︎ | ✔︎ | — |
-| node:process | ✔︎ | ✔︎ | Runtime identity ([notes](#nodeprocess)) |
+| node:perf_hooks | ✔︎ | ✔︎⚠️ | Missing 13 internal `constants` keys |
+| node:process | ✔︎ | ✔︎⚠️ | Runtime identity; missing `debugPort`, `reallyExit`, `threadCpuUsage`, `getgroups`/`setgroups`, and internal hooks ([notes](#nodeprocess)) |
 | node:querystring | ✔︎ | ✔︎ | — |
 | node:readline | ✔︎ | ✔︎ | — |
 | node:readline/promises | ✔︎ | ✔︎ | — |
@@ -47,13 +47,13 @@
 | node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎ | — |
-| node:util | ✔︎ | ✔︎ | — |
+| node:util | ✔︎ | ✔︎⚠️ | Missing `getCallSite`, deprecated `isArray`, and internal `_errnoException`/`_exceptionWithHostPort` |
 | node:util/types | ✔︎ | ✔︎ | — |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; structured-clone-backed serialization; missing V8 heap snapshots and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
 | node:wasi | ✔︎ | ✔︎⚠️ | WASI Preview 1 (`WASI({ version: 'preview1', args, env, preopens, returnOnExit, stdin, stdout, stderr })`, `wasiImport`, `getImportObject()`, `start()`, `initialize()`, JS overrides); backed by `wasmz` (no WASI Preview 2) ([details](#nodewasi)) |
 | node:worker_threads | ✔︎ | ✔︎⚠️ | Missing V8 `Worker.prototype.getHeapSnapshot()` ([details](#nodeworker_threads)) |
-| node:zlib | ✔︎ | ✔︎ | — |
+| node:zlib | ✔︎ | ✔︎⚠️ | Missing Zstandard (`ZSTD_*`) bindings/constants, `codes`, and top-level `DEFLATE`/`GZIP` aliases |
 
 | [lexe API](https://github.com/Ray-D-Song/lexe/blob/main/API.md) | Node.js | lexe |
 | --- | --- | --- |
@@ -268,7 +268,8 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
 
 ### `node:http2`
 
-- Implemented natively: `createServer`, `createSecureServer`, `connect`, settings helpers, and constants.
+- Implemented natively: `createServer`, `createSecureServer`, `connect`, `Http2ServerRequest`, `Http2ServerResponse`, `getDefaultSettings`, 6-byte `getPackedSettings`/`getUnpackedSettings`, `sensitiveHeaders`, and full `constants` (253 entries).
+- `performServerHandshake` throws `ERR_HTTP2_ERROR`, server push (`createPushResponse`) throws `ERR_HTTP2_PUSH_DISABLED`, and server request bodies are not streamed into `Http2ServerRequest` yet.
 - Browser builds may still use the embedded load-time stub when the native module is unavailable.
 
 ### `node:process`

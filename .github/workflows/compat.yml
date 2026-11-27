@@ -71,6 +71,8 @@ jobs:
               - 'refs/**'
               - 'linker/**'
               - 'tests/**'
+              - 'scripts/**'
+              - 'docs/compatibility.md'
               - 'fixtures/**'
               - '**/*.ts'
               - '**/*.mjs'
@@ -193,6 +195,8 @@ jobs:
           }
 
           linux_cases = []
+          if flags["core"]:
+              linux_cases.append({"case": "api-surface", "node": "24.3.0"})
           if flags["db_compat"]:
               linux_cases.append({"case": "mysql2", "node": "22.18.0"})
               linux_cases.append({"case": "node-postgres", "node": "22.18.0"})
@@ -476,6 +480,9 @@ jobs:
               ;;
           esac
           node compat/run.mjs "${{ matrix.case }}" target/debug/lexe
+          if [ "${{ matrix.case }}" = "api-surface" ]; then
+            node scripts/check-compat-matrix.mjs
+          fi
       - if: failure()
         uses: actions/upload-artifact@v4
         with:

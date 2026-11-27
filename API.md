@@ -541,9 +541,9 @@ Supports [Agent](https://nodejs.org/api/https.html#class-httpsagent), `globalAge
 
 Node-compatible HTTP/2 surface via native module `lexe_http2`:
 
-- `createServer()` / `createSecureServer()` — h2c or TLS+ALPN `h2`, `(req, res)` callback with `res.end()` buffering.
+- `createServer()` / `createSecureServer()` — h2c or TLS+ALPN `h2`, emitting `(req, res)` as `Http2ServerRequest` and `Http2ServerResponse` instances with response header and `write()`/`end()` buffering.
 - `connect()` — h2c or `https` client session with `request()` and `connect` event.
-- `constants`, `getDefaultSettings()`, `getPackedSettings()`, `getUnpackedSettings()`, and `sensitiveHeaders` are exported from the native module.
+- `Http2ServerRequest`, `Http2ServerResponse`, `performServerHandshake` (throws `ERR_HTTP2_ERROR` until server socket handoff is implemented), `constants` (253 entries), `getDefaultSettings()`, 6-byte `getPackedSettings()` / `getUnpackedSettings()`, and `sensitiveHeaders` are exported from the native module.
 
 ## module
 
