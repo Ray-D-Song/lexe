@@ -165,3 +165,104 @@ describe("TextEncoder", () => {
     expect(() => new TextDecoder(null as any)).toThrow(RangeError);
   });
 });
+
+describe("WHATWG legacy encodings", () => {
+  it("decodes CJK encodings (gbk, gb18030, big5, shift_jis, euc-jp, iso-2022-jp, euc-kr)", () => {
+    const gbk = new TextDecoder("gb2312");
+    expect(gbk.encoding).toBe("gbk");
+    expect(gbk.decode(Uint8Array.of(0xd6, 0xd0, 0xce, 0xc4))).toBe("中文");
+
+    const gb18030 = new TextDecoder("  GB18030\t");
+    expect(gb18030.encoding).toBe("gb18030");
+    // Euro sign in GB18030: 0xA2 0xE3; 4-byte supplementary (U+1F4DE): 0x94 0x39 0xDF 0x36
+    expect(gb18030.decode(Uint8Array.of(0xa2, 0xe3))).toBe("€");
+    expect(gb18030.decode(Uint8Array.of(0x94, 0x39, 0xdf, 0x36))).toBe("📞");
+
+    const big5 = new TextDecoder("big5");
+    expect(big5.encoding).toBe("big5");
+    expect(big5.decode(Uint8Array.of(0xa4, 0xa4, 0xa4, 0xe5))).toBe("中文");
+
+    const sjis = new TextDecoder("sjis");
+    expect(sjis.encoding).toBe("shift_jis");
+    expect(sjis.decode(Uint8Array.of(0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea))).toBe("日本語");
+
+    const eucJp = new TextDecoder("euc-jp");
+    expect(eucJp.encoding).toBe("euc-jp");
+    expect(eucJp.decode(Uint8Array.of(0xc6, 0xfc, 0xcb, 0xdc, 0xb8, 0xec))).toBe("日本語");
+
+    const iso2022 = new TextDecoder("iso-2022-jp");
+    expect(iso2022.encoding).toBe("iso-2022-jp");
+    expect(
+      iso2022.decode(Uint8Array.of(0x1b, 0x24, 0x42, 0x46, 0x7c, 0x4b, 0x5c, 0x1b, 0x28, 0x42))
+    ).toBe("日本");
+
+    const eucKr = new TextDecoder("ks_c_5601-1987");
+    expect(eucKr.encoding).toBe("euc-kr");
+    expect(eucKr.decode(Uint8Array.of(0xc7, 0xd1, 0xb1, 0xdb))).toBe("한글");
+  });
+
+  it("decodes single-byte encodings and replacement / x-user-defined", () => {
+    const win1251 = new TextDecoder("cp1251");
+    expect(win1251.encoding).toBe("windows-1251");
+    expect(win1251.decode(Uint8Array.of(0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2))).toBe("Привет");
+
+    const iso2 = new TextDecoder("iso-8859-2");
+    expect(iso2.encoding).toBe("iso-8859-2");
+    expect(iso2.decode(Uint8Array.of(0xc8, 0xf8))).toBe("Čř");
+
+    const koi8 = new TextDecoder("koi8-r");
+    expect(koi8.encoding).toBe("koi8-r");
+    expect(koi8.decode(Uint8Array.of(0xf0, 0xd2, 0xc9, 0xd7, 0xc5, 0xd4))).toBe("Привет");
+
+    const userDef = new TextDecoder("x-user-defined");
+    expect(userDef.encoding).toBe("x-user-defined");
+    expect(userDef.decode(Uint8Array.of(0x41, 0x80))).toBe("A\uF780");
+
+    const rep = new TextDecoder("iso-2022-kr");
+    expect(rep.encoding).toBe("replacement");
+    expect(rep.decode(new Uint8Array())).toBe("");
+    expect(rep.decode(Uint8Array.of(0x41, 0x42))).toBe("\uFFFD");
+    const repFatal = new TextDecoder("replacement", { fatal: true });
+    expect(repFatal.decode(new Uint8Array())).toBe("");
+    expect(() => repFatal.decode(Uint8Array.of(0x41))).toThrow(TypeError);
+  });
+
+  it("streams multi-byte legacy encodings and honors fatal mode via TextDecoder, util.TextDecoder, and TextDecoderStream", async () => {
+    const decoder = new TextDecoder("gbk");
+    expect(decoder.decode(Uint8Array.of(0xd6), { stream: true })).toBe("");
+    expect(decoder.decode(Uint8Array.of(0xd0, 0xce), { stream: true })).toBe("中");
+    expect(decoder.decode(Uint8Array.of(0xc4))).toBe("文");
+
+    // Trailing incomplete byte on flush becomes U+FFFD in lossy mode, TypeError in fatal mode.
+    decoder.decode(Uint8Array.of(0xd6), { stream: true });
+    expect(decoder.decode()).toBe("\uFFFD");
+
+    const fatalGbk = new TextDecoder("gbk", { fatal: true });
+    expect(fatalGbk.decode(Uint8Array.of(0x80))).toBe("€");
+    expect(() => fatalGbk.decode(Uint8Array.of(0x81, 0x30))).toThrow(TypeError);
+    fatalGbk.decode(Uint8Array.of(0xd6), { stream: true });
+    expect(() => fatalGbk.decode()).toThrow(TypeError);
+    // Cleanly usable after error
+    expect(fatalGbk.decode(Uint8Array.of(0xd6, 0xd0))).toBe("中");
+
+    const util = await import("node:util");
+    expect(new util.TextDecoder("shift_jis").decode(Uint8Array.of(0x93, 0xfa))).toBe("日");
+
+    const rs = new ReadableStream({
+      start(c) {
+        c.enqueue(Uint8Array.of(0xd6));
+        c.enqueue(Uint8Array.of(0xd0, 0xce));
+        c.enqueue(Uint8Array.of(0xc4));
+        c.close();
+      },
+    });
+    const out: string[] = [];
+    const reader = rs.pipeThrough(new TextDecoderStream("gbk")).getReader();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      out.push(value);
+    }
+    expect(out.join("")).toBe("中文");
+  });
+});

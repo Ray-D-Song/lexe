@@ -47,7 +47,7 @@
 | node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎ | — |
-| node:util | ✔︎ | ✔︎⚠️ | Limited `TextDecoder` encodings (`utf-8`, `utf-16le`, `utf-16be`, `windows-1252`) ([details](#nodeutil-and-nodeutiltypes)) |
+| node:util | ✔︎ | ✔︎ | — |
 | node:util/types | ✔︎ | ✔︎ | — |
 | node:v8 | ✔︎ | ✔︎⚠️ | QuickJS memory stats (`"quickjs"` heap space); `setFlagsFromString` no-op; structured-clone-backed serialization; missing V8 heap snapshots and `GCProfiler` ([details](#nodev8)) |
 | node:vm | ✔︎ | ✔︎ | Full API (`Script`, `createContext`/`isContext`, `runIn*Context`, `compileFunction`, `SourceTextModule`, `SyntheticModule`, `measureMemory`, `cachedData`, `timeout`, `codeGeneration`, `microtaskMode`, `importModuleDynamically`) |
@@ -68,7 +68,7 @@
 | CONSOLE | ✔︎ | — |
 | DOM | ✔︎ | — |
 | ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
-| ENCODING | ✔︎⚠️ | Supports `utf-8`, `utf-16le`, `utf-16be`, `windows-1252` (plus `hex`/`base64`) only; missing WHATWG legacy encodings ([details](#encoding)) |
+| ENCODING | ✔︎ | — |
 | FETCH | ✔︎⚠️ | No `file:` URL fetch; omits browser policy controls (`credentials`, `referrer`, `integrity`, `caches`, CORS); WPT edge cases ([details](#fetch)) |
 | FILEAPI | ✔︎ | — |
 | HR-TIME | ✔︎ | — |
@@ -155,12 +155,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `TLSSocket.renegotiate()` fails with `"renegotiation not supported"`.
 - `TLSSocket.write()` always returns `true` without backpressure or `"drain"` signaling.
 
-#### `node:util` and `node:util/types`
-
-- `util.inspect()` and `util.formatWithOptions()` support `colors`, `depth`, `showHidden`, `maxArrayLength`, `maxStringLength`, `compact`, `sorted`, `customInspect`, `showProxy`, `getters` (`true`, `"get"`, `"set"`), `numericSeparator`, and `breakLength`.
-- `util.TextDecoder` supports only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus `hex`/`base64`), lacking full WHATWG legacy encodings.
-- `node:util/types` matches Node 24 exports, including native checks for `isExternal()`, `isKeyObject()`, and `isCryptoKey()` when those subsystems are enabled.
-
 #### `node:v8`
 
 - Backed by QuickJS `JS_ComputeMemoryUsage` rather than V8: `getHeapSpaceStatistics()` always returns a single `"quickjs"` space, and `heap_size_limit` falls back to `Number.MAX_SAFE_INTEGER` when `malloc_limit === 0`.
@@ -180,11 +174,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Full ES2024 RegExp `/v` (`unicodeSets`) is supported, including `--`/`&&`/nested character classes, `\q{...}`, and Unicode 17.0.0 emoji properties of strings (`Basic_Emoji`, `Emoji_Keycap_Sequence`, `RGI_Emoji_*`, `RGI_Emoji`).
 - `ShadowRealm` is not implemented.
 - V8-specific `Error.captureStackTrace` and `CallSite` methods (`isEval`, `isNative`, `isConstructor`, `isToplevel`, `getEvalOrigin`, `getMethodName`, `getTypeName`, `getThis`) are stub polyfills.
-
-#### `ENCODING`
-
-- `TextDecoder` / `TextDecoderStream` support only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus non-standard `hex`/`base64`).
-- Missing WHATWG legacy encodings (`iso-2022-jp`, `shift_jis`, `euc-jp`, `gbk`, `gb18030`, `big5`, `euc-kr`, `iso-8859-2`..`16`, `windows-1250`..`1258` except `1252`, and replacement-encoding behavior).
 
 #### `FETCH`
 
@@ -232,27 +221,21 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
 
-- [ ] **1. `ENCODING` + `node:util` (`TextDecoder` / `TextDecoderStream`) legacy encodings**
-  - **Gap**: Currently only `utf-8`, `utf-16le`, `utf-16be`, and `windows-1252` (plus non-standard `hex`/`base64`) are supported; WHATWG legacy encodings (`shift_jis`, `euc-jp`, `iso-2022-jp`, `gbk`, `gb18030`, `big5`, `euc-kr`, `iso-8859-*`, remaining `windows-125*`, `replacement`) are missing.
-  - **Options**:
-    - **A (Full WHATWG via `encoding_rs`)**: Integrate `encoding_rs` cleanly to achieve full `ENCODING` & `util.TextDecoder` parity (`✔︎`), adding legacy encoding lookup tables to release binaries.
-    - **B (Optional feature / keep minimal core)**: Keep default binaries slim and gate full WHATWG legacy encodings behind a Cargo feature flag, documenting the intentional core limit.
-
-- [ ] **2. `Intl` + `Temporal` localization & remaining types**
+- [ ] **1. `Intl` + `Temporal` localization & remaining types**
   - **Gap**: `Intl` lacks `PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `Locale`, `DurationFormat`, and full ICU locale/calendar/numbering-system data; `Temporal` lacks `PlainYearMonth`, `PlainMonthDay`, non-ISO calendars, and `Intl`-backed `toLocaleString()`.
   - **Options**:
     - **A (Pure-logic parity + minimal CLDR)**: Implement `Intl.Locale`, `Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`, and core constructors/rule subsets (`PluralRules`, `RelativeTimeFormat`, `DisplayNames`, `DurationFormat`) without embedding heavy full ICU4X data blobs.
     - **B (Full ICU4X static data)**: Bundle compiled ICU4X locale/calendar tables for full multi-locale/non-ISO calendar parity (significant binary size increase).
     - **C (Accept partial / feature-gate heavy ICU)**: Fix `PlainYearMonth`/`PlainMonthDay`/`Intl.Locale` and optionally gate full ICU data behind a Cargo feature or external data path.
 
-- [ ] **3. `WASM-JS-API-2` & `WASM-WEB-API-2` engine capabilities**
+- [ ] **2. `WASM-JS-API-2` & `WASM-WEB-API-2` engine capabilities**
   - **Gap**: Backed by `wasmi` interpreter (no JIT, no GC/exceptions/threads/Memory64/JSPI/`v128` boundary, copied `Memory.buffer`, retained `externref`s, full-response buffering in `compileStreaming`/`instantiateStreaming`).
   - **Options**:
     - **A (Enhance on `wasmi`)**: Fix what is feasible inside `wasmi` (e.g., incremental/streamed Wasm framing or zero-copy/dirty-sync views where possible, `v128` boundary handling, `externref` cleanup), accepting spec limits (`GC`, `exceptions`, `Memory64`, `threads`).
     - **B (Add/switch to `wasmtime` backend)**: Support full JIT, shared linear memory, SIMD/GC/exceptions/threads (at large binary size, build time, and static-musl complexity cost), optionally via a Cargo feature.
     - **C (Keep `wasmi` as documented boundary)**: Maintain `wasmi` lightweight interpreter limits without heavy runtime replacement.
 
-- [ ] **4. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
+- [ ] **3. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
   - **Gap**:
     - Crypto/WebCrypto: Missing `createSign`/`createVerify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `DiffieHellman`, `crypto.hash()`, `X448`/`Ed448`/`Argon2`/`AES-OCB`/`ChaCha20-Poly1305`, some `deriveBits`/`deriveKey` edge cases, and `graviola` backend parity.
     - TLS/HTTPS: Rejects `pfx`, `ciphers`, `sigalgs`, `dhparam`, `crl`, `psk`, `ocsp`, `session`, `ticket`, async `SNICallback`, `ALPNCallback`, soft mTLS, encrypted private keys on rustls, TLS < 1.2, `renegotiate()`, and `TLSSocket.write()` `"drain"` backpressure; `https` depends on TLS feature builds.
@@ -261,26 +244,26 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
     - **B (Backend expansion / OpenSSL unification)**: Allow `tls-openssl` or broader multi-backend support for legacy options (`TLS < 1.2`, arbitrary `ciphers`, `renegotiate()`, `ocsp`/`crl`).
     - **C (Keep minimal crypto/TLS subset)**: Target only specific algorithms needed by common Node/WinterTC libraries and accept remaining gaps.
 
-- [ ] **5. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
+- [ ] **4. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
   - **Gap**: Missing `stripTypeScriptTypes`, `module.register()` (async loader hooks thread), `Module._load`, and on-disk bytecode compile cache (`enableCompileCache` reports `FAILED`).
   - **Options**:
     - **A (Implement lightweight/full features)**: Add `stripTypeScriptTypes` (decide lightweight lexer/stripper vs `oxc` full TS parser), `Module._load`, on-disk QuickJS bytecode compile cache (`enableCompileCache`), and `module.register` loader hooks.
     - **B (Selective subset)**: Add `stripTypeScriptTypes` + `Module._load` + disk compile cache while keeping `module.register` omitted (or async single-isolate hook adapter without dedicated loader worker overhead).
     - **C (Document current CJS/sync hooks boundary)**: Keep `registerHooks` (sync) without worker-based `module.register` or heavy parser deps.
 
-- [ ] **6. `node:async_hooks` (`createHook()` default activation)**
+- [ ] **5. `node:async_hooks` (`createHook()` default activation)**
   - **Gap**: `AsyncLocalStorage` propagates unconditionally with low overhead; user `createHook()` callbacks only run when `LEXE_ASYNC_HOOKS=1` is set.
   - **Options**:
     - **A (Enable on-demand when `createHook().enable()` is called)**: Keep zero overhead when no hook is created/enabled, and activate Promise/async tracking dynamically as soon as any user `AsyncHook.enable()` is called (eliminating the `LEXE_ASYNC_HOOKS=1` gate while preserving default fast-path throughput).
     - **B (Always keep `LEXE_ASYNC_HOOKS=1` opt-in)**: Preserve the explicit environment gate to guarantee zero accidental user-hook activation overhead in production services.
 
-- [ ] **7. `FETCH` policy boundaries & remaining WPT edge cases**
+- [ ] **6. `FETCH` policy boundaries & remaining WPT edge cases**
   - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
   - **Options**:
     - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
     - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
 
-- [ ] **8. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+- [ ] **7. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
   - **Gap**:
     - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
     - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).

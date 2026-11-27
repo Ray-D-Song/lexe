@@ -19,6 +19,7 @@ pub enum Encoder {
     Utf8,
     Utf16le,
     Utf16be,
+    Whatwg(&'static encoding_rs::Encoding),
 }
 
 const ENCODING_MAP: phf::Map<&'static str, Encoder> = phf::phf_map! {
@@ -70,10 +71,20 @@ impl Encoder {
 
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(encoding: &str) -> Result<Self, String> {
-        ENCODING_MAP
-            .get(encoding.trim_ascii().to_ascii_lowercase().as_str())
-            .cloned()
-            .ok_or_else(|| ["The \"", encoding, "\" encoding is not supported"].concat())
+        let lower = encoding.trim_ascii().to_ascii_lowercase();
+        if let Some(found) = ENCODING_MAP.get(lower.as_str()) {
+            return Ok(found.clone());
+        }
+        if let Some(enc) = encoding_rs::Encoding::for_label(encoding.as_bytes()) {
+            return Ok(match enc {
+                e if e == encoding_rs::UTF_8 => Self::Utf8,
+                e if e == encoding_rs::UTF_16LE => Self::Utf16le,
+                e if e == encoding_rs::UTF_16BE => Self::Utf16be,
+                e if e == encoding_rs::WINDOWS_1252 => Self::Windows1252,
+                other => Self::Whatwg(other),
+            });
+        }
+        Err(["The \"", encoding, "\" encoding is not supported"].concat())
     }
 
     pub fn encode_to_string(&self, bytes: &[u8], lossy: bool) -> Result<String, String> {
@@ -84,6 +95,10 @@ impl Encoder {
             Self::Windows1252 => Ok(bytes_to_windows1252_string(bytes)),
             Self::Utf16le => bytes_to_utf16_string(bytes, Endian::Little, lossy),
             Self::Utf16be => bytes_to_utf16_string(bytes, Endian::Big, lossy),
+            Self::Whatwg(enc) => {
+                let mut dec = enc.new_decoder_without_bom_handling();
+                incremental::decode_whatwg_with_decoder(&mut dec, bytes, lossy, true)
+            },
         }
     }
 
@@ -92,7 +107,9 @@ impl Encoder {
         match self {
             Self::Hex => Ok(bytes_to_hex(bytes)),
             Self::Base64 => Ok(bytes_to_b64(bytes)),
-            Self::Utf8 | Self::Windows1252 | Self::Utf16le | Self::Utf16be => Ok(bytes.to_vec()),
+            Self::Utf8 | Self::Windows1252 | Self::Utf16le | Self::Utf16be | Self::Whatwg(_) => {
+                Ok(bytes.to_vec())
+            },
         }
     }
 
@@ -100,7 +117,7 @@ impl Encoder {
         match self {
             Self::Hex => bytes_from_hex(bytes),
             Self::Base64 => bytes_from_b64(bytes),
-            Self::Utf8 | Self::Windows1252 | Self::Utf16le | Self::Utf16be => {
+            Self::Utf8 | Self::Windows1252 | Self::Utf16le | Self::Utf16be | Self::Whatwg(_) => {
                 Ok(bytes.into().into())
             },
         }
@@ -119,6 +136,7 @@ impl Encoder {
                 .encode_utf16()
                 .flat_map(|utf16| utf16.to_be_bytes())
                 .collect::<Vec<u8>>()),
+            Self::Whatwg(enc) => Ok(enc.encode(&string).0.into_owned()),
         }
     }
 
@@ -130,7 +148,54 @@ impl Encoder {
             Self::Utf8 => "utf-8",
             Self::Utf16le => "utf-16le",
             Self::Utf16be => "utf-16be",
+            Self::Whatwg(enc) => whatwg_canonical_label(enc),
         }
+    }
+}
+
+pub(crate) fn whatwg_canonical_label(enc: &'static encoding_rs::Encoding) -> &'static str {
+    match enc {
+        e if e == encoding_rs::BIG5 => "big5",
+        e if e == encoding_rs::EUC_JP => "euc-jp",
+        e if e == encoding_rs::EUC_KR => "euc-kr",
+        e if e == encoding_rs::GB18030 => "gb18030",
+        e if e == encoding_rs::GBK => "gbk",
+        e if e == encoding_rs::IBM866 => "ibm866",
+        e if e == encoding_rs::ISO_2022_JP => "iso-2022-jp",
+        e if e == encoding_rs::ISO_8859_2 => "iso-8859-2",
+        e if e == encoding_rs::ISO_8859_3 => "iso-8859-3",
+        e if e == encoding_rs::ISO_8859_4 => "iso-8859-4",
+        e if e == encoding_rs::ISO_8859_5 => "iso-8859-5",
+        e if e == encoding_rs::ISO_8859_6 => "iso-8859-6",
+        e if e == encoding_rs::ISO_8859_7 => "iso-8859-7",
+        e if e == encoding_rs::ISO_8859_8 => "iso-8859-8",
+        e if e == encoding_rs::ISO_8859_8_I => "iso-8859-8-i",
+        e if e == encoding_rs::ISO_8859_10 => "iso-8859-10",
+        e if e == encoding_rs::ISO_8859_13 => "iso-8859-13",
+        e if e == encoding_rs::ISO_8859_14 => "iso-8859-14",
+        e if e == encoding_rs::ISO_8859_15 => "iso-8859-15",
+        e if e == encoding_rs::ISO_8859_16 => "iso-8859-16",
+        e if e == encoding_rs::KOI8_R => "koi8-r",
+        e if e == encoding_rs::KOI8_U => "koi8-u",
+        e if e == encoding_rs::MACINTOSH => "macintosh",
+        e if e == encoding_rs::REPLACEMENT => "replacement",
+        e if e == encoding_rs::SHIFT_JIS => "shift_jis",
+        e if e == encoding_rs::WINDOWS_874 => "windows-874",
+        e if e == encoding_rs::WINDOWS_1250 => "windows-1250",
+        e if e == encoding_rs::WINDOWS_1251 => "windows-1251",
+        e if e == encoding_rs::WINDOWS_1252 => "windows-1252",
+        e if e == encoding_rs::WINDOWS_1253 => "windows-1253",
+        e if e == encoding_rs::WINDOWS_1254 => "windows-1254",
+        e if e == encoding_rs::WINDOWS_1255 => "windows-1255",
+        e if e == encoding_rs::WINDOWS_1256 => "windows-1256",
+        e if e == encoding_rs::WINDOWS_1257 => "windows-1257",
+        e if e == encoding_rs::WINDOWS_1258 => "windows-1258",
+        e if e == encoding_rs::X_MAC_CYRILLIC => "x-mac-cyrillic",
+        e if e == encoding_rs::X_USER_DEFINED => "x-user-defined",
+        e if e == encoding_rs::UTF_8 => "utf-8",
+        e if e == encoding_rs::UTF_16LE => "utf-16le",
+        e if e == encoding_rs::UTF_16BE => "utf-16be",
+        other => other.name(),
     }
 }
 

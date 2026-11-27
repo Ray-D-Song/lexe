@@ -1369,7 +1369,7 @@ export function print(value: any): void;
 [TextEncoderStream](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream)
 
 > [!NOTE]
-> `TextEncoderStream` and `TextDecoderStream` are provided by the `stream/web` builtin and are also available on `globalThis` when that module is loaded.
+> `TextDecoder` and `TextDecoderStream` support all WHATWG Encoding Standard encodings (via `encoding_rs`, including `utf-8`, `utf-16le`/`be`, `gbk`, `gb18030`, `big5`, `shift_jis`, `euc-jp`, `iso-2022-jp`, `euc-kr`, `windows-1250`..`1258`, `iso-8859-*`, `koi8-*`, `replacement`, `x-user-defined`, plus Lexe's `hex`/`base64`). `TextEncoderStream` and `TextDecoderStream` are provided by the `stream/web` builtin and are also available on `globalThis` when that module is loaded.
 
 ## FETCH
 

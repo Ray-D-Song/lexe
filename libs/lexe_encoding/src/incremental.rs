@@ -12,6 +12,7 @@ pub struct IncrementalDecoder {
     pending_bom: Option<Vec<u8>>,
     utf16_odd_byte: Option<u8>,
     utf16_lead_surrogate: Option<u16>,
+    whatwg: Option<encoding_rs::Decoder>,
 }
 
 impl IncrementalDecoder {
@@ -25,6 +26,7 @@ impl IncrementalDecoder {
         self.pending_bom = None;
         self.utf16_odd_byte = None;
         self.utf16_lead_surrogate = None;
+        self.whatwg = None;
     }
 
     pub fn decode_chunk(
@@ -104,6 +106,7 @@ impl IncrementalDecoder {
                     self.pending.clear();
                 }
             },
+            Encoder::Whatwg(_) => {},
         }
 
         self.reset();
@@ -164,8 +167,66 @@ impl IncrementalDecoder {
                     encoder.encode_to_string(&bytes, lossy)
                 }
             },
+            Encoder::Whatwg(enc) => {
+                let dec = self
+                    .whatwg
+                    .get_or_insert_with(|| enc.new_decoder_without_bom_handling());
+                let res = decode_whatwg_with_decoder(dec, &bytes, lossy, !stream || bom_finalize);
+                if res.is_err() {
+                    self.whatwg = None;
+                }
+                res
+            },
         }
     }
+}
+
+pub(crate) fn decode_whatwg_with_decoder(
+    decoder: &mut encoding_rs::Decoder,
+    input: &[u8],
+    lossy: bool,
+    last: bool,
+) -> Result<String, String> {
+    let cap = if lossy {
+        decoder.max_utf8_buffer_length(input.len())
+    } else {
+        decoder.max_utf8_buffer_length_without_replacement(input.len())
+    }
+    .unwrap_or(input.len().saturating_mul(3).saturating_add(4));
+    let mut dst = String::with_capacity(cap);
+    let mut offset = 0usize;
+    loop {
+        let src = &input[offset..];
+        if lossy {
+            let (result, read, _) = decoder.decode_to_string(src, &mut dst, last);
+            offset += read;
+            match result {
+                encoding_rs::CoderResult::InputEmpty => break,
+                encoding_rs::CoderResult::OutputFull => {
+                    let more = decoder
+                        .max_utf8_buffer_length(input.len() - offset)
+                        .unwrap_or(64);
+                    dst.reserve(more.max(64));
+                },
+            }
+        } else {
+            let (result, read) = decoder.decode_to_string_without_replacement(src, &mut dst, last);
+            offset += read;
+            match result {
+                encoding_rs::DecoderResult::InputEmpty => break,
+                encoding_rs::DecoderResult::OutputFull => {
+                    let more = decoder
+                        .max_utf8_buffer_length_without_replacement(input.len() - offset)
+                        .unwrap_or(64);
+                    dst.reserve(more.max(64));
+                },
+                encoding_rs::DecoderResult::Malformed(_, _) => {
+                    return Err("The encoded data was not valid.".to_string());
+                },
+            }
+        }
+    }
+    Ok(dst)
 }
 
 fn bom_prefix(encoder: &Encoder) -> &'static [u8] {

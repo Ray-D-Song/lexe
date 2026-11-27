@@ -2,6 +2,11 @@
 
 All notable changes to Lexe are documented in this file.
 
+## [Unreleased]
+
+- Completed `ENCODING` and `node:util` `TextDecoder` / `TextDecoderStream` compatibility (`ENCODING` and `node:util` now `✔︎` in `docs/compatibility.md`):
+  - Integrated `encoding_rs` into `libs/lexe_encoding` (`Encoder::Whatwg` + streaming `IncrementalDecoder`), adding full WHATWG Encoding Standard support (`gbk`/`gb2312`, `gb18030`, `big5`, `shift_jis`, `euc-jp`, `iso-2022-jp`, `euc-kr`, `iso-8859-2`..`16`, `windows-1250`..`1258`, `windows-874`, `koi8-r`/`koi8-u`, `ibm866`, `macintosh`, `x-mac-cyrillic`, `x-user-defined`, and `replacement`) with lowercase canonical labels, streaming chunk state, and `fatal` `TypeError` handling.
+
 ## [0.1.9] - 2026-11-27
 
 - Improved `node:v8` compatibility (`docs/compatibility.md`):
