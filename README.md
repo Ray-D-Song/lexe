@@ -10,6 +10,8 @@ Lexe is designed for low-latency, low-footprint backend services and Agent Harne
 
 It's built in Rust, utilizing QuickJS as the JavaScript engine, ensuring efficient memory usage and swift startup.
 
+<a href="https://hellogithub.com/repository/Ray-D-Song/lexe" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=9a55d6aa58d2467086642f3fdbd2cc1b&claim_uid=4QeJb78I1ZfwtVi&theme=dark" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
+
 ## Install
 
 ```shell
