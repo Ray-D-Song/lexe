@@ -106,6 +106,11 @@ const cases = {
     probe: "probe.mjs",
     allowlist: "allowlist.json",
   },
+  "http2-server": {
+    directory: "compat/http2-server",
+    script: "test.mjs",
+    successMarker: "http2-server compat OK",
+  },
   "napi-hello": {
     directory: "compat/napi-hello",
     buildCommand: "yarn build",
@@ -150,7 +155,7 @@ const cases = {
 const testCase = cases[name];
 if (!testCase || !lexePath) {
   throw new Error(
-    "Usage: node compat/run.mjs <next|vite-plus|better-sqlite3|mysql2|node-postgres|v8-hello|napi-hello|node-sqlite|api-surface> <lexe>"
+    "Usage: node compat/run.mjs <next|vite-plus|better-sqlite3|mysql2|node-postgres|v8-hello|napi-hello|node-sqlite|api-surface|http2-server> <lexe>"
   );
 }
 
@@ -169,7 +174,8 @@ if (name === "next") {
   name === "mysql2" ||
   name === "node-postgres" ||
   name === "napi-hello" ||
-  name === "v8-hello"
+  name === "v8-hello" ||
+  name === "http2-server"
 ) {
   await runScriptCompat(testCase, directory, lexe, logPath, root);
 } else {

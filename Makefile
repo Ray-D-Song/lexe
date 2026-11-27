@@ -148,12 +148,21 @@ run-ssr: js
 	cargo build
 	cd example/functions && yarn build && cd build && ../../../target/debug/lexe
 
-compat: compat-api-surface compat-next compat-vite-plus compat-better-sqlite3 compat-mysql compat-node-postgres compat-napi compat-v8 compat-node-sqlite
+compat: compat-api-surface compat-http2 compat-next compat-vite-plus compat-better-sqlite3 compat-mysql compat-node-postgres compat-napi compat-v8 compat-node-sqlite
 
 compat-api-surface: js
 	$(CARGO) build -p lexe
 	LEXE_BIN=$(LEXE_BIN) node compat/run.mjs api-surface $(LEXE_BIN)
 	node scripts/check-compat-matrix.mjs
+
+compat-http2: js
+	$(CARGO) build -p lexe
+	LEXE_BIN=$(LEXE_BIN) node compat/run.mjs http2-server $(LEXE_BIN)
+
+compat-node-upstream: js
+	$(CARGO) build -p lexe
+	git submodule update --init --depth 1 refs/node
+	node compat/node-upstream/run.mjs $(LEXE_BIN)
 
 compat-v8-hello: compat-v8
 

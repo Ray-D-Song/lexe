@@ -197,6 +197,8 @@ jobs:
           linux_cases = []
           if flags["core"]:
               linux_cases.append({"case": "api-surface", "node": "24.3.0"})
+              linux_cases.append({"case": "http2-server", "node": "24.3.0"})
+              linux_cases.append({"case": "node-upstream", "node": "24.3.0"})
           if flags["db_compat"]:
               linux_cases.append({"case": "mysql2", "node": "22.18.0"})
               linux_cases.append({"case": "node-postgres", "node": "22.18.0"})
@@ -479,9 +481,15 @@ jobs:
             node-sqlite)
               ;;
           esac
-          node compat/run.mjs "${{ matrix.case }}" target/debug/lexe
-          if [ "${{ matrix.case }}" = "api-surface" ]; then
-            node scripts/check-compat-matrix.mjs
+          if [ "${{ matrix.case }}" = "node-upstream" ]; then
+            git submodule sync -- refs/node
+            git submodule update --init --depth 1 refs/node
+            node compat/node-upstream/run.mjs target/debug/lexe --passing-only
+          else
+            node compat/run.mjs "${{ matrix.case }}" target/debug/lexe
+            if [ "${{ matrix.case }}" = "api-surface" ]; then
+              node scripts/check-compat-matrix.mjs
+            fi
           fi
       - if: failure()
         uses: actions/upload-artifact@v4
