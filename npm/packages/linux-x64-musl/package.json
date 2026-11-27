@@ -1,6 +1,6 @@
 {
   "name": "lexe-linux-x64-musl",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Lexe native runtime binary for Linux x64 (musl). Installed automatically by the lexe package; do not depend on it directly.",
   "license": "Apache-2.0",
   "author": "Ray-D-Song",

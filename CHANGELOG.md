@@ -2,7 +2,7 @@
 
 All notable changes to Lexe are documented in this file.
 
-## [Unreleased]
+## [0.1.10] - 2026-11-27
 
 - Replaced `wasmi` with `wasmz` in `lexe_webassembly` and implemented `node:wasi` (`docs/compatibility.md`):
   - Switched `WebAssembly` runtime backend from `wasmi` to `wasmz`, adding Wasm GC, exception handling, typed function references, shared memory (`new WebAssembly.Memory({ initial, maximum, shared: true })`), threads/atomics, and `Memory64` support alongside multi-value, bulk-memory, reference types, and internal SIMD.
@@ -12,6 +12,9 @@ All notable changes to Lexe are documented in this file.
   - Added `Temporal.PlainYearMonth` and `Temporal.PlainMonthDay` (ISO-8601 `iso8601` calendar, `from()`, `compare()`, `with()`, `add()`, `subtract()`, `until()`, `since()`, `toPlainDate()`, `overflow: "constrain" | "reject"`), `PlainDate.prototype.toPlainYearMonth()` / `toPlainMonthDay()`, and fixed `{ year }` parsing in `DateExt::date_with()`.
 - Completed `ENCODING` and `node:util` `TextDecoder` / `TextDecoderStream` compatibility (`ENCODING` and `node:util` now `✔︎` in `docs/compatibility.md`):
   - Integrated `encoding_rs` into `libs/lexe_encoding` (`Encoder::Whatwg` + streaming `IncrementalDecoder`), adding full WHATWG Encoding Standard support (`gbk`/`gb2312`, `gb18030`, `big5`, `shift_jis`, `euc-jp`, `iso-2022-jp`, `euc-kr`, `iso-8859-2`..`16`, `windows-1250`..`1258`, `windows-874`, `koi8-r`/`koi8-u`, `ibm866`, `macintosh`, `x-mac-cyrillic`, `x-user-defined`, and `replacement`) with lowercase canonical labels, streaming chunk state, and `fatal` `TypeError` handling.
+- Expanded `node:http2` compatibility and fixed shutdown lifecycle (`v8_compat` / ASan):
+  - Exported `Http2ServerRequest`, `Http2ServerResponse`, `performServerHandshake`, packed/unpacked settings, and full `constants` on `node:http2`.
+  - Fixed `v8_compat::shutdown_runtime_addr` to run between dropping `JSContext` and freeing `JSRuntime` (eliminating a teardown `heap-use-after-free`), and fell back to the system allocator under ASan builds (`CARGO_CFG_SANITIZE=address`).
 
 ## [0.1.9] - 2026-11-27
 
