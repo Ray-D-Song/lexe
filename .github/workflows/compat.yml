@@ -588,6 +588,9 @@ jobs:
         with:
           toolchain: ${{ matrix.sanitizer == 'address' && 'nightly' || env.RUST_TOOLCHAIN }}
           targets: x86_64-unknown-linux-gnu
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -608,6 +611,9 @@ jobs:
           node-version: 24.3.0
           cache: yarn
       - uses: dtolnay/rust-toolchain@nightly
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
