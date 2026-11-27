@@ -77,8 +77,8 @@ pub fn instantiate_module<'js>(
         ));
     }
 
-    let mut linker = wasmz::Linker::new()
-        .map_err(|err| host.throw_runtime_error(ctx, err.to_string()))?;
+    let mut linker =
+        wasmz::Linker::new().map_err(|err| host.throw_runtime_error(ctx, err.to_string()))?;
     let mut added_wasi_hosts: HashSet<u64> = HashSet::new();
     let mut imported_func_aliases: HashMap<u32, FuncKey> = HashMap::new();
     let mut imported_func_idx: u32 = 0;
@@ -160,8 +160,7 @@ pub fn instantiate_module<'js>(
     }
     sync_res?;
 
-    let exports_obj =
-        build_exports_object(ctx, &host, module, &instance, &imported_func_aliases)?;
+    let exports_obj = build_exports_object(ctx, &host, module, &instance, &imported_func_aliases)?;
     Ok(WasmInstance {
         realm_id: host.realm_id,
         handle: instance,
@@ -359,7 +358,9 @@ fn build_exports_object<'js>(
                     .func_sig
                     .clone()
                     .or_else(|| crate::func_wrapper::sig_from_instance(instance, export.index))
-                    .ok_or_else(|| host.throw_runtime_error(ctx, "missing exported function sig"))?;
+                    .ok_or_else(|| {
+                        host.throw_runtime_error(ctx, "missing exported function sig")
+                    })?;
                 let alias = imported_func_aliases.get(&export.index).copied();
                 crate::func_wrapper::wrap_func(
                     ctx,
@@ -506,7 +507,9 @@ pub fn call_exported_func<'js>(
         .iter()
         .map(|t| t.to_wasmz_kind())
         .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| host.throw_type_error(ctx, "v128 values cannot cross the JS/Wasm boundary"))?;
+        .ok_or_else(|| {
+            host.throw_type_error(ctx, "v128 values cannot cross the JS/Wasm boundary")
+        })?;
 
     let call_result = instance.call_index(func_idx, &inputs, &result_kinds);
     let sync_result = crate::memory::sync_all_wasm_to_js(ctx, &host);

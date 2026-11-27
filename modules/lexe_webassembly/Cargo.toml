@@ -15,7 +15,7 @@ path = "src/lib.rs"
 lexe_utils = { version = "0.1.9", path = "../../libs/lexe_utils", default-features = false }
 rquickjs = { version = "=0.12.1", features = ["loader", "std"], default-features = false }
 wasmparser = { version = "=0.239.0", default-features = false, features = ["validate", "features", "std", "simd"] }
-wasmz = { path = "../../../wasmz/crates/wasmz" }
+wasmz = { git = "https://github.com/Ray-D-Song/wasmz.git", tag = "v0.1.7" }
 
 [dev-dependencies]
 lexe_test = { path = "../../libs/lexe_test" }

@@ -140,7 +140,9 @@ fn extract_module_metadata(bytes: &[u8]) -> std::result::Result<ModuleMetadata, 
                 for rec_group in reader {
                     let rec_group = rec_group.map_err(|err| err.to_string())?;
                     for sub_type in rec_group.into_types() {
-                        if let wasmparser::CompositeInnerType::Func(ft) = &sub_type.composite_type.inner {
+                        if let wasmparser::CompositeInnerType::Func(ft) =
+                            &sub_type.composite_type.inner
+                        {
                             type_sigs.insert(next_type_idx, map_func_type(ft));
                         }
                         next_type_idx += 1;

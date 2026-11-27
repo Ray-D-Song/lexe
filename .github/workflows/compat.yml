@@ -259,6 +259,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -270,6 +273,7 @@ jobs:
           -p lexe_events
           -p lexe_tty
           -p lexe_modules
+          -p lexe_webassembly
           -p lexe_fs
           -p lexe_util
           -p lexe_sqlite
@@ -344,6 +348,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -357,6 +364,7 @@ jobs:
           -p lexe_events
           -p lexe_tty
           -p lexe_modules
+          -p lexe_webassembly
           -p lexe_util
           -p lexe_fs
           --lib
@@ -391,6 +399,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -414,7 +425,7 @@ jobs:
         env:
           LEXE_ASYNC_HOOKS: "1"
         run: |
-          for filter in events readline util module fs sqlite worker_threads child_process executable; do
+          for filter in events readline util module fs sqlite worker_threads child_process executable webassembly wasi; do
             ./target/debug/lexe test -d bundle/js/__tests__/unit --filter "$filter"
           done
       - uses: actions/upload-artifact@v4
@@ -485,6 +496,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: actions/setup-node@v4
         with:
           node-version: 24.3.0
@@ -524,6 +538,9 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -608,6 +625,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -659,6 +679,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -711,6 +734,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}

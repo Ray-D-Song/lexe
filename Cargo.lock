@@ -4745,14 +4745,16 @@ dependencies = [
 
 [[package]]
 name = "wasmz"
-version = "0.1.6"
+version = "0.1.7"
+source = "git+https://github.com/Ray-D-Song/wasmz.git?tag=v0.1.7#fb437b769af0ad7a90b6466d3f6b4bd2e2207579"
 dependencies = [
  "wasmz-sys",
 ]
 
 [[package]]
 name = "wasmz-sys"
-version = "0.1.6"
+version = "0.1.7"
+source = "git+https://github.com/Ray-D-Song/wasmz.git?tag=v0.1.7#fb437b769af0ad7a90b6466d3f6b4bd2e2207579"
 
 [[package]]
 name = "wast"

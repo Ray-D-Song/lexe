@@ -243,11 +243,7 @@ impl HostState {
 
 /// Classifies a `wasmz::Error` into Compile / Link / Runtime or unwraps a
 /// preserved pending JS exception thrown inside a host import callback.
-pub fn throw_wasmz_error(
-    ctx: &Ctx<'_>,
-    host: &HostState,
-    error: wasmz::Error,
-) -> rquickjs::Error {
+pub fn throw_wasmz_error(ctx: &Ctx<'_>, host: &HostState, error: wasmz::Error) -> rquickjs::Error {
     if matches!(error.kind(), wasmz::ErrorKind::HostTrap) {
         if let Some(value) = host.take_pending_exception(ctx) {
             return ctx.throw(value);

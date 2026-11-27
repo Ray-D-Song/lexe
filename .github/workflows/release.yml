@@ -114,9 +114,8 @@ jobs:
           shared-key: release-build
           key: ${{ matrix.target }}
       - uses: mlugg/setup-zig@v2
-        if: matrix.zig
         with:
-          version: 0.16.0
+          version: 0.17.1
       - name: Install cargo-zigbuild
         if: matrix.libc == 'gnu'
         uses: taiki-e/install-action@v2

@@ -23,20 +23,20 @@ pub fn val_to_js<'js>(
             None => Ok(Value::new_null(ctx.clone())),
             Some(func_idx) => {
                 if let Some(owner_id) = funcref_owner {
-                    if let Some(existing) =
-                        host.cached_func_wrapper(ctx, FuncKey { instance_id: owner_id, func_idx: *func_idx })
-                    {
+                    if let Some(existing) = host.cached_func_wrapper(
+                        ctx,
+                        FuncKey {
+                            instance_id: owner_id,
+                            func_idx: *func_idx,
+                        },
+                    ) {
                         return Ok(existing);
                     }
                     if let Some(inst) = host.instance_by_id(owner_id) {
-                        if let Some(sig) = crate::func_wrapper::sig_from_instance(&inst, *func_idx) {
+                        if let Some(sig) = crate::func_wrapper::sig_from_instance(&inst, *func_idx)
+                        {
                             let wrapped = crate::func_wrapper::wrap_func(
-                                ctx,
-                                host,
-                                inst,
-                                *func_idx,
-                                sig,
-                                None,
+                                ctx, host, inst, *func_idx, sig, None,
                             )?;
                             return Ok(wrapped.into_value());
                         }
@@ -49,8 +49,9 @@ pub fn val_to_js<'js>(
             if *id == 0 {
                 Ok(Value::new_null(ctx.clone()))
             } else {
-                host.externref_object(ctx, *id)
-                    .ok_or_else(|| host.throw_runtime_error(ctx, "externref object identity was lost"))
+                host.externref_object(ctx, *id).ok_or_else(|| {
+                    host.throw_runtime_error(ctx, "externref object identity was lost")
+                })
             }
         },
     }
@@ -115,11 +116,7 @@ pub fn js_to_val<'js>(
     }
 }
 
-pub fn default_val<'js>(
-    ctx: &Ctx<'js>,
-    host: &HostState,
-    ty: ModuleValType,
-) -> Result<wasmz::Val> {
+pub fn default_val<'js>(ctx: &Ctx<'js>, host: &HostState, ty: ModuleValType) -> Result<wasmz::Val> {
     match ty {
         ModuleValType::I32 => Ok(wasmz::Val::I32(0)),
         ModuleValType::I64 => Ok(wasmz::Val::I64(0)),

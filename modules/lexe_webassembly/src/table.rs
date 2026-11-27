@@ -151,9 +151,9 @@ impl WasmTable {
             .ok_or_else(|| host.throw_range_error(&ctx, "table index out of bounds"))?;
         match entry {
             wasmz::TableEntry::Null => Ok(Value::new_null(ctx)),
-            wasmz::TableEntry::ExternRef(id) => host
-                .externref_object(&ctx, id)
-                .ok_or_else(|| host.throw_runtime_error(&ctx, "externref object identity was lost")),
+            wasmz::TableEntry::ExternRef(id) => host.externref_object(&ctx, id).ok_or_else(|| {
+                host.throw_runtime_error(&ctx, "externref object identity was lost")
+            }),
             wasmz::TableEntry::Func {
                 owner_id,
                 func_idx,
@@ -168,17 +168,20 @@ impl WasmTable {
                 }
                 if owner_id == 0 && raw != 0 {
                     // Imported JS callback slot stored without instance ownership
-                    if let Some(existing) =
-                        host.cached_func_wrapper(&ctx, crate::host_state::FuncKey { instance_id: 0, func_idx: raw as u32 })
-                    {
+                    if let Some(existing) = host.cached_func_wrapper(
+                        &ctx,
+                        crate::host_state::FuncKey {
+                            instance_id: 0,
+                            func_idx: raw as u32,
+                        },
+                    ) {
                         return Ok(existing);
                     }
                 }
                 if let Some(inst) = host.instance_by_id(owner_id) {
                     if let Some(sig) = crate::func_wrapper::sig_from_instance(&inst, func_idx) {
-                        let func = crate::func_wrapper::wrap_func(
-                            &ctx, &host, inst, func_idx, sig, None,
-                        )?;
+                        let func =
+                            crate::func_wrapper::wrap_func(&ctx, &host, inst, func_idx, sig, None)?;
                         return Ok(func.into_value());
                     }
                 }
