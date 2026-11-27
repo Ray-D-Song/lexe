@@ -87,7 +87,10 @@ export function compareApiSurface(nodePayload, lexePayload, allowlist) {
     const nKeys = nm.cjs?.keys ?? {};
     const lKeys = lm.cjs?.keys ?? {};
     const allowedMissing = new Set(entry.missingExports ?? []);
-    const allowedTypeMismatches = new Set(entry.typeMismatches ?? []);
+    const allowedTypeMismatches = new Set([
+      ...(entry.typeMismatches ?? []),
+      ...(entry.platformTypeMismatches?.[process.platform] ?? []),
+    ]);
 
     for (const key of Object.keys(nKeys).sort()) {
       if (!(key in lKeys)) {

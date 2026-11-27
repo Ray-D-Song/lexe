@@ -129,7 +129,13 @@
         "R_OK",
         "W_OK",
         "X_OK"
-      ]
+      ],
+      "platformTypeMismatches": {
+        "linux": [
+          "lchmod:undefined!=function",
+          "lchmodSync:undefined!=function"
+        ]
+      }
     },
     "http": {
       "missingExports": [

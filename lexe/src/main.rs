@@ -51,7 +51,7 @@ use crate::base::{
     VERSION,
 };
 
-#[cfg(not(any(target_os = "windows", target_family = "wasm")))]
+#[cfg(not(any(target_os = "windows", target_family = "wasm", lexe_asan)))]
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 

@@ -4,6 +4,17 @@
 use std::env;
 
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(lexe_asan)");
+    if env::var("CARGO_CFG_SANITIZE")
+        .map(|s| s.split(',').any(|f| f == "address"))
+        .unwrap_or(false)
+    {
+        // Under ASan/LSan, keep the system/ASan allocator active so Rust heap
+        // allocations are instrumented and visible to LeakSanitizer instead of
+        // hidden inside snmalloc's mmap arenas.
+        println!("cargo::rustc-cfg=lexe_asan");
+    }
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_family = env::var("CARGO_CFG_TARGET_FAMILY").unwrap_or_default();
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
