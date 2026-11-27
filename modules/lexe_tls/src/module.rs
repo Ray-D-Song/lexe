@@ -200,6 +200,18 @@ const TLS_SOCKET_GLUE_JS: &str = r#"(function () {
         return handle.isSessionReused();
       }
 
+      getSession() {
+        const handle = this._handle;
+        if (!handle || typeof handle.getSession !== "function") return undefined;
+        return handle.getSession();
+      }
+
+      getTLSTicket() {
+        const handle = this._handle;
+        if (!handle || typeof handle.getTLSTicket !== "function") return undefined;
+        return handle.getTLSTicket();
+      }
+
       // `setServername` before a handshake reconnects with SNI; after it, TLS
       // forbids renegotiation, so the request is ignored like Node.
       setServername(name) {
@@ -303,6 +315,8 @@ impl ModuleDef for TlsModule {
         declare.declare("createSecureContext")?;
         declare.declare("checkServerIdentity")?;
         declare.declare("getCiphers")?;
+        declare.declare("getCACertificates")?;
+        declare.declare("rootCertificates")?;
         declare.declare("convertALPNProtocols")?;
         declare.declare("CLIENT_RENEG_LIMIT")?;
         declare.declare("CLIENT_RENEG_WINDOW")?;
@@ -361,6 +375,27 @@ impl ModuleDef for TlsModule {
                 "getCiphers",
                 Func::from(|_ctx: Ctx<'js>| supported_ciphers()),
             )?;
+            default.set(
+                "getCACertificates",
+                Func::from(
+                    |ctx: Ctx<'js>, kind: rquickjs::function::Opt<String>| -> Result<Vec<String>> {
+                        let k = kind.0.as_deref().unwrap_or("default");
+                        crate::root_ca::get_ca_certificates(k)
+                            .map_err(|e| crate::error::throw_invalid_arg_value(&ctx, "type", &e))
+                    },
+                ),
+            )?;
+            let root_list = crate::root_ca::get_ca_certificates("default").unwrap_or_default();
+            let root_arr = rquickjs::Array::new(ctx.clone())?;
+            for (idx, pem) in root_list.into_iter().enumerate() {
+                root_arr.set(idx, pem)?;
+            }
+            if let Ok(object_ctor) = ctx.globals().get::<_, Object>("Object") {
+                if let Ok(freeze) = object_ctor.get::<_, Function>("freeze") {
+                    let _ = freeze.call::<_, Value>((root_arr.clone(),));
+                }
+            }
+            default.set("rootCertificates", root_arr)?;
             default.set(
                 "convertALPNProtocols",
                 Func::from(|ctx: Ctx<'js>, protocols: Value<'js>, out: Object<'js>| {

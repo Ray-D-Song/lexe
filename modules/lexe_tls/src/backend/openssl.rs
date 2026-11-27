@@ -283,9 +283,17 @@ pub fn inspect_client_connection<IO>(
     build_connection_info(stream, chain_authorized, chain_error, false, None)
 }
 
+pub struct ServerSharedState;
+
+pub fn new_server_shared_state() -> Arc<ServerSharedState> {
+    Arc::new(ServerSharedState)
+}
+
 pub fn inspect_server_connection<IO>(
     stream: &ServerTlsStream<IO>,
+    _request_cert: bool,
     reject_unauthorized: bool,
+    _custom_ca: &[Vec<u8>],
     selected_local_cert: &Arc<Mutex<Option<Vec<u8>>>>,
 ) -> TlsConnectionInfo {
     let (chain_authorized, chain_error) = if reject_unauthorized {
@@ -342,6 +350,7 @@ fn build_connection_info<IO>(
         peer_certs,
         local_cert,
         client_servername,
+        session_reused: ssl.session_reused(),
     }
 }
 

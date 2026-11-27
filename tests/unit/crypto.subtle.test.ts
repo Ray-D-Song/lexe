@@ -1046,4 +1046,121 @@ fullCrypto("SubtileCrypto wrap/unwrap", () => {
       }
     }
   }, 30000);
+
+  it("supports WebCrypto Ed448 sign/verify and import/export", async () => {
+    const kp = (await crypto.subtle.generateKey("Ed448", true, [
+      "sign",
+      "verify",
+    ])) as webcrypto.CryptoKeyPair;
+    const msg = new TextEncoder().encode("webcrypto ed448");
+    const sig = await crypto.subtle.sign("Ed448", kp.privateKey, msg);
+    expect(sig.byteLength).toBe(114);
+    expect(await crypto.subtle.verify("Ed448", kp.publicKey, sig, msg)).toBe(true);
+
+    const jwkPriv = await crypto.subtle.exportKey("jwk", kp.privateKey);
+    expect(jwkPriv.crv).toBe("Ed448");
+    const reimported = await crypto.subtle.importKey("jwk", jwkPriv, "Ed448", true, ["sign"]);
+    const sig2 = await crypto.subtle.sign("Ed448", reimported, msg);
+    expect(await crypto.subtle.verify("Ed448", kp.publicKey, sig2, msg)).toBe(true);
+  });
+
+  it("supports WebCrypto X448 deriveBits/deriveKey and null/fractional ECDH bit lengths", async () => {
+    const a = (await crypto.subtle.generateKey("X448", true, [
+      "deriveBits",
+      "deriveKey",
+    ])) as webcrypto.CryptoKeyPair;
+    const b = (await crypto.subtle.generateKey("X448", true, [
+      "deriveBits",
+    ])) as webcrypto.CryptoKeyPair;
+    const s1 = await crypto.subtle.deriveBits(
+      { name: "X448", public: b.publicKey } as any,
+      a.privateKey,
+      null as any
+    );
+    const s2 = await crypto.subtle.deriveBits(
+      { name: "X448", public: a.publicKey } as any,
+      b.privateKey,
+      448
+    );
+    expect(s1.byteLength).toBe(56);
+    expect(Buffer.from(s1).equals(Buffer.from(s2))).toBe(true);
+
+    // ECDH null & non-8-multiple length WPT semantics
+    const ec = await crypto.subtle.generateKey(
+      { name: "ECDH", namedCurve: "P-256" },
+      false,
+      ["deriveBits"]
+    );
+    const ecNull = await crypto.subtle.deriveBits(
+      { name: "ECDH", public: ec.publicKey },
+      ec.privateKey,
+      null as any
+    );
+    const ec13 = await crypto.subtle.deriveBits(
+      { name: "ECDH", public: ec.publicKey },
+      ec.privateKey,
+      13
+    );
+    expect(ecNull.byteLength).toBe(32);
+    expect(ec13.byteLength).toBe(2);
+    await expect(
+      crypto.subtle.deriveBits({ name: "ECDH", public: ec.publicKey }, ec.privateKey, 300)
+    ).rejects.toThrow();
+  });
+
+  it("supports WebCrypto Argon2id/Argon2i/Argon2d and ChaCha20-Poly1305", async () => {
+    const base = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode("password"),
+      "Argon2id" as any,
+      false,
+      ["deriveBits", "deriveKey"]
+    );
+    const bits = await crypto.subtle.deriveBits(
+      {
+        name: "Argon2id",
+        nonce: new TextEncoder().encode("somesalt"),
+        parallelization: 1,
+        memory: 64,
+        passes: 2,
+      } as any,
+      base,
+      256
+    );
+    expect(bits.byteLength).toBe(32);
+
+    const aesFromArgon = await crypto.subtle.deriveKey(
+      {
+        name: "Argon2id",
+        nonce: new TextEncoder().encode("somesalt"),
+        parallelization: 1,
+        memory: 64,
+        passes: 2,
+      } as any,
+      base,
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+    );
+    expect((aesFromArgon.algorithm as any).length).toBe(256);
+
+    const chachaKey = await crypto.subtle.generateKey("ChaCha20-Poly1305" as any, true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    const iv = new Uint8Array(12).fill(7);
+    const aad = new TextEncoder().encode("hdr");
+    const pt = new TextEncoder().encode("webcrypto chacha20");
+    const ct = await crypto.subtle.encrypt(
+      { name: "ChaCha20-Poly1305", iv, additionalData: aad } as any,
+      chachaKey as webcrypto.CryptoKey,
+      pt
+    );
+    const dec = await crypto.subtle.decrypt(
+      { name: "ChaCha20-Poly1305", iv, additionalData: aad } as any,
+      chachaKey as webcrypto.CryptoKey,
+      ct
+    );
+    expect(new TextDecoder().decode(dec)).toBe("webcrypto chacha20");
+  });
 });

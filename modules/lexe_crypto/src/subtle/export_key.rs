@@ -69,16 +69,30 @@ fn export_raw(ctx: &Ctx<'_>, key: &CryptoKey) -> Result<Vec<u8>> {
         ));
     }
     match &key.algorithm {
-        KeyAlgorithm::Aes { .. } | KeyAlgorithm::Hmac { .. } => Ok(key.handle.to_vec()),
+        KeyAlgorithm::Aes { .. } | KeyAlgorithm::Hmac { .. } | KeyAlgorithm::ChaCha20Poly1305 => {
+            Ok(key.handle.to_vec())
+        },
         KeyAlgorithm::Ec { curve, .. } => CRYPTO_PROVIDER
             .export_ec_public_key_sec1(&key.handle, *curve, false)
             .or_throw(ctx),
-        KeyAlgorithm::Ed25519 => CRYPTO_PROVIDER
-            .export_okp_public_key_raw(&key.handle, false)
-            .or_throw(ctx),
-        KeyAlgorithm::X25519 => CRYPTO_PROVIDER
-            .export_okp_public_key_raw(&key.handle, false)
-            .or_throw(ctx),
+        KeyAlgorithm::Ed25519 | KeyAlgorithm::Ed448 => {
+            if matches!(key.algorithm, KeyAlgorithm::Ed25519) {
+                CRYPTO_PROVIDER
+                    .export_okp_public_key_raw(&key.handle, false)
+                    .or_throw(ctx)
+            } else {
+                Ok(key.handle.to_vec())
+            }
+        },
+        KeyAlgorithm::X25519 | KeyAlgorithm::X448 => {
+            if matches!(key.algorithm, KeyAlgorithm::X25519) {
+                CRYPTO_PROVIDER
+                    .export_okp_public_key_raw(&key.handle, false)
+                    .or_throw(ctx)
+            } else {
+                Ok(key.handle.to_vec())
+            }
+        },
         KeyAlgorithm::Rsa { .. } => CRYPTO_PROVIDER
             .export_rsa_public_key_pkcs1(&key.handle)
             .or_throw(ctx),
@@ -103,6 +117,7 @@ fn export_pkcs8(ctx: &Ctx<'_>, key: &CryptoKey) -> Result<Vec<u8>> {
                 const_oid::db::rfc8410::ID_ED_25519.as_bytes(),
             )
             .or_throw(ctx),
+        KeyAlgorithm::Ed448 | KeyAlgorithm::X448 => Ok(key.handle.to_vec()),
         KeyAlgorithm::X25519 => CRYPTO_PROVIDER
             .export_okp_private_key_pkcs8(
                 &key.handle,
@@ -130,9 +145,33 @@ fn export_spki(ctx: &Ctx<'_>, key: &CryptoKey) -> Result<Vec<u8>> {
         KeyAlgorithm::Ed25519 => CRYPTO_PROVIDER
             .export_okp_public_key_spki(&key.handle, const_oid::db::rfc8410::ID_ED_25519.as_bytes())
             .or_throw(ctx),
+        KeyAlgorithm::Ed448 => {
+            use der::Encode as _;
+            let spki = spki::SubjectPublicKeyInfoRef {
+                algorithm: spki::AlgorithmIdentifierRef {
+                    oid: const_oid::db::rfc8410::ID_ED_448,
+                    parameters: None,
+                },
+                subject_public_key: der::asn1::BitStringRef::from_bytes(&key.handle)
+                    .or_throw(ctx)?,
+            };
+            spki.to_der().or_throw(ctx)
+        },
         KeyAlgorithm::X25519 => CRYPTO_PROVIDER
             .export_okp_public_key_spki(&key.handle, const_oid::db::rfc8410::ID_X_25519.as_bytes())
             .or_throw(ctx),
+        KeyAlgorithm::X448 => {
+            use der::Encode as _;
+            let spki = spki::SubjectPublicKeyInfoRef {
+                algorithm: spki::AlgorithmIdentifierRef {
+                    oid: const_oid::db::rfc8410::ID_X_448,
+                    parameters: None,
+                },
+                subject_public_key: der::asn1::BitStringRef::from_bytes(&key.handle)
+                    .or_throw(ctx)?,
+            };
+            spki.to_der().or_throw(ctx)
+        },
         KeyAlgorithm::Rsa { .. } => CRYPTO_PROVIDER
             .export_rsa_public_key_spki(&key.handle)
             .or_throw(ctx),
@@ -196,6 +235,76 @@ fn export_jwk<'js>(ctx: &Ctx<'js>, key: &CryptoKey) -> Result<Object<'js>> {
             if let Some(d) = jwk.d {
                 obj.set("d", bytes_to_b64_url_safe_string(&d))?;
             }
+        },
+        KeyAlgorithm::ChaCha20Poly1305 => {
+            obj.set("kty", "oct")?;
+            obj.set("alg", "C20P")?;
+            obj.set("k", bytes_to_b64_url_safe_string(&key.handle))?;
+        },
+        KeyAlgorithm::Ed448 => {
+            #[cfg(feature = "_rustcrypto")]
+            {
+                use der::Decode as _;
+                obj.set("kty", "OKP")?;
+                obj.set("crv", "Ed448")?;
+                if key.kind == KeyKind::Private {
+                    let pk_info =
+                        pkcs8::PrivateKeyInfoRef::try_from(key.handle.as_ref()).or_throw(ctx)?;
+                    let raw = pk_info.private_key.as_bytes();
+                    let seed = if raw.len() == 57 {
+                        raw
+                    } else {
+                        <&der::asn1::OctetStringRef>::from_der(raw)
+                            .or_throw(ctx)?
+                            .as_bytes()
+                    };
+                    let arr: [u8; 57] = seed
+                        .try_into()
+                        .map_err(|_| Exception::throw_type(ctx, "Invalid Ed448 private key"))?;
+                    let sk =
+                        ed448_goldilocks::SigningKey::from(ed448_goldilocks::SecretKey::from(arr));
+                    obj.set(
+                        "x",
+                        bytes_to_b64_url_safe_string(&sk.verifying_key().to_bytes()),
+                    )?;
+                    obj.set("d", bytes_to_b64_url_safe_string(&arr))?;
+                } else {
+                    obj.set("x", bytes_to_b64_url_safe_string(&key.handle))?;
+                }
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            return algorithm_export_error(ctx, &key.name, "jwk");
+        },
+        KeyAlgorithm::X448 => {
+            #[cfg(feature = "_rustcrypto")]
+            {
+                use der::Decode as _;
+                obj.set("kty", "OKP")?;
+                obj.set("crv", "X448")?;
+                if key.kind == KeyKind::Private {
+                    let pk_info =
+                        pkcs8::PrivateKeyInfoRef::try_from(key.handle.as_ref()).or_throw(ctx)?;
+                    let raw = pk_info.private_key.as_bytes();
+                    let priv_slice = if raw.len() == 56 {
+                        raw
+                    } else {
+                        <&der::asn1::OctetStringRef>::from_der(raw)
+                            .or_throw(ctx)?
+                            .as_bytes()
+                    };
+                    let arr: [u8; 56] = priv_slice
+                        .try_into()
+                        .map_err(|_| Exception::throw_type(ctx, "Invalid X448 private key"))?;
+                    let sk = x448::StaticSecret::from(arr);
+                    let pk = x448::PublicKey::from(&sk);
+                    obj.set("x", bytes_to_b64_url_safe_string(pk.as_bytes()))?;
+                    obj.set("d", bytes_to_b64_url_safe_string(&arr))?;
+                } else {
+                    obj.set("x", bytes_to_b64_url_safe_string(&key.handle))?;
+                }
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            return algorithm_export_error(ctx, &key.name, "jwk");
         },
         KeyAlgorithm::Rsa { hash, .. } => {
             let jwk = CRYPTO_PROVIDER

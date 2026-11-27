@@ -63,6 +63,27 @@ fn verify(
                 .ed25519_verify(handle, signature, data)
                 .or_throw(ctx)?
         },
+        SigningAlgorithm::Ed448 => {
+            if !matches!(&key.algorithm, KeyAlgorithm::Ed448) {
+                return algorithm_mismatch_error(ctx, "Ed448");
+            }
+            #[cfg(feature = "_rustcrypto")]
+            {
+                let arr: [u8; 57] = handle.try_into().map_err(|_| {
+                    rquickjs::Exception::throw_type(ctx, "Invalid Ed448 public key")
+                })?;
+                let vk = ed448_goldilocks::VerifyingKey::from_bytes(&arr).map_err(|_| {
+                    rquickjs::Exception::throw_type(ctx, "Invalid Ed448 public key")
+                })?;
+                let Ok(sig_arr) = <[u8; 114]>::try_from(signature) else {
+                    return Ok(false);
+                };
+                let sig = ed448_goldilocks::Signature::from_bytes(&sig_arr);
+                vk.verify_raw(&sig, data).is_ok()
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            return super::algorithm_not_supported_error(ctx);
+        },
         SigningAlgorithm::Hmac => {
             let hash = match &key.algorithm {
                 KeyAlgorithm::Hmac { hash, .. } => hash,

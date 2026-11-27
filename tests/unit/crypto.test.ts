@@ -238,7 +238,7 @@ mwIDAQAB
       publicEncrypt(
         {
           key: SPKI_PEM,
-          padding: 1,
+          padding: 999,
         },
         Buffer.from("x")
       )

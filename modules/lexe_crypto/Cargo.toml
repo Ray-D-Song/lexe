@@ -23,20 +23,26 @@ _rustcrypto = [
   "aes",
   "aes-gcm",
   "aes-kw",
+  "argon2",
   "cbc",
+  "chacha20poly1305",
   "ctr",
   "ecdsa",
   "ed25519-dalek",
+  "ed448-goldilocks",
   "elliptic-curve",
   "hkdf",
   "hmac",
+  "num-bigint",
   "rsa",
   "p256",
   "p384",
   "p521",
   "pbkdf2",
+  "scrypt",
   "sha1",
   "x25519-dalek",
+  "x448",
 ]
 
 crypto-rust = ["_rustcrypto"]
@@ -61,6 +67,7 @@ rand = { version = "0.10.1", features = [
   "thread_rng",
 ], default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
+tokio = { version = "1", features = ["rt"], default-features = false }
 
 
 # optional
@@ -72,7 +79,9 @@ aes-gcm = { version = "0.11.0-rc.3", features = [
 aes-kw = { version = "0.3.0", features = [
   "oid",
 ], default-features = false, optional = true }
+argon2 = { version = "0.6.0", features = ["alloc"], default-features = false, optional = true }
 cbc = { version = "0.2.0", features = ["alloc"], optional = true }
+chacha20poly1305 = { version = "0.11.0", features = ["alloc"], default-features = false, optional = true }
 const-oid = { version = "0.10", features = [
   "db",
 ], default-features = false, optional = true }
@@ -81,11 +90,16 @@ der = { version = "0.8", features = [
   "derive",
   "alloc",
 ], default-features = false, optional = true }
-ecdsa = { version = "0.17.0-rc.18", default-features = false, optional = true }
+ecdsa = { version = "0.17.0", default-features = false, optional = true }
 ed25519-dalek = { version = "3.0.0-pre.7", features = [
   "alloc",
   "pkcs8",
   "rand_core",
+], default-features = false, optional = true }
+ed448-goldilocks = { version = "0.14.0-pre.15", features = [
+  "alloc",
+  "pkcs8",
+  "signing",
 ], default-features = false, optional = true }
 elliptic-curve = { version = "0.14.0-rc.30", features = [
   "alloc",
@@ -97,25 +111,29 @@ rsa = { version = "0.10.0-rc.18", features = [
   "std",
   "sha2",
   "encoding",
+  "hazmat",
 ], default-features = false, optional = true }
-p256 = { version = "0.14.0-rc.9", features = [
+p256 = { version = "0.14.0", features = [
   "ecdh",
   "ecdsa",
   "pkcs8",
 ], default-features = false, optional = true }
-p384 = { version = "0.14.0-rc.9", features = [
+p384 = { version = "0.14.0", features = [
   "ecdh",
   "ecdsa",
   "pkcs8",
 ], default-features = false, optional = true }
-p521 = { version = "0.14.0-rc.9", features = [
+p521 = { version = "0.14.0", features = [
   "ecdh",
   "ecdsa",
   "pkcs8",
 ], default-features = false, optional = true }
 pbkdf2 = { version = "0.13.0", default-features = false, optional = true }
+num-bigint = { version = "0.4", default-features = false, optional = true }
+scrypt = { version = "0.12.0", default-features = false, optional = true }
 pkcs8 = { version = "0.11.0-rc.11", default-features = false, features = [
   "alloc",
+  "encryption",
 ], optional = true }
 sha1 = { version = "0.11.0", features = ["oid"], default-features = false, optional = true }
 sec1 = { version = "0.8.0", features = [
@@ -133,6 +151,10 @@ x509-cert = { version = "0.3.0", features = [
 x25519-dalek = { version = "3.0.0-pre.6", features = [
   "static_secrets",
   "zeroize",
+], default-features = false, optional = true }
+x448 = { version = "0.14.0-pre.12", features = [
+  "getrandom",
+  "static_secrets",
 ], default-features = false, optional = true }
 
 # Crypto provider dependencies

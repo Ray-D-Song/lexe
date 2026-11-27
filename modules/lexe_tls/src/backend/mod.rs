@@ -43,6 +43,7 @@ pub struct TlsConnectionInfo {
     pub peer_certs: Vec<Vec<u8>>,
     pub local_cert: Option<Vec<u8>>,
     pub client_servername: Option<String>,
+    pub session_reused: bool,
 }
 
 pub struct ConnectOptions {
@@ -52,6 +53,9 @@ pub struct ConnectOptions {
     pub reject_unauthorized: bool,
     pub timeout: Option<Duration>,
     pub verify_record: Option<Arc<Mutex<VerifyRecord>>>,
+    pub session: Option<Vec<u8>>,
+    pub session_slot: Option<Arc<Mutex<Option<Vec<u8>>>>>,
+    pub session_notify: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
 }
 
 pub struct AcceptOptions {
@@ -61,6 +65,8 @@ pub struct AcceptOptions {
     pub timeout: Option<Duration>,
     pub sni_registry: Arc<RwLock<SniRegistry>>,
     pub selected_local_cert: Arc<Mutex<Option<Vec<u8>>>>,
+    pub server_state: Option<Arc<ServerSharedState>>,
+    pub chosen_alpn: Option<Vec<u8>>,
 }
 
 #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc", feature = "tls-graviola"))]

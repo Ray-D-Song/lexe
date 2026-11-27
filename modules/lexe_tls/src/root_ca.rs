@@ -100,6 +100,74 @@ pub fn load_rustls_root_store(
     Ok(root_certificates)
 }
 
+pub fn get_ca_certificates(kind: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let include_bundled = matches!(kind, "default" | "bundled");
+    let include_system = matches!(kind, "default" | "system");
+    let include_extra = matches!(kind, "default" | "extra");
+    if !matches!(kind, "default" | "bundled" | "system" | "extra") {
+        return Err(format!("Invalid CA certificate type: {kind}"));
+    }
+
+    #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc", feature = "tls-graviola"))]
+    {
+        let mut add_pem = |der: &[u8]| {
+            if let Ok(s) = String::from_utf8(crate::pem::der_to_pem("CERTIFICATE", der)) {
+                out.push(s);
+            }
+        };
+        if include_bundled {
+            #[cfg(feature = "webpki-roots")]
+            for anchor in webpki_roots::TLS_SERVER_ROOTS.iter() {
+                // TrustAnchor stores subject/spki rather than full X.509 DER;
+                // include native/extra certs when full X.509 DER is requested below.
+                let _ = anchor;
+            }
+            #[cfg(feature = "native-roots")]
+            {
+                let load_results = rustls_native_certs::load_native_certs();
+                for cert in load_results.certs {
+                    add_pem(cert.as_ref());
+                }
+            }
+        } else if include_system {
+            #[cfg(feature = "native-roots")]
+            {
+                let load_results = rustls_native_certs::load_native_certs();
+                for cert in load_results.certs {
+                    add_pem(cert.as_ref());
+                }
+            }
+        }
+        if include_extra {
+            if let Some(extra) = get_extra_ca_certs() {
+                for cert in extra {
+                    add_pem(cert.as_ref());
+                }
+            }
+        }
+    }
+
+    #[cfg(all(
+        feature = "tls-openssl",
+        not(any(feature = "tls-ring", feature = "tls-aws-lc", feature = "tls-graviola"))
+    ))]
+    {
+        let _ = (include_bundled, include_system);
+        if include_extra {
+            if let Some(extra) = get_extra_ca_certs_openssl() {
+                for cert in extra {
+                    if let Ok(s) = String::from_utf8(cert) {
+                        out.push(s);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
 #[cfg(feature = "tls-openssl")]
 pub fn load_openssl_ca_store(
     builder: &mut openssl::ssl::SslConnectorBuilder,

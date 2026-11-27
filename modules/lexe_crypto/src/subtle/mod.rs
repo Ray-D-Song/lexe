@@ -41,7 +41,7 @@ pub use wrapping::subtle_wrap_key;
 
 // Stub implementations for limited crypto providers (no _subtle-full)
 #[cfg(not(feature = "_subtle-full"))]
-mod key_algorithm;
+pub(crate) mod key_algorithm;
 #[cfg(not(feature = "_subtle-full"))]
 use key_algorithm::KeyAlgorithm;
 

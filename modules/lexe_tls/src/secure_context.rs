@@ -30,7 +30,13 @@ impl SecureContext {
     pub fn from_options(options: &crate::options::TlsOptions) -> SecureResult<Self> {
         let cert_chain = options.cert.clone();
 
-        let key = options.key.clone();
+        let key = match &options.key {
+            Some(raw_key) => Some(crate::pem::decrypt_private_key_pem_if_needed(
+                raw_key,
+                options.passphrase.as_deref(),
+            )?),
+            None => None,
+        };
 
         if cert_chain.is_empty() != key.is_none() {
             return Err("cert and key must both be provided or both omitted".to_string());

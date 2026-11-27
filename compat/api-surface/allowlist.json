@@ -24,48 +24,11 @@
     "crypto": {
       "missingExports": [
         "Certificate",
-        "DiffieHellman",
-        "DiffieHellmanGroup",
-        "Hash",
-        "Hmac",
-        "Sign",
-        "Verify",
-        "checkPrime",
-        "checkPrimeSync",
-        "createDiffieHellman",
-        "createDiffieHellmanGroup",
-        "createSign",
-        "createVerify",
-        "fips",
-        "generateKey",
-        "generateKeyPair",
-        "generateKeyPairSync",
-        "generateKeySync",
-        "generatePrime",
-        "generatePrimeSync",
-        "getCipherInfo",
-        "getDiffieHellman",
-        "getFips",
-        "hash",
-        "pbkdf2",
-        "pbkdf2Sync",
-        "privateDecrypt",
-        "privateEncrypt",
-        "prng",
-        "pseudoRandomBytes",
-        "publicDecrypt",
-        "rng",
-        "scrypt",
-        "scryptSync",
         "secureHeapUsed",
         "setEngine",
         "setFips"
       ],
       "missingConstants": [
-        "DH_CHECK_P_NOT_PRIME",
-        "DH_CHECK_P_NOT_SAFE_PRIME",
-        "DH_NOT_SUITABLE_GENERATOR",
-        "DH_UNABLE_TO_CHECK_GENERATOR",
         "ENGINE_METHOD_ALL",
         "ENGINE_METHOD_CIPHERS",
         "ENGINE_METHOD_DH",
@@ -77,7 +40,6 @@
         "ENGINE_METHOD_PKEY_METHS",
         "ENGINE_METHOD_RAND",
         "ENGINE_METHOD_RSA",
-        "OPENSSL_VERSION_NUMBER",
         "RSA_X931_PADDING",
         "SSL_OP_ALL",
         "SSL_OP_ALLOW_NO_DHE_KEX",
@@ -264,12 +226,6 @@
         "snapshot"
       ],
       "isBuiltinBareMismatch": true
-    },
-    "tls": {
-      "missingExports": [
-        "getCACertificates",
-        "rootCertificates"
-      ]
     },
     "util": {
       "missingExports": [

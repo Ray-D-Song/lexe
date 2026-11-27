@@ -494,6 +494,17 @@ pub fn diffie_hellman<'js>(ctx: Ctx<'js>, options: Object<'js>) -> Result<Buffer
         (KeyMaterial::X25519Private(priv32), KeyMaterial::X25519Public(pub32)) => CRYPTO_PROVIDER
             .x25519_derive_bits(priv32, pub32)
             .or_throw(&ctx)?,
+        (KeyMaterial::X448Private(priv56), KeyMaterial::X448Public(pub56)) => {
+            let priv_arr: [u8; 56] = priv56
+                .as_slice()
+                .try_into()
+                .map_err(|_| Exception::throw_type(&ctx, "Invalid X448 private key"))?;
+            let pub_key = x448::PublicKey::from_bytes(pub56)
+                .ok_or_else(|| Exception::throw_type(&ctx, "Invalid X448 public key"))?;
+            let secret = x448::StaticSecret::from(priv_arr);
+            let shared = secret.diffie_hellman(&pub_key);
+            shared.as_bytes().to_vec()
+        },
         (
             KeyMaterial::EcPrivate {
                 curve: c1,
@@ -514,7 +525,7 @@ pub fn diffie_hellman<'js>(ctx: Ctx<'js>, options: Object<'js>) -> Result<Buffer
         _ => {
             return Err(Exception::throw_type(
                 &ctx,
-                "Keys must be compatible EC or X25519 keys for diffieHellman",
+                "Keys must be compatible EC, X25519, or X448 keys for diffieHellman",
             ))
         },
     };
@@ -528,14 +539,14 @@ pub(crate) enum DsaEncoding {
     IeeeP1363,
 }
 
-struct SignVerifyKeyAndOpts {
-    key: KeyObject,
-    padding: Option<i32>,
-    salt_length: Option<i32>,
-    dsa_encoding: DsaEncoding,
+pub(crate) struct SignVerifyKeyAndOpts {
+    pub(crate) key: KeyObject,
+    pub(crate) padding: Option<i32>,
+    pub(crate) salt_length: Option<i32>,
+    pub(crate) dsa_encoding: DsaEncoding,
 }
 
-fn parse_sign_verify_key<'js>(
+pub(crate) fn parse_sign_verify_key<'js>(
     ctx: &Ctx<'js>,
     val: Value<'js>,
     is_private: bool,
@@ -595,7 +606,10 @@ fn parse_sign_verify_key<'js>(
     })
 }
 
-fn parse_sign_digest_algorithm(ctx: &Ctx<'_>, alg: &Value<'_>) -> Result<Option<HashAlgorithm>> {
+pub(crate) fn parse_sign_digest_algorithm(
+    ctx: &Ctx<'_>,
+    alg: &Value<'_>,
+) -> Result<Option<HashAlgorithm>> {
     if alg.is_null() || alg.is_undefined() {
         return Ok(None);
     }
@@ -649,6 +663,18 @@ pub(crate) fn sign_material_bytes(
             let sig = sk
                 .try_sign(data)
                 .map_err(|_| "Ed25519 signing failed".to_string())?;
+            Ok(sig.to_bytes().to_vec())
+        },
+        KeyMaterial::Ed448Private(seed57) => {
+            if hash_opt.is_some() {
+                return Err("Ed448 sign requires algorithm to be null or undefined".into());
+            }
+            let arr: [u8; 57] = seed57
+                .as_slice()
+                .try_into()
+                .map_err(|_| "Invalid Ed448 private key".to_string())?;
+            let sk = ed448_goldilocks::SigningKey::from(ed448_goldilocks::SecretKey::from(arr));
+            let sig = sk.sign_raw(data);
             Ok(sig.to_bytes().to_vec())
         },
         KeyMaterial::EcPrivate { curve, pkcs8_der } => {
@@ -723,7 +749,7 @@ pub(crate) fn sign_material_bytes(
                 .map_err(|_| "RSA signing failed".to_string()),
                 RSA_PKCS1_PSS_PADDING => {
                     let hlen = hash.digest_len();
-                    let mod_bits = sk.n().bits();
+                    let mod_bits = sk.n().bit_width();
                     let em_len = (mod_bits as usize - 1).div_ceil(8);
                     let slen = match salt_length {
                         Some(v) if v == RSA_PSS_SALTLEN_DIGEST => hlen,
@@ -782,6 +808,22 @@ pub(crate) fn verify_material_bytes(
             };
             let sig = EdSignature::from_bytes(&sig_arr);
             Ok(vk.verify(data, &sig).is_ok())
+        },
+        KeyMaterial::Ed448Public(pub57) => {
+            if hash_opt.is_some() {
+                return Err("Ed448 verify requires algorithm to be null or undefined".into());
+            }
+            let arr: [u8; 57] = pub57
+                .as_slice()
+                .try_into()
+                .map_err(|_| "Invalid Ed448 public key".to_string())?;
+            let vk = ed448_goldilocks::VerifyingKey::from_bytes(&arr)
+                .map_err(|_| "Invalid Ed448 public key".to_string())?;
+            let Ok(sig_arr) = <[u8; 114]>::try_from(sig_bytes) else {
+                return Ok(false);
+            };
+            let sig = ed448_goldilocks::Signature::from_bytes(&sig_arr);
+            Ok(vk.verify_raw(&sig, data).is_ok())
         },
         KeyMaterial::EcPublic { curve, sec1 } => {
             let hash =

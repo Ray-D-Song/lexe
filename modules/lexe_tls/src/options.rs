@@ -25,6 +25,7 @@ pub struct TlsOptions {
     pub request_cert: bool,
     pub secure_context: Option<SecureContext>,
     pub timeout: Option<Duration>,
+    pub session: Option<Vec<u8>>,
 }
 
 impl Default for TlsOptions {
@@ -44,23 +45,12 @@ impl Default for TlsOptions {
             request_cert: false,
             secure_context: None,
             timeout: None,
+            session: None,
         }
     }
 }
 
-const UNSUPPORTED_OPTIONS: &[&str] = &[
-    "pfx",
-    "ciphers",
-    "sigalgs",
-    "dhparam",
-    "crl",
-    "psk",
-    "ocsp",
-    "session",
-    "ticket",
-    "SNICallback",
-    "ALPNCallback",
-];
+const UNSUPPORTED_OPTIONS: &[&str] = &["ciphers", "sigalgs", "dhparam", "crl", "psk", "ocsp"];
 
 pub fn parse_tls_options<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<TlsOptions> {
     if value.is_undefined() || value.is_null() {
@@ -85,6 +75,26 @@ pub fn parse_tls_options<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<TlsOp
         options.key = Some(key);
     }
     options.passphrase = obj.get::<_, Option<String>>("passphrase")?;
+    if let Some(pfx) = get_optional_pem_bytes(ctx, obj, "pfx")? {
+        let (pfx_key, pfx_certs, pfx_ca) =
+            crate::pem::parse_pfx(&pfx, options.passphrase.as_deref())
+                .map_err(|e| Exception::throw_message(ctx, &e))?;
+        if options.key.is_none() {
+            options.key = pfx_key;
+        }
+        if options.cert.is_empty() && !pfx_certs.is_empty() {
+            options.cert = pfx_certs;
+        }
+        if !pfx_ca.is_empty() {
+            options.ca.extend(pfx_ca);
+        }
+    }
+    if let Some(sess_val) = obj.get::<_, Option<Value>>("session")? {
+        if !sess_val.is_undefined() && !sess_val.is_null() {
+            let bytes = lexe_utils::bytes::ObjectBytes::from(ctx, &sess_val)?;
+            options.session = Some(bytes.as_bytes(ctx)?.to_vec());
+        }
+    }
     if let Some(min_version) = obj.get::<_, Option<String>>("minVersion")? {
         options.min_version = TlsVersion::from_str(ctx, &min_version, "minimum")?;
     }
@@ -130,13 +140,6 @@ pub fn parse_tls_options<'js>(ctx: &Ctx<'js>, value: Value<'js>) -> Result<TlsOp
         if !ctx_val.is_undefined() && !ctx_val.is_null() {
             options.secure_context = Some(SecureContext::from_js_value(ctx, ctx_val)?);
         }
-    }
-
-    if options.request_cert && !options.reject_unauthorized {
-        return Err(throw_option_not_supported(
-            ctx,
-            "requestCert=true with rejectUnauthorized=false (soft mTLS)",
-        ));
     }
 
     Ok(options)
@@ -240,17 +243,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_soft_mtls() {
+    fn allows_soft_mtls() {
         with_ctx(|ctx| {
             let obj = Object::new(ctx.clone()).unwrap();
             obj.set("requestCert", true).unwrap();
             obj.set("rejectUnauthorized", false).unwrap();
-            assert!(parse_tls_options(ctx, obj.into_value()).is_err());
+            let parsed = parse_tls_options(ctx, obj.into_value()).unwrap();
+            assert!(parsed.request_cert);
+            assert!(!parsed.reject_unauthorized);
         });
     }
 
     #[test]
-    fn rejects_pfx() {
+    fn rejects_invalid_pfx() {
         with_ctx(|ctx| {
             let obj = Object::new(ctx.clone()).unwrap();
             obj.set("pfx", "data").unwrap();

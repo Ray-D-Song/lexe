@@ -25,10 +25,18 @@ mod cipher;
 #[cfg(feature = "_rustcrypto")]
 mod classic;
 mod crc32;
+#[cfg(feature = "_rustcrypto")]
+mod dh;
 mod hash;
 #[cfg(feature = "_rustcrypto")]
+mod kdf;
+#[cfg(feature = "_rustcrypto")]
 mod key_object;
+#[cfg(feature = "_rustcrypto")]
+mod keygen;
 mod rsa;
+#[cfg(feature = "_rustcrypto")]
+mod sign_verify;
 mod subtle;
 #[cfg(feature = "_rustcrypto")]
 mod x509;
@@ -288,7 +296,10 @@ enum ClonedKeyAlgorithm {
         algorithm: subtle::key_algorithm::EcAlgorithm,
     },
     X25519,
+    X448,
     Ed25519,
+    Ed448,
+    ChaCha20Poly1305,
     Hmac {
         hash: HashAlgorithm,
         length: u16,
@@ -301,6 +312,7 @@ enum ClonedKeyAlgorithm {
     Derive(subtle::key_algorithm::KeyDerivation),
     HkdfImport,
     Pbkdf2Import,
+    Argon2Import(subtle::key_algorithm::Argon2Variant),
 }
 
 impl ClonedKeyAlgorithm {
@@ -313,7 +325,10 @@ impl ClonedKeyAlgorithm {
                 algorithm: algorithm.clone(),
             },
             KeyAlgorithm::X25519 => Self::X25519,
+            KeyAlgorithm::X448 => Self::X448,
             KeyAlgorithm::Ed25519 => Self::Ed25519,
+            KeyAlgorithm::Ed448 => Self::Ed448,
+            KeyAlgorithm::ChaCha20Poly1305 => Self::ChaCha20Poly1305,
             KeyAlgorithm::Hmac { hash, length } => Self::Hmac {
                 hash: *hash,
                 length: *length,
@@ -330,6 +345,7 @@ impl ClonedKeyAlgorithm {
             KeyAlgorithm::Derive(d) => Self::Derive(d.clone()),
             KeyAlgorithm::HkdfImport => Self::HkdfImport,
             KeyAlgorithm::Pbkdf2Import => Self::Pbkdf2Import,
+            KeyAlgorithm::Argon2Import(v) => Self::Argon2Import(*v),
         }
     }
 
@@ -342,7 +358,10 @@ impl ClonedKeyAlgorithm {
                 algorithm: algorithm.clone(),
             },
             Self::X25519 => KeyAlgorithm::X25519,
+            Self::X448 => KeyAlgorithm::X448,
             Self::Ed25519 => KeyAlgorithm::Ed25519,
+            Self::Ed448 => KeyAlgorithm::Ed448,
+            Self::ChaCha20Poly1305 => KeyAlgorithm::ChaCha20Poly1305,
             Self::Hmac { hash, length } => KeyAlgorithm::Hmac {
                 hash: *hash,
                 length: *length,
@@ -359,6 +378,7 @@ impl ClonedKeyAlgorithm {
             Self::Derive(d) => KeyAlgorithm::Derive(d.clone()),
             Self::HkdfImport => KeyAlgorithm::HkdfImport,
             Self::Pbkdf2Import => KeyAlgorithm::Pbkdf2Import,
+            Self::Argon2Import(v) => KeyAlgorithm::Argon2Import(*v),
         }
     }
 }
@@ -490,6 +510,7 @@ fn get_ciphers<'js>(ctx: Ctx<'js>) -> Result<Array<'js>> {
         "aes-128-gcm",
         "aes-192-gcm",
         "aes-256-gcm",
+        "chacha20-poly1305",
     ];
     #[cfg(not(feature = "_rustcrypto"))]
     const CIPHERS: &[&str] = &[];
@@ -510,9 +531,15 @@ impl ModuleDef for CryptoModule {
     fn declare(declare: &Declarations) -> Result<()> {
         declare.declare("createHash")?;
         declare.declare("createHmac")?;
+        declare.declare("hash")?;
+        declare.declare("Hash")?;
+        declare.declare("Hmac")?;
         declare.declare("Crc32")?;
         declare.declare("Crc32c")?;
         declare.declare("randomBytes")?;
+        declare.declare("pseudoRandomBytes")?;
+        declare.declare("prng")?;
+        declare.declare("rng")?;
         declare.declare("randomUUID")?;
         declare.declare("randomInt")?;
         declare.declare("randomFillSync")?;
@@ -522,6 +549,8 @@ impl ModuleDef for CryptoModule {
         declare.declare("getHashes")?;
         declare.declare("getCiphers")?;
         declare.declare("getCurves")?;
+        declare.declare("fips")?;
+        declare.declare("getFips")?;
         declare.declare("constants")?;
         declare.declare("subtle")?;
 
@@ -530,6 +559,31 @@ impl ModuleDef for CryptoModule {
             declare.declare("timingSafeEqual")?;
             declare.declare("hkdf")?;
             declare.declare("hkdfSync")?;
+            declare.declare("pbkdf2")?;
+            declare.declare("pbkdf2Sync")?;
+            declare.declare("scrypt")?;
+            declare.declare("scryptSync")?;
+            declare.declare("Sign")?;
+            declare.declare("Verify")?;
+            declare.declare("createSign")?;
+            declare.declare("createVerify")?;
+            declare.declare("privateDecrypt")?;
+            declare.declare("privateEncrypt")?;
+            declare.declare("publicDecrypt")?;
+            declare.declare("generateKey")?;
+            declare.declare("generateKeySync")?;
+            declare.declare("generateKeyPair")?;
+            declare.declare("generateKeyPairSync")?;
+            declare.declare("DiffieHellman")?;
+            declare.declare("DiffieHellmanGroup")?;
+            declare.declare("createDiffieHellman")?;
+            declare.declare("createDiffieHellmanGroup")?;
+            declare.declare("getDiffieHellman")?;
+            declare.declare("checkPrime")?;
+            declare.declare("checkPrimeSync")?;
+            declare.declare("generatePrime")?;
+            declare.declare("generatePrimeSync")?;
+            declare.declare("getCipherInfo")?;
             declare.declare("KeyObject")?;
             declare.declare("createSecretKey")?;
             declare.declare("createPrivateKey")?;
@@ -578,12 +632,18 @@ impl ModuleDef for CryptoModule {
             let subtle: Value = crypto.get("subtle")?;
             let constants = rsa::create_constants_object(ctx)?;
 
+            Class::<Hash>::define(default)?;
+            Class::<Hmac>::define(default)?;
             Class::<Crc32>::define(default)?;
             Class::<Crc32c>::define(default)?;
 
             default.set("createHash", Func::from(Hash::new))?;
             default.set("createHmac", Func::from(Hmac::new))?;
+            default.set("hash", Func::from(hash::hash_oneshot))?;
             default.set("randomBytes", Func::from(get_random_bytes))?;
+            default.set("pseudoRandomBytes", Func::from(get_random_bytes))?;
+            default.set("prng", Func::from(get_random_bytes))?;
+            default.set("rng", Func::from(get_random_bytes))?;
             default.set("randomInt", Func::from(get_random_int))?;
             default.set("randomUUID", Func::from(uuidv4))?;
             default.set("randomFillSync", Func::from(random_fill_sync))?;
@@ -593,6 +653,8 @@ impl ModuleDef for CryptoModule {
             default.set("getHashes", Func::from(get_hashes))?;
             default.set("getCiphers", Func::from(get_ciphers))?;
             default.set("getCurves", Func::from(get_curves))?;
+            default.set("fips", 0)?;
+            default.set("getFips", Func::from(|| 0i32))?;
             default.set("constants", constants)?;
 
             #[cfg(feature = "_rustcrypto")]
@@ -602,10 +664,44 @@ impl ModuleDef for CryptoModule {
                 Class::<Decipheriv>::define(default)?;
                 Class::<ECDH>::define(default)?;
                 Class::<X509Certificate>::define(default)?;
+                Class::<sign_verify::Sign>::define(default)?;
+                Class::<sign_verify::Verify>::define(default)?;
+                Class::<dh::DiffieHellman>::define(default)?;
+                Class::<dh::DiffieHellmanGroup>::define(default)?;
 
                 default.set("timingSafeEqual", Func::from(timing_safe_equal))?;
                 default.set("hkdf", Func::from(hkdf))?;
                 default.set("hkdfSync", Func::from(hkdf_sync))?;
+                default.set("pbkdf2", Func::from(kdf::pbkdf2))?;
+                default.set("pbkdf2Sync", Func::from(kdf::pbkdf2_sync))?;
+                default.set("scrypt", Func::from(kdf::scrypt))?;
+                default.set("scryptSync", Func::from(kdf::scrypt_sync))?;
+                default.set("createSign", Func::from(sign_verify::create_sign))?;
+                default.set("createVerify", Func::from(sign_verify::create_verify))?;
+                default.set("privateDecrypt", Func::from(rsa::private_decrypt))?;
+                default.set("privateEncrypt", Func::from(rsa::private_encrypt))?;
+                default.set("publicDecrypt", Func::from(rsa::public_decrypt))?;
+                default.set("generateKey", Func::from(keygen::generate_key))?;
+                default.set("generateKeySync", Func::from(keygen::generate_key_sync))?;
+                default.set("generateKeyPair", Func::from(keygen::generate_key_pair))?;
+                default.set(
+                    "generateKeyPairSync",
+                    Func::from(keygen::generate_key_pair_sync),
+                )?;
+                default.set("createDiffieHellman", Func::from(dh::create_diffie_hellman))?;
+                default.set(
+                    "createDiffieHellmanGroup",
+                    Func::from(dh::create_diffie_hellman_group),
+                )?;
+                default.set(
+                    "getDiffieHellman",
+                    Func::from(dh::create_diffie_hellman_group),
+                )?;
+                default.set("checkPrime", Func::from(dh::check_prime))?;
+                default.set("checkPrimeSync", Func::from(dh::check_prime_sync))?;
+                default.set("generatePrime", Func::from(dh::generate_prime))?;
+                default.set("generatePrimeSync", Func::from(dh::generate_prime_sync))?;
+                default.set("getCipherInfo", Func::from(cipher::get_cipher_info))?;
                 default.set("createSecretKey", Func::from(create_secret_key))?;
                 default.set("createPrivateKey", Func::from(create_private_key))?;
                 default.set("createPublicKey", Func::from(create_public_key))?;

@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use crate::backend::{accept, AcceptOptions};
+use crate::backend::{accept, new_server_shared_state, AcceptOptions, ServerSharedState};
 use crate::options::parse_server_options;
 use crate::secure_context::{secure_context_from_value, SecureContext};
 use crate::sni::SniRegistry;
@@ -15,19 +15,18 @@ use crate::tls_socket::{rw_join, TlsSocket};
 use lexe_context::CtxExtension;
 use lexe_events::{EmitError, Emitter, EventEmitter, EventList};
 use lexe_net::{get_address_parts, get_hostname};
-use lexe_stream::SteamEvents;
 use lexe_utils::{object::ObjectExt, result::ResultExt, reuse_list::ReuseList};
 use rquickjs::{
     class::Trace,
     prelude::{Opt, Rest, This},
-    Class, Ctx, Exception, Function, JsLifetime, Object, Result, Undefined, Value,
+    Array, Class, Ctx, Exception, Function, JsLifetime, Object, Result, Undefined, Value,
 };
 use tokio::{
     net::TcpListener,
     select,
     sync::{
         broadcast::{self, Sender},
-        Notify,
+        oneshot, Notify,
     },
 };
 
@@ -50,6 +49,9 @@ pub struct Server<'js> {
     should_close: Arc<AtomicBool>,
     secure_context: Arc<RwLock<Arc<SecureContext>>>,
     sni_registry: Arc<RwLock<SniRegistry>>,
+    sni_callback: Option<Function<'js>>,
+    alpn_callback: Option<Function<'js>>,
+    shared_state: Arc<ServerSharedState>,
     request_cert: bool,
     reject_unauthorized: bool,
     http_handoff_http_server: RefCell<Option<Value<'js>>>,
@@ -61,6 +63,12 @@ impl<'js> Trace<'js> for Server<'js> {
         self.address.trace(tracer);
         for socket_ref in self.sockets.iter() {
             socket_ref.trace(tracer);
+        }
+        if let Some(cb) = &self.sni_callback {
+            cb.trace(tracer);
+        }
+        if let Some(cb) = &self.alpn_callback {
+            cb.trace(tracer);
         }
         if let Some(http_server) = self.http_handoff_http_server.borrow().as_ref() {
             http_server.trace(tracer);
@@ -100,30 +108,60 @@ impl<'js> Server<'js> {
             connection_listener = next.into_function();
         }
 
-        let (request_cert, reject_unauthorized, secure_context) = if let Some(opts) = options {
-            let parsed = parse_server_options(&ctx, opts)?;
-            let ctx_inner = if let Some(sc) = parsed.secure_context.clone() {
-                sc
+        let (request_cert, reject_unauthorized, secure_context, sni_callback, alpn_callback) =
+            if let Some(opts) = options {
+                let sni_cb = if let Some(obj) = opts.as_object() {
+                    obj.get::<_, Option<Value>>("SNICallback")?
+                        .filter(|v| !v.is_undefined() && !v.is_null())
+                        .map(|v| {
+                            v.into_function().ok_or_else(|| {
+                                Exception::throw_type(&ctx, "SNICallback must be a function")
+                            })
+                        })
+                        .transpose()?
+                } else {
+                    None
+                };
+                let alpn_cb = if let Some(obj) = opts.as_object() {
+                    obj.get::<_, Option<Value>>("ALPNCallback")?
+                        .filter(|v| !v.is_undefined() && !v.is_null())
+                        .map(|v| {
+                            v.into_function().ok_or_else(|| {
+                                Exception::throw_type(&ctx, "ALPNCallback must be a function")
+                            })
+                        })
+                        .transpose()?
+                } else {
+                    None
+                };
+                let parsed = parse_server_options(&ctx, opts)?;
+                let ctx_inner = if let Some(sc) = parsed.secure_context.clone() {
+                    sc
+                } else {
+                    SecureContext::from_options(&parsed)
+                        .map_err(|e| Exception::throw_message(&ctx, &e))?
+                };
+                (
+                    parsed.request_cert,
+                    parsed.reject_unauthorized,
+                    Arc::new(ctx_inner),
+                    sni_cb,
+                    alpn_cb,
+                )
             } else {
-                SecureContext::from_options(&parsed)
-                    .map_err(|e| Exception::throw_message(&ctx, &e))?
+                (
+                    false,
+                    true,
+                    Arc::new(
+                        SecureContext::from_options(&crate::options::TlsOptions::default())
+                            .map_err(|_e| {
+                                Exception::throw_message(&ctx, "default secure context required")
+                            })?,
+                    ),
+                    None,
+                    None,
+                )
             };
-            (
-                parsed.request_cert,
-                parsed.reject_unauthorized,
-                Arc::new(ctx_inner),
-            )
-        } else {
-            (
-                false,
-                true,
-                Arc::new(
-                    SecureContext::from_options(&crate::options::TlsOptions::default()).map_err(
-                        |_e| Exception::throw_message(&ctx, "default secure context required"),
-                    )?,
-                ),
-            )
-        };
 
         let emitter = EventEmitter::new();
         let (close_tx, _) = broadcast::channel::<()>(1);
@@ -140,6 +178,9 @@ impl<'js> Server<'js> {
                 should_close: Arc::new(AtomicBool::new(false)),
                 secure_context: Arc::new(RwLock::new(secure_context)),
                 sni_registry: Arc::new(RwLock::new(SniRegistry::new())),
+                sni_callback,
+                alpn_callback,
+                shared_state: new_server_shared_state(),
                 request_cert,
                 reject_unauthorized,
                 http_handoff_http_server: RefCell::new(None),
@@ -256,6 +297,9 @@ impl<'js> Server<'js> {
         let reject_unauthorized = borrow.reject_unauthorized;
         let secure_context = borrow.secure_context.clone();
         let sni_registry = borrow.sni_registry.clone();
+        let sni_callback = borrow.sni_callback.clone();
+        let alpn_callback = borrow.alpn_callback.clone();
+        let shared_state = borrow.shared_state.clone();
         drop(borrow);
 
         if already_running
@@ -309,6 +353,9 @@ impl<'js> Server<'js> {
                                 allow_half_open,
                                 secure_context.clone(),
                                 sni_registry.clone(),
+                                sni_callback.clone(),
+                                alpn_callback.clone(),
+                                shared_state.clone(),
                                 request_cert,
                                 reject_unauthorized,
                             ).emit_error("handle_connection", &ctx3, server2)?;
@@ -392,6 +439,7 @@ impl<'js> Server<'js> {
         Ok(listener)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_connection(
         this: Class<'js, Self>,
         ctx: Ctx<'js>,
@@ -403,15 +451,15 @@ impl<'js> Server<'js> {
         allow_half_open: bool,
         secure_context: Arc<RwLock<Arc<SecureContext>>>,
         sni_registry: Arc<RwLock<SniRegistry>>,
+        sni_callback: Option<Function<'js>>,
+        alpn_callback: Option<Function<'js>>,
+        shared_state: Arc<ServerSharedState>,
         request_cert: bool,
         reject_unauthorized: bool,
     ) -> Result<()> {
         let (tcp_stream, _) = accept_result.or_throw(&ctx)?;
 
         ctx.clone().spawn_exit(async move {
-            // The listener must receive a real `tls.TLSSocket` (a net.Socket
-            // subclass); the native handle is its `_handle` so both sides of
-            // `process_split_io` operate on the same object.
             let tls_socket = TlsSocket::new(ctx.clone(), true)?;
             let socket_instance =
                 crate::client::build_tls_socket_object(&ctx, &tls_socket, allow_half_open)?;
@@ -437,18 +485,170 @@ impl<'js> Server<'js> {
                 false,
             )?;
 
-            let context = secure_context.read().unwrap().clone();
+            let default_context = secure_context.read().unwrap().clone();
+            let mut active_context = default_context.clone();
             let selected_local_cert = Arc::new(Mutex::new(None));
-            let accept_opts = AcceptOptions {
-                context: (*context).clone(),
-                request_cert,
-                reject_unauthorized,
-                timeout: Some(HANDSHAKE_TIMEOUT),
-                sni_registry,
-                selected_local_cert: selected_local_cert.clone(),
+
+            #[cfg(any(feature = "tls-ring", feature = "tls-aws-lc", feature = "tls-graviola"))]
+            let accept_result: std::result::Result<
+                crate::backend::ServerTlsStream<tokio::net::TcpStream>,
+                Box<dyn std::error::Error + Send + Sync>,
+            > = if sni_callback.is_some() || alpn_callback.is_some() {
+                match crate::backend::accept_client_hello(tcp_stream, Some(HANDSHAKE_TIMEOUT)).await
+                {
+                    Ok(start) => {
+                        let (servername, offered_alpn) = {
+                            let ch = start.client_hello();
+                            let sn = ch.server_name().unwrap_or("").to_string();
+                            let protos: Vec<String> = ch
+                                .alpn()
+                                .map(|it| {
+                                    it.map(|p| String::from_utf8_lossy(p).to_string()).collect()
+                                })
+                                .unwrap_or_default();
+                            (sn, protos)
+                        };
+
+                        let mut sni_err: Option<Box<dyn std::error::Error + Send + Sync>> = None;
+                        if let Some(sni_cb) = sni_callback {
+                            let (tx, rx) = oneshot::channel::<
+                                std::result::Result<Option<Arc<SecureContext>>, String>,
+                            >();
+                            let tx_slot = Arc::new(Mutex::new(Some(tx)));
+                            let ctx_for_cb = ctx.clone();
+                            let resolve_fn = Function::new(
+                                ctx.clone(),
+                                move |err_val: Value<'js>,
+                                      ctx_val: Opt<Value<'js>>|
+                                      -> Result<()> {
+                                    let outcome = if !err_val.is_null() && !err_val.is_undefined() {
+                                        let msg = err_val
+                                            .as_object()
+                                            .and_then(|o| o.get::<_, String>("message").ok())
+                                            .or_else(|| {
+                                                err_val.as_string().and_then(|s| s.to_string().ok())
+                                            })
+                                            .unwrap_or_else(|| "SNICallback failed".to_string());
+                                        Err(msg)
+                                    } else if let Some(val) = ctx_val.0 {
+                                        if val.is_null() || val.is_undefined() {
+                                            Ok(None)
+                                        } else {
+                                            match secure_context_from_value(&ctx_for_cb, val) {
+                                                Ok(sc) => Ok(Some(sc)),
+                                                Err(e) => Err(e.to_string()),
+                                            }
+                                        }
+                                    } else {
+                                        Ok(None)
+                                    };
+                                    if let Ok(mut guard) = tx_slot.lock() {
+                                        if let Some(sender) = guard.take() {
+                                            let _ = sender.send(outcome);
+                                        }
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+                            if let Err(e) = sni_cb.call::<_, ()>((servername.clone(), resolve_fn)) {
+                                sni_err = Some(e.to_string().into());
+                            } else {
+                                match rx.await {
+                                    Ok(Ok(Some(resolved))) => active_context = resolved,
+                                    Ok(Ok(None)) => {
+                                        if !servername.is_empty() {
+                                            if let Some(reg_ctx) =
+                                                sni_registry.read().unwrap().resolve(&servername)
+                                            {
+                                                active_context = reg_ctx;
+                                            }
+                                        }
+                                    },
+                                    Ok(Err(msg)) => sni_err = Some(msg.into()),
+                                    Err(_) => {
+                                        sni_err = Some("SNICallback did not resolve".into());
+                                    },
+                                }
+                            }
+                        } else if !servername.is_empty() {
+                            if let Some(reg_ctx) = sni_registry.read().unwrap().resolve(&servername)
+                            {
+                                active_context = reg_ctx;
+                            }
+                        }
+
+                        let mut chosen_alpn: Option<Vec<u8>> = None;
+                        if sni_err.is_none() {
+                            if let Some(alpn_cb) = alpn_callback {
+                                let arg = Object::new(ctx.clone())?;
+                                arg.set("servername", servername)?;
+                                let arr = Array::new(ctx.clone())?;
+                                for (i, p) in offered_alpn.iter().enumerate() {
+                                    arr.set(i, p.clone())?;
+                                }
+                                arg.set("protocols", arr)?;
+                                match alpn_cb.call::<_, Value>((arg,)) {
+                                    Ok(ret) if !ret.is_undefined() && !ret.is_null() => {
+                                        if let Some(s) = ret.as_string() {
+                                            chosen_alpn = Some(s.to_string()?.into_bytes());
+                                        }
+                                    },
+                                    Ok(_) => {},
+                                    Err(e) => sni_err = Some(e.to_string().into()),
+                                }
+                            }
+                        }
+
+                        if let Some(err) = sni_err {
+                            Err(err)
+                        } else {
+                            let accept_opts = AcceptOptions {
+                                context: (*active_context).clone(),
+                                request_cert,
+                                reject_unauthorized,
+                                timeout: Some(HANDSHAKE_TIMEOUT),
+                                sni_registry,
+                                selected_local_cert: selected_local_cert.clone(),
+                                server_state: Some(shared_state),
+                                chosen_alpn,
+                            };
+                            crate::backend::finish_lazy_accept(start, accept_opts).await
+                        }
+                    },
+                    Err(e) => Err(e),
+                }
+            } else {
+                let accept_opts = AcceptOptions {
+                    context: (*active_context).clone(),
+                    request_cert,
+                    reject_unauthorized,
+                    timeout: Some(HANDSHAKE_TIMEOUT),
+                    sni_registry,
+                    selected_local_cert: selected_local_cert.clone(),
+                    server_state: Some(shared_state),
+                    chosen_alpn: None,
+                };
+                accept(tcp_stream, accept_opts).await
             };
 
-            let accept_result = accept(tcp_stream, accept_opts).await;
+            #[cfg(all(
+                feature = "tls-openssl",
+                not(any(feature = "tls-ring", feature = "tls-aws-lc", feature = "tls-graviola"))
+            ))]
+            let accept_result = {
+                let _ = (sni_callback, alpn_callback);
+                let accept_opts = AcceptOptions {
+                    context: (*active_context).clone(),
+                    request_cert,
+                    reject_unauthorized,
+                    timeout: Some(HANDSHAKE_TIMEOUT),
+                    sni_registry,
+                    selected_local_cert: selected_local_cert.clone(),
+                    server_state: Some(shared_state),
+                    chosen_alpn: None,
+                };
+                accept(tcp_stream, accept_opts).await
+            };
 
             match accept_result {
                 Ok(tls_stream) => {
@@ -456,7 +656,9 @@ impl<'js> Server<'js> {
                         tls_socket.clone(),
                         ctx.clone(),
                         tls_stream,
+                        request_cert,
                         reject_unauthorized,
+                        &active_context.ca,
                         selected_local_cert,
                     )
                     .await

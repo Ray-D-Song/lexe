@@ -29,7 +29,7 @@ pub async fn subtle_generate_key<'js>(
 
     if matches!(
         key_algorithm,
-        KeyAlgorithm::Aes { .. } | KeyAlgorithm::Hmac { .. }
+        KeyAlgorithm::Aes { .. } | KeyAlgorithm::Hmac { .. } | KeyAlgorithm::ChaCha20Poly1305
     ) {
         return Ok(Class::instance(
             ctx,
@@ -98,9 +98,76 @@ fn generate_key(ctx: &Ctx<'_>, algorithm: &KeyAlgorithm) -> Result<(Vec<u8>, Vec
         KeyAlgorithm::Ed25519 => CRYPTO_PROVIDER.generate_ed25519_key().map_err(|e| {
             Exception::throw_message(ctx, &format!("Ed25519 key generation failed: {}", e))
         }),
+        KeyAlgorithm::Ed448 => {
+            #[cfg(feature = "_rustcrypto")]
+            {
+                use der::Encode as _;
+                use elliptic_curve::Generate as _;
+                use pkcs8::PrivateKeyInfoRef;
+                use spki::AlgorithmIdentifierRef;
+                let mut rng = rand::rng();
+                let sk = ed448_goldilocks::SigningKey::generate_from_rng(&mut rng);
+                let vk = sk.verifying_key();
+                let seed = sk.to_bytes();
+                let inner = der::asn1::OctetStringRef::new(seed.as_slice())
+                    .and_then(|o| o.to_der())
+                    .map_err(|e| {
+                        Exception::throw_message(ctx, &format!("Ed448 keygen failed: {e}"))
+                    })?;
+                let pk_info = PrivateKeyInfoRef::new(
+                    AlgorithmIdentifierRef {
+                        oid: const_oid::db::rfc8410::ID_ED_448,
+                        parameters: None,
+                    },
+                    der::asn1::OctetStringRef::new(&inner).map_err(|e| {
+                        Exception::throw_message(ctx, &format!("Ed448 keygen failed: {e}"))
+                    })?,
+                );
+                let priv_der = pk_info.to_der().map_err(|e| {
+                    Exception::throw_message(ctx, &format!("Ed448 keygen failed: {e}"))
+                })?;
+                Ok((priv_der, vk.to_bytes().to_vec()))
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            algorithm_not_supported_error(ctx)
+        },
         KeyAlgorithm::X25519 => CRYPTO_PROVIDER.generate_x25519_key().map_err(|e| {
             Exception::throw_message(ctx, &format!("X25519 key generation failed: {}", e))
         }),
+        KeyAlgorithm::X448 => {
+            #[cfg(feature = "_rustcrypto")]
+            {
+                use der::Encode as _;
+                use pkcs8::PrivateKeyInfoRef;
+                use rand::RngExt as _;
+                use spki::AlgorithmIdentifierRef;
+                let mut raw = [0u8; 56];
+                rand::rng().fill(raw.as_mut_slice());
+                let sk = x448::StaticSecret::from(raw);
+                let pk = x448::PublicKey::from(&sk);
+                let inner = der::asn1::OctetStringRef::new(sk.as_bytes())
+                    .and_then(|o| o.to_der())
+                    .map_err(|e| {
+                        Exception::throw_message(ctx, &format!("X448 keygen failed: {e}"))
+                    })?;
+                let pk_info = PrivateKeyInfoRef::new(
+                    AlgorithmIdentifierRef {
+                        oid: const_oid::db::rfc8410::ID_X_448,
+                        parameters: None,
+                    },
+                    der::asn1::OctetStringRef::new(&inner).map_err(|e| {
+                        Exception::throw_message(ctx, &format!("X448 keygen failed: {e}"))
+                    })?,
+                );
+                let priv_der = pk_info.to_der().map_err(|e| {
+                    Exception::throw_message(ctx, &format!("X448 keygen failed: {e}"))
+                })?;
+                Ok((priv_der, pk.as_bytes().to_vec()))
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            algorithm_not_supported_error(ctx)
+        },
+        KeyAlgorithm::ChaCha20Poly1305 => Ok((vec![], crate::random_byte_array(32))),
         KeyAlgorithm::Rsa {
             modulus_length,
             public_exponent,

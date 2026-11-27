@@ -18,7 +18,6 @@ use lexe_stream::{
     impl_stream_events,
     readable::{ReadableStream, ReadableStreamInner},
     writable::{WritableStream, WritableStreamInner},
-    SteamEvents,
 };
 use lexe_utils::{
     error::ErrorExtensions, event_loop::EventLoopRef, object::ObjectExt, result::ResultExt,
@@ -36,6 +35,7 @@ use crate::backend::{
     TlsConnectionInfo, VerifyRecord,
 };
 use crate::certificate::{parse_cert_chain_der, parse_cert_der, CertObject};
+use lexe_buffer::Buffer;
 
 impl_stream_events!(TlsSocket);
 
@@ -95,6 +95,8 @@ pub struct TlsSocket<'js> {
     cipher_standard_name: Option<String>,
     peer_certs: Vec<CertObject>,
     local_cert_der: Option<Vec<u8>>,
+    pub(crate) session_reused: bool,
+    pub(crate) session_slot: Arc<Mutex<Option<Vec<u8>>>>,
     pub(crate) check_server_identity_cb: Option<Function<'js>>,
     tcp_options: TcpSocketOptions,
     pub(crate) tcp_control: Option<Arc<std::net::TcpStream>>,
@@ -221,23 +223,27 @@ impl<'js> TlsSocket<'js> {
                 lexe_net::Socket::begin_tls_handoff(&ctx2, net_socket).await?;
             Self::adopt_tcp_control(&this2, &ctx2, net_control, net_options)?;
             let io = lexe_net::PrefixedTcpStream::new(prefix, read_half, write_half);
+            let selected_local_cert = std::sync::Arc::new(std::sync::Mutex::new(None));
             let accept_opts = crate::backend::AcceptOptions {
-                context: secure_context,
+                context: secure_context.clone(),
                 request_cert,
                 reject_unauthorized,
                 timeout: Some(std::time::Duration::from_secs(30)),
                 sni_registry: Default::default(),
-                selected_local_cert: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                selected_local_cert: selected_local_cert.clone(),
+                server_state: None,
+                chosen_alpn: None,
             };
             let tls_stream = crate::backend::accept(io, accept_opts)
                 .await
                 .map_err(|e| Exception::throw_message(&ctx2, &e.to_string()))?;
-            let selected_local_cert = std::sync::Arc::new(std::sync::Mutex::new(None));
             let tls_stream = match Self::finish_server_handshake(
                 this2.clone(),
                 ctx2.clone(),
                 tls_stream,
+                request_cert,
                 reject_unauthorized,
+                &secure_context.ca,
                 selected_local_cert,
             )
             .await
@@ -462,8 +468,7 @@ impl<'js> TlsSocket<'js> {
         value: Value<'js>,
         cb: Opt<Function<'js>>,
     ) -> Result<bool> {
-        WritableStream::write_flushed(this, ctx, value, cb)?;
-        Ok(true)
+        WritableStream::do_write(this, ctx, value, Opt(Some(cb.0)), true)
     }
 
     pub fn end(
@@ -584,8 +589,26 @@ impl<'js> TlsSocket<'js> {
         }
     }
 
-    pub fn is_session_reused(_this: This<Class<'js, Self>>) -> bool {
-        false
+    pub fn is_session_reused(this: This<Class<'js, Self>>) -> bool {
+        this.borrow().session_reused
+    }
+
+    pub fn get_session(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        let slot = this
+            .borrow()
+            .session_slot
+            .lock()
+            .ok()
+            .and_then(|g| g.clone());
+        match slot {
+            Some(bytes) => Buffer(bytes).into_js(&ctx),
+            None => rquickjs::Undefined.into_js(&ctx),
+        }
+    }
+
+    #[qjs(rename = "getTLSTicket")]
+    pub fn get_tls_ticket(this: This<Class<'js, Self>>, ctx: Ctx<'js>) -> Result<Value<'js>> {
+        Self::get_session(this, ctx)
     }
 }
 
@@ -626,6 +649,8 @@ impl<'js> TlsSocket<'js> {
                 cipher_standard_name: None,
                 peer_certs: Vec::new(),
                 local_cert_der: None,
+                session_reused: false,
+                session_slot: Arc::new(Mutex::new(None)),
                 check_server_identity_cb: None,
                 tcp_options: TcpSocketOptions::default(),
                 tcp_control: None,
@@ -665,6 +690,7 @@ impl<'js> TlsSocket<'js> {
             }
         }
         self.local_cert_der = info.local_cert.clone();
+        self.session_reused = info.session_reused;
         if let Some(err) = &info.chain_error {
             if let Ok(exception) = Exception::from_message(ctx.clone(), err) {
                 self.authorization_error = Some(exception.into_value());
@@ -762,13 +788,21 @@ impl<'js> TlsSocket<'js> {
         this: Class<'js, Self>,
         ctx: Ctx<'js>,
         stream: ServerTlsStream<IO>,
+        request_cert: bool,
         reject_unauthorized: bool,
+        custom_ca: &[Vec<u8>],
         selected_local_cert: Arc<Mutex<Option<Vec<u8>>>>,
     ) -> std::result::Result<ServerTlsStream<IO>, Value<'js>>
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'js,
     {
-        let info = inspect_server_connection(&stream, reject_unauthorized, &selected_local_cert);
+        let info = inspect_server_connection(
+            &stream,
+            request_cert,
+            reject_unauthorized,
+            custom_ca,
+            &selected_local_cert,
+        );
         Self::complete_handshake(this, &ctx, info, None, reject_unauthorized, TlsRole::Server)
             .map_err(|err| {
                 err.into_value(&ctx)

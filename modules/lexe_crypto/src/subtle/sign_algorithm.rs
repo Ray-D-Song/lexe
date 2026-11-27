@@ -13,6 +13,7 @@ use super::{
 pub enum SigningAlgorithm {
     Ecdsa { hash: HashAlgorithm },
     Ed25519,
+    Ed448,
     RsaPss { salt_length: u32 },
     RsassaPkcs1v15,
     Hmac,
@@ -24,6 +25,7 @@ impl<'js> FromJs<'js> for SigningAlgorithm {
 
         let algorithm = match name.as_str() {
             "Ed25519" => SigningAlgorithm::Ed25519,
+            "Ed448" => SigningAlgorithm::Ed448,
             "HMAC" => SigningAlgorithm::Hmac,
             "RSASSA-PKCS1-v1_5" => SigningAlgorithm::RsassaPkcs1v15,
             "ECDSA" => {

@@ -78,6 +78,8 @@ tracing = { version = "0.1", default-features = false }
 webpki-roots = { version = "1", default-features = false, optional = true }
 rustls-native-certs = { version = "0.8", default-features = false, optional = true }
 x509-parser = { version = "0.16", default-features = false }
+p12-keystore = "0.4.1"
+pkcs8 = { version = "0.11.0", default-features = false, features = ["alloc", "encryption"] }
 
 [dev-dependencies]
 lexe_events = { path = "../lexe_events" }

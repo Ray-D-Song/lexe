@@ -281,6 +281,8 @@ async fn serve_connection<'js>(
             timeout: Some(Duration::from_secs(120)),
             sni_registry,
             selected_local_cert,
+            server_state: None,
+            chosen_alpn: None,
         };
         let tls_stream = accept(tcp, accept_opts)
             .await

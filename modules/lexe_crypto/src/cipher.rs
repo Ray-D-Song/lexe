@@ -7,11 +7,12 @@ use aes::{
     cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit, KeyIvInit, StreamCipher},
     Aes128, Aes192, Aes256,
 };
+use chacha20poly1305::{aead::AeadInOut, ChaCha20Poly1305};
 use ctr::Ctr128BE;
 use lexe_utils::{bytes::ObjectBytes, object::ObjectExt};
 use rquickjs::{
     atom::PredefinedAtom, class::Trace, function::Opt, prelude::This, Class, Ctx, Exception,
-    FromJs, JsLifetime, Result, Value,
+    FromJs, IntoJs, JsLifetime, Object, Result, Value,
 };
 
 use crate::key_object::{
@@ -23,6 +24,7 @@ enum CipherMode {
     Gcm,
     Cbc,
     Ctr,
+    ChaCha20Poly1305,
 }
 
 #[derive(Clone, Copy)]
@@ -43,6 +45,7 @@ fn parse_cipher_spec(alg: &str) -> std::result::Result<CipherSpec, String> {
         "aes-128-ctr" => (128, CipherMode::Ctr),
         "aes-192-ctr" => (192, CipherMode::Ctr),
         "aes-256-ctr" => (256, CipherMode::Ctr),
+        "chacha20-poly1305" => (256, CipherMode::ChaCha20Poly1305),
         _ => return Err(format!("Unknown cipher: {alg}")),
     };
     Ok(CipherSpec { bits, mode })
@@ -329,6 +332,117 @@ impl GcmState {
     }
 }
 
+struct ChaCha20Stream {
+    key: [u8; 32],
+    nonce: [u8; 12],
+    counter: u32,
+    block: [u8; 64],
+    pos: usize,
+}
+
+impl ChaCha20Stream {
+    fn new(key: &[u8], nonce: &[u8]) -> std::result::Result<Self, String> {
+        let key: [u8; 32] = key
+            .try_into()
+            .map_err(|_| "Invalid key length".to_string())?;
+        let nonce: [u8; 12] = nonce
+            .try_into()
+            .map_err(|_| "Invalid initialization vector".to_string())?;
+        Ok(Self {
+            key,
+            nonce,
+            counter: 1,
+            block: [0u8; 64],
+            pos: 64,
+        })
+    }
+
+    fn quarter_round(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize) {
+        state[a] = state[a].wrapping_add(state[b]);
+        state[d] = (state[d] ^ state[a]).rotate_left(16);
+        state[c] = state[c].wrapping_add(state[d]);
+        state[b] = (state[b] ^ state[c]).rotate_left(12);
+        state[a] = state[a].wrapping_add(state[b]);
+        state[d] = (state[d] ^ state[a]).rotate_left(8);
+        state[c] = state[c].wrapping_add(state[d]);
+        state[b] = (state[b] ^ state[c]).rotate_left(7);
+    }
+
+    fn next_block(&mut self) -> std::result::Result<(), String> {
+        if self.counter == 0 {
+            return Err("ChaCha20 counter overflow".to_string());
+        }
+        let mut init = [0u32; 16];
+        init[0] = 0x6170_7865;
+        init[1] = 0x3320_646e;
+        init[2] = 0x7962_2d32;
+        init[3] = 0x6b20_6574;
+        for (i, chunk) in self.key.as_chunks::<4>().0.iter().enumerate() {
+            init[4 + i] = u32::from_le_bytes(*chunk);
+        }
+        init[12] = self.counter;
+        for (i, chunk) in self.nonce.as_chunks::<4>().0.iter().enumerate() {
+            init[13 + i] = u32::from_le_bytes(*chunk);
+        }
+        let mut working = init;
+        for _ in 0..10 {
+            Self::quarter_round(&mut working, 0, 4, 8, 12);
+            Self::quarter_round(&mut working, 1, 5, 9, 13);
+            Self::quarter_round(&mut working, 2, 6, 10, 14);
+            Self::quarter_round(&mut working, 3, 7, 11, 15);
+            Self::quarter_round(&mut working, 0, 5, 10, 15);
+            Self::quarter_round(&mut working, 1, 6, 11, 12);
+            Self::quarter_round(&mut working, 2, 7, 8, 13);
+            Self::quarter_round(&mut working, 3, 4, 9, 14);
+        }
+        for (dst, (w, i)) in self
+            .block
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(working.iter().zip(init.iter()))
+        {
+            dst.copy_from_slice(&w.wrapping_add(*i).to_le_bytes());
+        }
+        self.counter = self.counter.wrapping_add(1);
+        self.pos = 0;
+        Ok(())
+    }
+
+    fn apply(&mut self, buf: &mut [u8]) -> std::result::Result<(), String> {
+        for b in buf.iter_mut() {
+            if self.pos == 64 {
+                self.next_block()?;
+            }
+            *b ^= self.block[self.pos];
+            self.pos += 1;
+        }
+        Ok(())
+    }
+}
+
+struct ChaCha20Poly1305State {
+    stream: ChaCha20Stream,
+    aad: Vec<u8>,
+    buffer: Vec<u8>,
+    tag_len: usize,
+    computed_tag: Option<Vec<u8>>,
+    expected_tag: Option<Vec<u8>>,
+}
+
+impl ChaCha20Poly1305State {
+    fn new(key: &[u8], iv: &[u8], tag_len: usize) -> std::result::Result<Self, String> {
+        Ok(Self {
+            stream: ChaCha20Stream::new(key, iv)?,
+            aad: Vec::new(),
+            buffer: Vec::new(),
+            tag_len,
+            computed_tag: None,
+            expected_tag: None,
+        })
+    }
+}
+
 enum CipherEngine {
     Gcm(GcmState),
     Cbc {
@@ -338,6 +452,7 @@ enum CipherEngine {
         auto_padding: bool,
     },
     Ctr(AesCtrStream),
+    ChaCha20Poly1305(ChaCha20Poly1305State),
 }
 
 impl CipherEngine {
@@ -375,6 +490,15 @@ impl CipherEngine {
                     .map_err(|_| "Invalid initialization vector".to_string())?;
                 Ok(Self::Ctr(AesCtrStream::new(key, &iv16)?))
             },
+            CipherMode::ChaCha20Poly1305 => {
+                let tag_len = auth_tag_len.unwrap_or(16);
+                if !(1..=16).contains(&tag_len) {
+                    return Err(format!("Invalid authentication tag length: {tag_len}"));
+                }
+                Ok(Self::ChaCha20Poly1305(ChaCha20Poly1305State::new(
+                    key, iv, tag_len,
+                )?))
+            },
         }
     }
 
@@ -388,6 +512,12 @@ impl CipherEngine {
                 }
                 Ok(out)
             },
+            Self::ChaCha20Poly1305(c) => {
+                c.buffer.extend_from_slice(data);
+                let mut out = data.to_vec();
+                c.stream.apply(&mut out)?;
+                Ok(out)
+            },
             Self::Ctr(c) => {
                 let mut out = data.to_vec();
                 c.apply(&mut out)?;
@@ -399,8 +529,8 @@ impl CipherEngine {
                 pending.extend_from_slice(data);
                 let full_blocks = pending.len() / 16;
                 let mut out = Vec::with_capacity(full_blocks * 16);
-                for chunk in pending[..full_blocks * 16].chunks_exact(16) {
-                    let mut blk: [u8; 16] = chunk.try_into().unwrap();
+                for &chunk in pending[..full_blocks * 16].as_chunks::<16>().0 {
+                    let mut blk: [u8; 16] = chunk;
                     for (b, &p) in blk.iter_mut().zip(prev.iter()) {
                         *b ^= p;
                     }
@@ -423,6 +553,20 @@ impl CipherEngine {
                     .ok_or_else(|| "Cipher already finalized".to_string())?;
                 let full_tag = ghash.finalize_tag(&g.tag_mask);
                 g.computed_tag = Some(full_tag[..g.tag_len].to_vec());
+                Ok(Vec::new())
+            },
+            Self::ChaCha20Poly1305(c) => {
+                let cipher = ChaCha20Poly1305::new_from_slice(&c.stream.key)
+                    .map_err(|_| "Invalid key length".to_string())?;
+                let mut pt = std::mem::take(&mut c.buffer);
+                let tag = cipher
+                    .encrypt_inout_detached(
+                        (&c.stream.nonce).into(),
+                        &c.aad,
+                        pt.as_mut_slice().into(),
+                    )
+                    .map_err(|_| "ChaCha20-Poly1305 encryption failed".to_string())?;
+                c.computed_tag = Some(tag[..c.tag_len].to_vec());
                 Ok(Vec::new())
             },
             Self::Ctr(_) => Ok(Vec::new()),
@@ -462,6 +606,12 @@ impl CipherEngine {
                 g.ctr.apply(&mut out)?;
                 Ok(out)
             },
+            Self::ChaCha20Poly1305(c) => {
+                c.buffer.extend_from_slice(data);
+                let mut out = data.to_vec();
+                c.stream.apply(&mut out)?;
+                Ok(out)
+            },
             Self::Ctr(c) => {
                 let mut out = data.to_vec();
                 c.apply(&mut out)?;
@@ -481,8 +631,7 @@ impl CipherEngine {
                 };
                 let process_bytes = ((pending.len().saturating_sub(hold_back)) / 16) * 16;
                 let mut out = Vec::with_capacity(process_bytes);
-                for chunk in pending[..process_bytes].chunks_exact(16) {
-                    let ct: [u8; 16] = chunk.try_into().unwrap();
+                for &ct in pending[..process_bytes].as_chunks::<16>().0 {
                     let mut pt = ct;
                     aes.decrypt_block(&mut pt);
                     for (p, &pv) in pt.iter_mut().zip(prev.iter()) {
@@ -518,6 +667,27 @@ impl CipherEngine {
                 if diff != 0 {
                     return Err("Unsupported state or unable to authenticate data".to_string());
                 }
+                Ok(Vec::new())
+            },
+            Self::ChaCha20Poly1305(c) => {
+                let expected = c.expected_tag.as_ref().ok_or_else(|| {
+                    "Unsupported state or unable to authenticate data".to_string()
+                })?;
+                if expected.len() != 16 {
+                    return Err("Unsupported state or unable to authenticate data".to_string());
+                }
+                let cipher = ChaCha20Poly1305::new_from_slice(&c.stream.key)
+                    .map_err(|_| "Invalid key length".to_string())?;
+                let mut ct = std::mem::take(&mut c.buffer);
+                let tag: [u8; 16] = expected.as_slice().try_into().unwrap();
+                cipher
+                    .decrypt_inout_detached(
+                        (&c.stream.nonce).into(),
+                        &c.aad,
+                        ct.as_mut_slice().into(),
+                        (&tag).into(),
+                    )
+                    .map_err(|_| "Unsupported state or unable to authenticate data".to_string())?;
                 Ok(Vec::new())
             },
             Self::Ctr(_) => Ok(Vec::new()),
@@ -638,6 +808,15 @@ impl Cipheriv {
                         return Err(Exception::throw_message(&ctx, "Cipher already finalized"));
                     }
                 },
+                CipherEngine::ChaCha20Poly1305(c) => {
+                    if !c.buffer.is_empty() {
+                        return Err(Exception::throw_message(
+                            &ctx,
+                            "setAAD must be called before update()",
+                        ));
+                    }
+                    c.aad.extend_from_slice(aad);
+                },
                 _ => {
                     return Err(Exception::throw_message(
                         &ctx,
@@ -653,6 +832,13 @@ impl Cipheriv {
     pub fn get_auth_tag<'js>(&self, ctx: Ctx<'js>) -> Result<Value<'js>> {
         match &self.engine {
             CipherEngine::Gcm(g) => match &g.computed_tag {
+                Some(tag) => encode_bytes_to_output(&ctx, tag.clone(), None),
+                None => Err(Exception::throw_message(
+                    &ctx,
+                    "Invalid state: call final() before getAuthTag()",
+                )),
+            },
+            CipherEngine::ChaCha20Poly1305(c) => match &c.computed_tag {
                 Some(tag) => encode_bytes_to_output(&ctx, tag.clone(), None),
                 None => Err(Exception::throw_message(
                     &ctx,
@@ -769,6 +955,15 @@ impl Decipheriv {
                         return Err(Exception::throw_message(&ctx, "Decipher already finalized"));
                     }
                 },
+                CipherEngine::ChaCha20Poly1305(c) => {
+                    if !c.buffer.is_empty() {
+                        return Err(Exception::throw_message(
+                            &ctx,
+                            "setAAD must be called before update()",
+                        ));
+                    }
+                    c.aad.extend_from_slice(aad);
+                },
                 _ => {
                     return Err(Exception::throw_message(
                         &ctx,
@@ -801,6 +996,15 @@ impl Decipheriv {
                         ));
                     }
                     g.expected_tag = Some(tag);
+                },
+                CipherEngine::ChaCha20Poly1305(c) => {
+                    if tag.len() != 16 {
+                        return Err(Exception::throw_message(
+                            &ctx,
+                            "Invalid authentication tag length",
+                        ));
+                    }
+                    c.expected_tag = Some(tag);
                 },
                 _ => {
                     return Err(Exception::throw_message(
@@ -914,4 +1118,210 @@ pub fn create_decipheriv<'js>(
             finalized: false,
         },
     )
+}
+
+pub fn get_cipher_info<'js>(
+    ctx: Ctx<'js>,
+    name_or_nid: Value<'js>,
+    options: Opt<Value<'js>>,
+) -> Result<Value<'js>> {
+    struct Info {
+        mode: &'static str,
+        name: &'static str,
+        nid: i32,
+        block_size: Option<i32>,
+        iv_len: usize,
+        key_len: usize,
+    }
+    const INFOS: &[(&str, Info)] = &[
+        (
+            "aes-128-cbc",
+            Info {
+                mode: "cbc",
+                name: "aes-128-cbc",
+                nid: 419,
+                block_size: Some(16),
+                iv_len: 16,
+                key_len: 16,
+            },
+        ),
+        (
+            "aes-192-cbc",
+            Info {
+                mode: "cbc",
+                name: "aes-192-cbc",
+                nid: 423,
+                block_size: Some(16),
+                iv_len: 16,
+                key_len: 24,
+            },
+        ),
+        (
+            "aes-256-cbc",
+            Info {
+                mode: "cbc",
+                name: "aes-256-cbc",
+                nid: 427,
+                block_size: Some(16),
+                iv_len: 16,
+                key_len: 32,
+            },
+        ),
+        (
+            "aes-128-ctr",
+            Info {
+                mode: "ctr",
+                name: "aes-128-ctr",
+                nid: 904,
+                block_size: Some(1),
+                iv_len: 16,
+                key_len: 16,
+            },
+        ),
+        (
+            "aes-192-ctr",
+            Info {
+                mode: "ctr",
+                name: "aes-192-ctr",
+                nid: 905,
+                block_size: Some(1),
+                iv_len: 16,
+                key_len: 24,
+            },
+        ),
+        (
+            "aes-256-ctr",
+            Info {
+                mode: "ctr",
+                name: "aes-256-ctr",
+                nid: 906,
+                block_size: Some(1),
+                iv_len: 16,
+                key_len: 32,
+            },
+        ),
+        (
+            "aes-128-gcm",
+            Info {
+                mode: "gcm",
+                name: "id-aes128-gcm",
+                nid: 895,
+                block_size: Some(1),
+                iv_len: 12,
+                key_len: 16,
+            },
+        ),
+        (
+            "id-aes128-gcm",
+            Info {
+                mode: "gcm",
+                name: "id-aes128-gcm",
+                nid: 895,
+                block_size: Some(1),
+                iv_len: 12,
+                key_len: 16,
+            },
+        ),
+        (
+            "aes-192-gcm",
+            Info {
+                mode: "gcm",
+                name: "id-aes192-gcm",
+                nid: 898,
+                block_size: Some(1),
+                iv_len: 12,
+                key_len: 24,
+            },
+        ),
+        (
+            "id-aes192-gcm",
+            Info {
+                mode: "gcm",
+                name: "id-aes192-gcm",
+                nid: 898,
+                block_size: Some(1),
+                iv_len: 12,
+                key_len: 24,
+            },
+        ),
+        (
+            "aes-256-gcm",
+            Info {
+                mode: "gcm",
+                name: "id-aes256-gcm",
+                nid: 901,
+                block_size: Some(1),
+                iv_len: 12,
+                key_len: 32,
+            },
+        ),
+        (
+            "id-aes256-gcm",
+            Info {
+                mode: "gcm",
+                name: "id-aes256-gcm",
+                nid: 901,
+                block_size: Some(1),
+                iv_len: 12,
+                key_len: 32,
+            },
+        ),
+        (
+            "chacha20-poly1305",
+            Info {
+                mode: "stream",
+                name: "chacha20-poly1305",
+                nid: 1018,
+                block_size: None,
+                iv_len: 12,
+                key_len: 32,
+            },
+        ),
+    ];
+
+    let found = if let Some(s) = name_or_nid.as_string() {
+        let lower = s.to_string()?.trim().to_ascii_lowercase();
+        INFOS.iter().find(|(k, _)| *k == lower).map(|(_, v)| v)
+    } else if let Some(n) = name_or_nid.as_number() {
+        let nid = n as i32;
+        INFOS.iter().find(|(_, v)| v.nid == nid).map(|(_, v)| v)
+    } else {
+        return Err(Exception::throw_type(
+            &ctx,
+            "The \"nameOrNid\" argument must be of type string or number",
+        ));
+    };
+
+    let Some(info) = found else {
+        return Ok(Value::new_undefined(ctx));
+    };
+
+    if let Some(opt_val) = options.0 {
+        if !opt_val.is_undefined() && !opt_val.is_null() {
+            let obj = opt_val.into_object().ok_or_else(|| {
+                Exception::throw_type(&ctx, "The \"options\" argument must be of type object")
+            })?;
+            if let Some(kl) = obj.get_optional::<_, usize>("keyLength")? {
+                if kl != info.key_len {
+                    return Ok(Value::new_undefined(ctx));
+                }
+            }
+            if let Some(il) = obj.get_optional::<_, usize>("ivLength")? {
+                if il != info.iv_len {
+                    return Ok(Value::new_undefined(ctx));
+                }
+            }
+        }
+    }
+
+    let obj = Object::new(ctx.clone())?;
+    obj.set("mode", info.mode)?;
+    obj.set("name", info.name)?;
+    obj.set("nid", info.nid)?;
+    if let Some(bs) = info.block_size {
+        obj.set("blockSize", bs)?;
+    }
+    obj.set("ivLength", info.iv_len)?;
+    obj.set("keyLength", info.key_len)?;
+    obj.into_js(&ctx)
 }

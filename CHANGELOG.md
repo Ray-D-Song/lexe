@@ -2,6 +2,14 @@
 
 All notable changes to Lexe are documented in this file.
 
+## [Unreleased]
+
+- Expanded `node:crypto` and WebCrypto (`WEBCRYPTO`) compatibility (`docs/compatibility.md`):
+  - Added classic APIs: `Hash`/`Hmac` constructors, one-shot `crypto.hash()`, `Sign`/`Verify`/`createSign`/`createVerify`, `pbkdf2`/`pbkdf2Sync`, `scrypt`/`scryptSync`, `generateKey`/`generateKeySync`, `generateKeyPair`/`generateKeyPairSync`, `DiffieHellman`/`DiffieHellmanGroup`/`createDiffieHellman`/`createDiffieHellmanGroup`/`getDiffieHellman`, `checkPrime`/`checkPrimeSync`/`generatePrime`/`generatePrimeSync`, `privateDecrypt` (`OAEP` / `RSA_NO_PADDING`, intentionally rejecting `RSA_PKCS1_PADDING`), `privateEncrypt`/`publicDecrypt`, streaming `chacha20-poly1305` cipher/decipher, `getCipherInfo()`, `Ed448`/`X448` `KeyObject` + sign/verify/diffieHellman, encrypted PKCS#8 PEM import/export (`passphrase`/`cipher`), and `prng`/`pseudoRandomBytes`/`rng`/`fips`/`getFips`/`DH_*`/`OPENSSL_VERSION_NUMBER` aliases & constants.
+  - Added WebCrypto `Ed448`, `X448`, `Argon2d`/`Argon2i`/`Argon2id`, and `ChaCha20-Poly1305`, plus `deriveBits`/`deriveKey` WPT edge-case fixes.
+- Expanded non-security `node:tls` and `node:https` compatibility (`docs/compatibility.md`; `node:tls`, `node:https`, and `WEBCRYPTO` graduated to `✔︎` with documented security policies):
+  - Added PKCS#12 `pfx`/passphrase and encrypted PKCS#8 PEM parsing, async `SNICallback` & `ALPNCallback`, soft mTLS (`requestCert: true, rejectUnauthorized: false`), TLS session resumption (`session`, `getSession()`, `getTLSTicket()`, `isSessionReused()`, `"session"` event), `tls.rootCertificates` & `tls.getCACertificates()`, and native `TLSSocket.write()` backpressure/`"drain"` propagation.
+
 ## [0.1.10] - 2026-11-27
 
 - Replaced `wasmi` with `wasmz` in `lexe_webassembly` and implemented `node:wasi` (`docs/compatibility.md`):

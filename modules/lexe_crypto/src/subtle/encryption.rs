@@ -152,6 +152,63 @@ pub fn encrypt_decrypt(
                 },
             }
         },
+        EncryptionAlgorithm::ChaCha20Poly1305 {
+            iv,
+            tag_length,
+            additional_data,
+        } => {
+            if !matches!(key.algorithm, KeyAlgorithm::ChaCha20Poly1305) {
+                return algorithm_mismatch_error(ctx, "ChaCha20-Poly1305");
+            }
+            #[cfg(feature = "_rustcrypto")]
+            {
+                use chacha20poly1305::{
+                    aead::{AeadInOut, KeyInit},
+                    ChaCha20Poly1305,
+                };
+                let cipher = ChaCha20Poly1305::new_from_slice(handle).map_err(|_| {
+                    Exception::throw_type(ctx, "Invalid ChaCha20-Poly1305 key length")
+                })?;
+                let aad = additional_data.as_deref().unwrap_or(&[]);
+                let tag_len = (*tag_length as usize) / 8;
+                match operation {
+                    EncryptionOperation::Encrypt => {
+                        let mut buf = data.to_vec();
+                        let tag = cipher
+                            .encrypt_inout_detached(iv.into(), aad, buf.as_mut_slice().into())
+                            .map_err(|_| Exception::throw_message(ctx, "Encryption failed"))?;
+                        buf.extend_from_slice(&tag[..tag_len]);
+                        buf
+                    },
+                    EncryptionOperation::Decrypt => {
+                        if data.len() < tag_len {
+                            return Err(Exception::throw_message(ctx, "Invalid ciphertext length"));
+                        }
+                        let (ct, tag_slice) = data.split_at(data.len() - tag_len);
+                        let mut buf = ct.to_vec();
+                        let tag_arr: [u8; 16] = tag_slice.try_into().map_err(|_| {
+                            Exception::throw_message(ctx, "Invalid authentication tag length")
+                        })?;
+                        cipher
+                            .decrypt_inout_detached(
+                                iv.into(),
+                                aad,
+                                buf.as_mut_slice().into(),
+                                (&tag_arr).into(),
+                            )
+                            .map_err(|_| {
+                                Exception::throw_message(ctx, "ChaCha20-Poly1305 decryption failed")
+                            })?;
+                        buf
+                    },
+                }
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            {
+                let _ = (iv, tag_length, additional_data);
+                return super::algorithm_not_supported_error(ctx);
+            }
+        },
         EncryptionAlgorithm::AesKw => {
             let padding = match mode {
                 EncryptionMode::Encryption => {

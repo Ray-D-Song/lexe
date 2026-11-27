@@ -19,6 +19,11 @@ pub enum EncryptionAlgorithm {
         tag_length: u8,
         additional_data: Option<Box<[u8]>>,
     },
+    ChaCha20Poly1305 {
+        iv: [u8; 12],
+        tag_length: u8,
+        additional_data: Option<Box<[u8]>>,
+    },
     RsaOaep {
         label: Option<Box<[u8]>>,
     },
@@ -98,6 +103,31 @@ impl<'js> FromJs<'js> for EncryptionAlgorithm {
                     iv,
                     additional_data,
                     tag_length,
+                })
+            },
+            "ChaCha20-Poly1305" => {
+                let iv_bytes = obj
+                    .get_required::<_, ObjectBytes>("iv", "algorithm")?
+                    .into_bytes(ctx)?;
+                let iv: [u8; 12] = iv_bytes.try_into().map_err(|_| {
+                    Exception::throw_type(ctx, "ChaCha20-Poly1305 iv must be 12 bytes (96 bits)")
+                })?;
+                let additional_data = obj
+                    .get_optional::<_, ObjectBytes>("additionalData")?
+                    .map(|v| v.into_bytes(ctx))
+                    .transpose()?
+                    .map(|vec| vec.into_boxed_slice());
+                let tag_length = obj.get_optional::<_, u8>("tagLength")?.unwrap_or(128);
+                if tag_length != 128 {
+                    return Err(Exception::throw_message(
+                        ctx,
+                        "Invalid tagLength for ChaCha20-Poly1305 (must be 128)",
+                    ));
+                }
+                Ok(EncryptionAlgorithm::ChaCha20Poly1305 {
+                    iv,
+                    tag_length,
+                    additional_data,
                 })
             },
             "RSA-OAEP" => {

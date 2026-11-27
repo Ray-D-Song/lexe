@@ -14,7 +14,7 @@ use lexe_encoding::{
     bytes_to_b64_url_safe_string, bytes_to_hex_string, Encoder,
 };
 use lexe_utils::{bytes::ObjectBytes, object::ObjectExt, result::ResultExt};
-use pkcs8::PrivateKeyInfoRef;
+use pkcs8::{EncryptedPrivateKeyInfoRef, PrivateKeyInfoRef};
 use rquickjs::{
     atom::PredefinedAtom, class::Trace, function::Opt, BigInt, Class, Ctx, Exception, FromJs,
     IntoJs, JsLifetime, Object, Result, Value,
@@ -56,8 +56,12 @@ pub enum KeyMaterial {
     },
     Ed25519Private(Vec<u8>),
     Ed25519Public(Vec<u8>),
+    Ed448Private(Vec<u8>),
+    Ed448Public(Vec<u8>),
     X25519Private(Vec<u8>),
     X25519Public(Vec<u8>),
+    X448Private(Vec<u8>),
+    X448Public(Vec<u8>),
 }
 
 #[rquickjs::class]
@@ -83,7 +87,9 @@ impl KeyObject {
             },
             KeyMaterial::EcPrivate { pkcs8_der, .. } => Ok(pkcs8_der.clone()),
             KeyMaterial::Ed25519Private(seed32) => encode_okp_pkcs8(rfc8410::ID_ED_25519, seed32),
+            KeyMaterial::Ed448Private(seed57) => encode_okp_pkcs8(rfc8410::ID_ED_448, seed57),
             KeyMaterial::X25519Private(raw32) => encode_okp_pkcs8(rfc8410::ID_X_25519, raw32),
+            KeyMaterial::X448Private(raw56) => encode_okp_pkcs8(rfc8410::ID_X_448, raw56),
             _ => Err("Key is not a private key".into()),
         }
     }
@@ -116,7 +122,9 @@ impl KeyObject {
                     .map_err(|e| format!("Failed to encode SPKI: {e}"))
             },
             KeyMaterial::Ed25519Public(raw32) => encode_okp_spki(rfc8410::ID_ED_25519, raw32),
+            KeyMaterial::Ed448Public(raw57) => encode_okp_spki(rfc8410::ID_ED_448, raw57),
             KeyMaterial::X25519Public(raw32) => encode_okp_spki(rfc8410::ID_X_25519, raw32),
+            KeyMaterial::X448Public(raw56) => encode_okp_spki(rfc8410::ID_X_448, raw56),
             _ => Err("Key is not a public key".into()),
         }
     }
@@ -126,7 +134,9 @@ impl KeyObject {
             KeyMaterial::RsaPublic { .. }
             | KeyMaterial::EcPublic { .. }
             | KeyMaterial::Ed25519Public(_)
-            | KeyMaterial::X25519Public(_) => Ok(self.material.clone()),
+            | KeyMaterial::Ed448Public(_)
+            | KeyMaterial::X25519Public(_)
+            | KeyMaterial::X448Public(_) => Ok(self.material.clone()),
             KeyMaterial::RsaPrivate { pkcs1_der, is_pss } => {
                 let priv_key = RsaPrivateKey::from_pkcs1_der(pkcs1_der)
                     .map_err(|e| format!("Invalid RSA private key: {e}"))?;
@@ -156,6 +166,17 @@ impl KeyObject {
                     signing.verifying_key().to_bytes().to_vec(),
                 ))
             },
+            KeyMaterial::Ed448Private(seed57) => {
+                let arr: [u8; 57] = seed57
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "Invalid Ed448 private key length".to_string())?;
+                let signing =
+                    ed448_goldilocks::SigningKey::from(ed448_goldilocks::SecretKey::from(arr));
+                Ok(KeyMaterial::Ed448Public(
+                    signing.verifying_key().to_bytes().to_vec(),
+                ))
+            },
             KeyMaterial::X25519Private(raw32) => {
                 let arr: [u8; 32] = raw32
                     .as_slice()
@@ -164,6 +185,15 @@ impl KeyObject {
                 let secret = x25519_dalek::StaticSecret::from(arr);
                 let pub_key = x25519_dalek::PublicKey::from(&secret);
                 Ok(KeyMaterial::X25519Public(pub_key.as_bytes().to_vec()))
+            },
+            KeyMaterial::X448Private(raw56) => {
+                let arr: [u8; 56] = raw56
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "Invalid X448 private key length".to_string())?;
+                let secret = x448::StaticSecret::from(arr);
+                let pub_key = x448::PublicKey::from(&secret);
+                Ok(KeyMaterial::X448Public(pub_key.as_bytes().to_vec()))
             },
             KeyMaterial::Secret(_) => Err("Secret keys cannot derive a public key".into()),
         }
@@ -189,11 +219,15 @@ impl KeyObject {
             KeyMaterial::RsaPrivate { .. }
             | KeyMaterial::EcPrivate { .. }
             | KeyMaterial::Ed25519Private(_)
-            | KeyMaterial::X25519Private(_) => "private",
+            | KeyMaterial::Ed448Private(_)
+            | KeyMaterial::X25519Private(_)
+            | KeyMaterial::X448Private(_) => "private",
             KeyMaterial::RsaPublic { .. }
             | KeyMaterial::EcPublic { .. }
             | KeyMaterial::Ed25519Public(_)
-            | KeyMaterial::X25519Public(_) => "public",
+            | KeyMaterial::Ed448Public(_)
+            | KeyMaterial::X25519Public(_)
+            | KeyMaterial::X448Public(_) => "public",
         }
     }
 
@@ -218,7 +252,9 @@ impl KeyObject {
             },
             KeyMaterial::EcPrivate { .. } | KeyMaterial::EcPublic { .. } => "ec",
             KeyMaterial::Ed25519Private(_) | KeyMaterial::Ed25519Public(_) => "ed25519",
+            KeyMaterial::Ed448Private(_) | KeyMaterial::Ed448Public(_) => "ed448",
             KeyMaterial::X25519Private(_) | KeyMaterial::X25519Public(_) => "x25519",
+            KeyMaterial::X448Private(_) | KeyMaterial::X448Public(_) => "x448",
         };
         name.into_js(&ctx)
     }
@@ -247,8 +283,12 @@ impl KeyObject {
             },
             KeyMaterial::Ed25519Private(_)
             | KeyMaterial::Ed25519Public(_)
+            | KeyMaterial::Ed448Private(_)
+            | KeyMaterial::Ed448Public(_)
             | KeyMaterial::X25519Private(_)
-            | KeyMaterial::X25519Public(_) => {},
+            | KeyMaterial::X25519Public(_)
+            | KeyMaterial::X448Private(_)
+            | KeyMaterial::X448Public(_) => {},
         }
         Ok(obj.into_value())
     }
@@ -267,6 +307,8 @@ impl KeyObject {
     pub fn export<'js>(&self, ctx: Ctx<'js>, options: Opt<Value<'js>>) -> Result<Value<'js>> {
         let mut format: Option<String> = None;
         let mut key_type: Option<String> = None;
+        let mut cipher: Option<String> = None;
+        let mut passphrase: Option<Vec<u8>> = None;
         if let Some(opt_val) = options.0 {
             if !opt_val.is_undefined() && !opt_val.is_null() {
                 let obj = opt_val.into_object().ok_or_else(|| {
@@ -274,76 +316,147 @@ impl KeyObject {
                 })?;
                 format = obj.get_optional::<_, String>("format")?;
                 key_type = obj.get_optional::<_, String>("type")?;
+                cipher = obj.get_optional::<_, String>("cipher")?;
+                let pass_val: Value = obj.get("passphrase")?;
+                if !pass_val.is_undefined() && !pass_val.is_null() {
+                    passphrase = Some(value_to_bytes_with_encoding(
+                        &ctx,
+                        &pass_val,
+                        Some("utf8"),
+                        "options.passphrase",
+                    )?);
+                }
             }
         }
+        self.export_with_spec(
+            &ctx,
+            format.as_deref(),
+            key_type.as_deref(),
+            cipher.as_deref(),
+            passphrase.as_deref(),
+        )
+    }
+}
 
+impl KeyObject {
+    pub(crate) fn export_with_spec<'js>(
+        &self,
+        ctx: &Ctx<'js>,
+        format: Option<&str>,
+        key_type: Option<&str>,
+        cipher: Option<&str>,
+        passphrase: Option<&[u8]>,
+    ) -> Result<Value<'js>> {
         match &self.material {
             KeyMaterial::Secret(bytes) => {
-                if format.as_deref() == Some("jwk") {
+                if format == Some("jwk") {
                     let obj = Object::new(ctx.clone())?;
                     obj.set("kty", "oct")?;
                     obj.set("k", bytes_to_b64_url_safe_string(bytes))?;
                     return Ok(obj.into_value());
                 }
-                if let Some(fmt) = format.as_deref() {
+                if let Some(fmt) = format {
                     if fmt != "buffer" {
                         return Err(Exception::throw_type(
-                            &ctx,
+                            ctx,
                             &format!("Unsupported secret key export format: {fmt}"),
                         ));
                     }
                 }
-                Buffer(bytes.clone()).into_js(&ctx)
+                Buffer(bytes.clone()).into_js(ctx)
             },
             KeyMaterial::RsaPrivate { .. }
             | KeyMaterial::EcPrivate { .. }
             | KeyMaterial::Ed25519Private(_)
-            | KeyMaterial::X25519Private(_) => {
-                let fmt = format.as_deref().unwrap_or("pem");
+            | KeyMaterial::Ed448Private(_)
+            | KeyMaterial::X25519Private(_)
+            | KeyMaterial::X448Private(_) => {
+                let fmt = format.unwrap_or("pem");
                 if fmt == "jwk" {
-                    return self.export_asymmetric_jwk(&ctx);
+                    return self.export_asymmetric_jwk(ctx);
                 }
-                let ty = key_type.as_deref().unwrap_or("pkcs8");
-                let (pem_label, der_bytes) = match (ty, &self.material) {
-                    ("pkcs8", _) => ("PRIVATE KEY", self.export_pkcs8_der().or_throw(&ctx)?),
-                    ("pkcs1", KeyMaterial::RsaPrivate { pkcs1_der, .. }) => {
-                        ("RSA PRIVATE KEY", pkcs1_der.clone())
-                    },
-                    ("sec1", KeyMaterial::EcPrivate { curve, pkcs8_der }) => (
-                        "EC PRIVATE KEY",
-                        ec_sec1_from_pkcs8(*curve, pkcs8_der).or_throw(&ctx)?,
-                    ),
-                    _ => {
-                        return Err(Exception::throw_type(
-                            &ctx,
-                            &format!("Invalid private key export type '{ty}'"),
-                        ));
-                    },
-                };
-                format_exported_key(&ctx, fmt, pem_label, der_bytes)
+                let ty = key_type.unwrap_or("pkcs8");
+                if cipher.is_some() && passphrase.is_none() {
+                    return Err(Exception::throw_type(
+                        ctx,
+                        "options.passphrase is required when options.cipher is specified",
+                    ));
+                }
+                if passphrase.is_some() && cipher.is_none() && ty == "pkcs8" {
+                    return Err(Exception::throw_type(
+                        ctx,
+                        "options.cipher is required when options.passphrase is specified",
+                    ));
+                }
+                let (pem_label, der_bytes) =
+                    if let (Some(c_name), Some(pass)) = (cipher, passphrase) {
+                        if ty != "pkcs8" {
+                            return Err(Exception::throw_type(
+                                ctx,
+                                "Encrypted key export currently requires type: 'pkcs8'",
+                            ));
+                        }
+                        let c_lower = c_name.to_ascii_lowercase();
+                        if c_lower != "aes-256-cbc" {
+                            return Err(Exception::throw_type(
+                                ctx,
+                                &format!("Unsupported cipher for private key encryption: {c_name}"),
+                            ));
+                        }
+                        let plain_pkcs8 = self.export_pkcs8_der().or_throw(ctx)?;
+                        let info = PrivateKeyInfoRef::try_from(plain_pkcs8.as_slice())
+                            .map_err(|e| format!("Invalid PKCS#8 key: {e}"))
+                            .or_throw(ctx)?;
+                        let mut rng = rand::rng();
+                        let encrypted = info
+                            .encrypt_with_rng(&mut rng, pass)
+                            .map_err(|e| format!("Failed to encrypt private key: {e}"))
+                            .or_throw(ctx)?;
+                        ("ENCRYPTED PRIVATE KEY", encrypted.as_bytes().to_vec())
+                    } else {
+                        match (ty, &self.material) {
+                            ("pkcs8", _) => ("PRIVATE KEY", self.export_pkcs8_der().or_throw(ctx)?),
+                            ("pkcs1", KeyMaterial::RsaPrivate { pkcs1_der, .. }) => {
+                                ("RSA PRIVATE KEY", pkcs1_der.clone())
+                            },
+                            ("sec1", KeyMaterial::EcPrivate { curve, pkcs8_der }) => (
+                                "EC PRIVATE KEY",
+                                ec_sec1_from_pkcs8(*curve, pkcs8_der).or_throw(ctx)?,
+                            ),
+                            _ => {
+                                return Err(Exception::throw_type(
+                                    ctx,
+                                    &format!("Invalid private key export type '{ty}'"),
+                                ));
+                            },
+                        }
+                    };
+                format_exported_key(ctx, fmt, pem_label, der_bytes)
             },
             KeyMaterial::RsaPublic { .. }
             | KeyMaterial::EcPublic { .. }
             | KeyMaterial::Ed25519Public(_)
-            | KeyMaterial::X25519Public(_) => {
-                let fmt = format.as_deref().unwrap_or("pem");
+            | KeyMaterial::Ed448Public(_)
+            | KeyMaterial::X25519Public(_)
+            | KeyMaterial::X448Public(_) => {
+                let fmt = format.unwrap_or("pem");
                 if fmt == "jwk" {
-                    return self.export_asymmetric_jwk(&ctx);
+                    return self.export_asymmetric_jwk(ctx);
                 }
-                let ty = key_type.as_deref().unwrap_or("spki");
+                let ty = key_type.unwrap_or("spki");
                 let (pem_label, der_bytes) = match (ty, &self.material) {
-                    ("spki", _) => ("PUBLIC KEY", self.export_spki_der().or_throw(&ctx)?),
+                    ("spki", _) => ("PUBLIC KEY", self.export_spki_der().or_throw(ctx)?),
                     ("pkcs1", KeyMaterial::RsaPublic { pkcs1_der, .. }) => {
                         ("RSA PUBLIC KEY", pkcs1_der.clone())
                     },
                     _ => {
                         return Err(Exception::throw_type(
-                            &ctx,
+                            ctx,
                             &format!("Invalid public key export type '{ty}'"),
                         ));
                     },
                 };
-                format_exported_key(&ctx, fmt, pem_label, der_bytes)
+                format_exported_key(ctx, fmt, pem_label, der_bytes)
             },
         }
     }
@@ -427,6 +540,37 @@ impl KeyObject {
                 obj.set("x", bytes_to_b64_url_safe_string(&pub32))?;
                 obj.set("d", bytes_to_b64_url_safe_string(raw32))?;
             },
+            KeyMaterial::Ed448Public(raw57) => {
+                obj.set("kty", "OKP")?;
+                obj.set("crv", "Ed448")?;
+                obj.set("x", bytes_to_b64_url_safe_string(raw57))?;
+            },
+            KeyMaterial::Ed448Private(seed57) => {
+                let KeyMaterial::Ed448Public(pub57) =
+                    self.derive_public_material().or_throw(ctx)?
+                else {
+                    unreachable!();
+                };
+                obj.set("kty", "OKP")?;
+                obj.set("crv", "Ed448")?;
+                obj.set("x", bytes_to_b64_url_safe_string(&pub57))?;
+                obj.set("d", bytes_to_b64_url_safe_string(seed57))?;
+            },
+            KeyMaterial::X448Public(raw56) => {
+                obj.set("kty", "OKP")?;
+                obj.set("crv", "X448")?;
+                obj.set("x", bytes_to_b64_url_safe_string(raw56))?;
+            },
+            KeyMaterial::X448Private(raw56) => {
+                let KeyMaterial::X448Public(pub56) = self.derive_public_material().or_throw(ctx)?
+                else {
+                    unreachable!();
+                };
+                obj.set("kty", "OKP")?;
+                obj.set("crv", "X448")?;
+                obj.set("x", bytes_to_b64_url_safe_string(&pub56))?;
+                obj.set("d", bytes_to_b64_url_safe_string(raw56))?;
+            },
             KeyMaterial::Secret(_) => unreachable!(),
         }
         Ok(obj.into_value())
@@ -460,7 +604,9 @@ pub(crate) fn parse_private_key_value<'js>(ctx: &Ctx<'js>, key: Value<'js>) -> R
             KeyMaterial::RsaPrivate { .. }
             | KeyMaterial::EcPrivate { .. }
             | KeyMaterial::Ed25519Private(_)
-            | KeyMaterial::X25519Private(_) => Ok(borrowed),
+            | KeyMaterial::Ed448Private(_)
+            | KeyMaterial::X25519Private(_)
+            | KeyMaterial::X448Private(_) => Ok(borrowed),
             _ => Err(Exception::throw_type(
                 ctx,
                 "Invalid key type: expected a private KeyObject",
@@ -474,11 +620,19 @@ pub(crate) fn parse_private_key_value<'js>(ctx: &Ctx<'js>, key: Value<'js>) -> R
             let mat = parse_jwk_key(ctx, &obj, true)?;
             Ok(KeyObject::from_material(mat))
         },
-        KeyInputSpec::Bytes { bytes, format, ty } => {
+        KeyInputSpec::Bytes {
+            bytes,
+            format,
+            ty,
+            passphrase,
+        } => {
             let mat = match format.as_deref() {
-                Some("der") => parse_private_der(&bytes, ty.as_deref()).or_throw(ctx)?,
+                Some("der") => {
+                    parse_private_der(&bytes, ty.as_deref(), passphrase.as_deref()).or_throw(ctx)?
+                },
                 Some("pem") | None => {
-                    parse_private_pem_or_der(&bytes, ty.as_deref()).or_throw(ctx)?
+                    parse_private_pem_or_der(&bytes, ty.as_deref(), passphrase.as_deref())
+                        .or_throw(ctx)?
                 },
                 Some(other) => {
                     return Err(Exception::throw_type(
@@ -506,7 +660,9 @@ pub(crate) fn parse_public_key_value<'js>(ctx: &Ctx<'js>, key: Value<'js>) -> Re
             let derived = ko.derive_public_material().or_throw(ctx)?;
             Ok(KeyObject::from_material(derived))
         },
-        KeyInputSpec::Bytes { bytes, format, ty } => {
+        KeyInputSpec::Bytes {
+            bytes, format, ty, ..
+        } => {
             let mat = match format.as_deref() {
                 Some("der") => parse_public_der(&bytes, ty.as_deref()).or_throw(ctx)?,
                 Some("pem") | None => {
@@ -530,6 +686,7 @@ enum KeyInputSpec<'js> {
         bytes: Vec<u8>,
         format: Option<String>,
         ty: Option<String>,
+        passphrase: Option<Vec<u8>>,
     },
 }
 
@@ -543,6 +700,7 @@ fn parse_key_input_spec<'js>(
             bytes: s.to_string()?.into_bytes(),
             format: Some("pem".to_string()),
             ty: None,
+            passphrase: None,
         });
     }
     if let Some(obj) = value.as_object() {
@@ -551,11 +709,23 @@ fn parse_key_input_spec<'js>(
                 bytes: buf_bytes.as_bytes(ctx)?.to_vec(),
                 format: None,
                 ty: None,
+                passphrase: None,
             });
         }
         let format = obj.get_optional::<_, String>("format")?;
         let ty = obj.get_optional::<_, String>("type")?;
         let enc = obj.get_optional::<_, String>("encoding")?;
+        let pass_val: Value = obj.get("passphrase")?;
+        let passphrase = if !pass_val.is_undefined() && !pass_val.is_null() {
+            Some(value_to_bytes_with_encoding(
+                ctx,
+                &pass_val,
+                Some("utf8"),
+                "options.passphrase",
+            )?)
+        } else {
+            None
+        };
         let inner: Value = obj.get("key").map_err(|_| {
             Exception::throw_type(
                 ctx,
@@ -575,7 +745,12 @@ fn parse_key_input_spec<'js>(
             return Ok(KeyInputSpec::Jwk(jwk_obj));
         }
         let bytes = value_to_bytes_with_encoding(ctx, &inner, enc.as_deref(), "options.key")?;
-        return Ok(KeyInputSpec::Bytes { bytes, format, ty });
+        return Ok(KeyInputSpec::Bytes {
+            bytes,
+            format,
+            ty,
+            passphrase,
+        });
     }
     Err(Exception::throw_type(
         ctx,
@@ -583,9 +758,24 @@ fn parse_key_input_spec<'js>(
     ))
 }
 
+fn decrypt_pkcs8_der(
+    der: &[u8],
+    passphrase: Option<&[u8]>,
+) -> std::result::Result<KeyMaterial, String> {
+    let pass =
+        passphrase.ok_or_else(|| "Missing passphrase for encrypted private key".to_string())?;
+    let info = EncryptedPrivateKeyInfoRef::try_from(der)
+        .map_err(|e| format!("Invalid encrypted PKCS#8 key: {e}"))?;
+    let doc = info
+        .decrypt(pass)
+        .map_err(|_| "bad decrypt: invalid passphrase or unsupported cipher".to_string())?;
+    parse_pkcs8_private_der(doc.as_bytes())
+}
+
 fn parse_private_pem_or_der(
     bytes: &[u8],
     ty: Option<&str>,
+    passphrase: Option<&[u8]>,
 ) -> std::result::Result<KeyMaterial, String> {
     if looks_like_pem(bytes) {
         let (label, der) =
@@ -594,27 +784,42 @@ fn parse_private_pem_or_der(
             "PRIVATE KEY" => parse_pkcs8_private_der(&der),
             "RSA PRIVATE KEY" => parse_rsa_pkcs1_private_der(&der),
             "EC PRIVATE KEY" => parse_ec_sec1_private_der(&der),
-            "ENCRYPTED PRIVATE KEY" => {
-                Err("Encrypted PEM private keys are not supported".to_string())
-            },
+            "ENCRYPTED PRIVATE KEY" => decrypt_pkcs8_der(&der, passphrase),
             other => Err(format!("Unsupported PEM private key label: {other}")),
         };
     }
     if let Some(ty) = ty {
-        return parse_private_der(bytes, Some(ty));
+        return parse_private_der(bytes, Some(ty), passphrase);
     }
-    parse_private_der(bytes, None)
+    parse_private_der(bytes, None, passphrase)
 }
 
-fn parse_private_der(der: &[u8], ty: Option<&str>) -> std::result::Result<KeyMaterial, String> {
+fn parse_private_der(
+    der: &[u8],
+    ty: Option<&str>,
+    passphrase: Option<&[u8]>,
+) -> std::result::Result<KeyMaterial, String> {
     match ty {
-        Some("pkcs8") => parse_pkcs8_private_der(der),
+        Some("pkcs8") => {
+            if passphrase.is_some() {
+                parse_pkcs8_private_der(der).or_else(|_| decrypt_pkcs8_der(der, passphrase))
+            } else {
+                parse_pkcs8_private_der(der)
+            }
+        },
         Some("pkcs1") => parse_rsa_pkcs1_private_der(der),
         Some("sec1") => parse_ec_sec1_private_der(der),
         Some(other) => Err(format!("Unsupported private DER key type: {other}")),
-        None => parse_pkcs8_private_der(der)
-            .or_else(|_| parse_rsa_pkcs1_private_der(der))
-            .or_else(|_| parse_ec_sec1_private_der(der)),
+        None => {
+            let res = parse_pkcs8_private_der(der)
+                .or_else(|_| parse_rsa_pkcs1_private_der(der))
+                .or_else(|_| parse_ec_sec1_private_der(der));
+            if res.is_err() && passphrase.is_some() {
+                decrypt_pkcs8_der(der, passphrase)
+            } else {
+                res
+            }
+        },
     }
 }
 
@@ -763,12 +968,20 @@ fn parse_pkcs8_private_der(der: &[u8]) -> std::result::Result<KeyMaterial, Strin
         });
     }
     if oid == rfc8410::ID_ED_25519 {
-        let seed32 = unwrap_okp_private_key(pk_info.private_key.as_bytes())?;
+        let seed32 = unwrap_okp_private_key(pk_info.private_key.as_bytes(), 32)?;
         return Ok(KeyMaterial::Ed25519Private(seed32));
     }
+    if oid == rfc8410::ID_ED_448 {
+        let seed57 = unwrap_okp_private_key(pk_info.private_key.as_bytes(), 57)?;
+        return Ok(KeyMaterial::Ed448Private(seed57));
+    }
     if oid == rfc8410::ID_X_25519 {
-        let raw32 = unwrap_okp_private_key(pk_info.private_key.as_bytes())?;
+        let raw32 = unwrap_okp_private_key(pk_info.private_key.as_bytes(), 32)?;
         return Ok(KeyMaterial::X25519Private(raw32));
+    }
+    if oid == rfc8410::ID_X_448 {
+        let raw56 = unwrap_okp_private_key(pk_info.private_key.as_bytes(), 56)?;
+        return Ok(KeyMaterial::X448Private(raw56));
     }
     Err(format!("Unsupported PKCS#8 key algorithm OID: {oid}"))
 }
@@ -807,11 +1020,25 @@ pub(crate) fn parse_public_key_from_spki_der(
             .map_err(|e| format!("Invalid Ed25519 public key: {e}"))?;
         return Ok(KeyMaterial::Ed25519Public(arr.to_vec()));
     }
+    if oid == rfc8410::ID_ED_448 {
+        let arr: [u8; 57] = key_bytes
+            .try_into()
+            .map_err(|_| "Invalid Ed448 public key length".to_string())?;
+        ed448_goldilocks::VerifyingKey::from_bytes(&arr)
+            .map_err(|e| format!("Invalid Ed448 public key: {e}"))?;
+        return Ok(KeyMaterial::Ed448Public(arr.to_vec()));
+    }
     if oid == rfc8410::ID_X_25519 {
         if key_bytes.len() != 32 {
             return Err("Invalid X25519 public key length".to_string());
         }
         return Ok(KeyMaterial::X25519Public(key_bytes.to_vec()));
+    }
+    if oid == rfc8410::ID_X_448 {
+        if key_bytes.len() != 56 {
+            return Err("Invalid X448 public key length".to_string());
+        }
+        return Ok(KeyMaterial::X448Public(key_bytes.to_vec()));
     }
     Err(format!("Unsupported SPKI key algorithm OID: {oid}"))
 }
@@ -954,6 +1181,42 @@ fn parse_jwk_key<'js>(
                     }
                     Ok(KeyMaterial::X25519Public(x))
                 },
+                ("Ed448", Some(d_str)) => {
+                    let d = decode_b64url_str(ctx, &d_str)?;
+                    if d.len() != 57 {
+                        return Err(Exception::throw_type(ctx, "Invalid Ed448 JWK key length"));
+                    }
+                    Ok(KeyMaterial::Ed448Private(d))
+                },
+                ("Ed448", None) => {
+                    if require_private {
+                        return Err(Exception::throw_type(ctx, "Ed448 JWK missing \"d\""));
+                    }
+                    let x = jwk_b64url_field(ctx, obj, "x")?;
+                    let arr: [u8; 57] = x
+                        .try_into()
+                        .map_err(|_| Exception::throw_type(ctx, "Invalid Ed448 JWK \"x\""))?;
+                    ed448_goldilocks::VerifyingKey::from_bytes(&arr)
+                        .map_err(|_| Exception::throw_type(ctx, "Invalid Ed448 public key"))?;
+                    Ok(KeyMaterial::Ed448Public(arr.to_vec()))
+                },
+                ("X448", Some(d_str)) => {
+                    let d = decode_b64url_str(ctx, &d_str)?;
+                    if d.len() != 56 {
+                        return Err(Exception::throw_type(ctx, "Invalid X448 JWK key length"));
+                    }
+                    Ok(KeyMaterial::X448Private(d))
+                },
+                ("X448", None) => {
+                    if require_private {
+                        return Err(Exception::throw_type(ctx, "X448 JWK missing \"d\""));
+                    }
+                    let x = jwk_b64url_field(ctx, obj, "x")?;
+                    if x.len() != 56 {
+                        return Err(Exception::throw_type(ctx, "Invalid X448 JWK \"x\""));
+                    }
+                    Ok(KeyMaterial::X448Public(x))
+                },
                 _ => Err(Exception::throw_type(
                     ctx,
                     &format!("Unsupported OKP JWK curve: {crv}"),
@@ -965,6 +1228,18 @@ fn parse_jwk_key<'js>(
             &format!("Unsupported JWK key type: {other}"),
         )),
     }
+}
+
+pub(crate) fn throw_code_error<T>(
+    ctx: &Ctx<'_>,
+    error_ctor: &str,
+    code: &str,
+    msg: &str,
+) -> Result<T> {
+    let ctor: rquickjs::Function = ctx.globals().get(error_ctor)?;
+    let err: Object = ctor.call((msg,))?;
+    err.set("code", code)?;
+    Err(ctx.throw(err.into_value()))
 }
 
 pub(crate) fn optional_encoding<'js>(
@@ -1216,10 +1491,9 @@ fn ec_xy_from_sec1(
     ))
 }
 
-fn ec_xyd_from_pkcs8(
-    curve: EllipticCurve,
-    pkcs8_der: &[u8],
-) -> std::result::Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+type EcXyd = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+fn ec_xyd_from_pkcs8(curve: EllipticCurve, pkcs8_der: &[u8]) -> std::result::Result<EcXyd, String> {
     use elliptic_curve::sec1::ToSec1Point;
     match curve {
         EllipticCurve::P256 => {
@@ -1255,14 +1529,14 @@ fn ec_xyd_from_pkcs8(
     }
 }
 
-fn unwrap_okp_private_key(raw: &[u8]) -> std::result::Result<Vec<u8>, String> {
-    if raw.len() == 32 {
+fn unwrap_okp_private_key(raw: &[u8], expected_len: usize) -> std::result::Result<Vec<u8>, String> {
+    if raw.len() == expected_len {
         return Ok(raw.to_vec());
     }
     let octet = <&OctetStringRef>::from_der(raw)
         .map_err(|_| "Invalid OKP private key OCTET STRING".to_string())?;
-    if octet.as_bytes().len() != 32 {
-        return Err("OKP private key must be 32 bytes".to_string());
+    if octet.as_bytes().len() != expected_len {
+        return Err(format!("OKP private key must be {expected_len} bytes"));
     }
     Ok(octet.as_bytes().to_vec())
 }

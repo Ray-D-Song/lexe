@@ -7,13 +7,16 @@ use rquickjs::{Class, Ctx, Exception, FromJs, Result, Value};
 
 use super::{
     algorithm_mismatch_error,
-    key_algorithm::{KeyAlgorithm, KeyDerivation},
+    key_algorithm::{Argon2Variant, KeyAlgorithm, KeyDerivation},
     CryptoKey, EllipticCurve,
 };
 
 #[derive(Debug)]
 pub enum DeriveAlgorithm {
     X25519 {
+        public_key: Rc<[u8]>,
+    },
+    X448 {
         public_key: Rc<[u8]>,
     },
     Ecdh {
@@ -42,6 +45,18 @@ impl<'js> FromJs<'js> for DeriveAlgorithm {
                     public_key: public_key.handle.clone(),
                 }
             },
+            "X448" => {
+                let public_key: Class<CryptoKey> = obj.get_required("public", "algorithm")?;
+                let public_key = public_key.borrow();
+
+                if !matches!(public_key.algorithm, KeyAlgorithm::X448) {
+                    return algorithm_mismatch_error(ctx, &name);
+                }
+
+                DeriveAlgorithm::X448 {
+                    public_key: public_key.handle.clone(),
+                }
+            },
             "ECDH" => {
                 let public_key: Class<CryptoKey> = obj.get_required("public", "algorithm")?;
                 let public_key = public_key.borrow();
@@ -57,10 +72,25 @@ impl<'js> FromJs<'js> for DeriveAlgorithm {
             },
             "HKDF" => DeriveAlgorithm::Derive(KeyDerivation::for_hkdf_object(ctx, obj)?),
             "PBKDF2" => DeriveAlgorithm::Derive(KeyDerivation::for_pbkf2_object(&ctx, obj)?),
+            "Argon2d" => DeriveAlgorithm::Derive(KeyDerivation::for_argon2_object(
+                ctx,
+                obj,
+                Argon2Variant::Argon2d,
+            )?),
+            "Argon2i" => DeriveAlgorithm::Derive(KeyDerivation::for_argon2_object(
+                ctx,
+                obj,
+                Argon2Variant::Argon2i,
+            )?),
+            "Argon2id" => DeriveAlgorithm::Derive(KeyDerivation::for_argon2_object(
+                ctx,
+                obj,
+                Argon2Variant::Argon2id,
+            )?),
             _ => {
                 return Err(Exception::throw_message(
                     ctx,
-                    "Algorithm 'name' must be X25519 | ECDH | HKDF | PBKDF2",
+                    "Algorithm 'name' must be X25519 | X448 | ECDH | HKDF | PBKDF2 | Argon2d | Argon2i | Argon2id",
                 ))
             },
         })

@@ -12,7 +12,7 @@
 | node:cluster | ✔︎ | ✘ | Not implemented |
 | node:console | ✔︎ | ✔︎⚠️ | Missing `context`, `createTask`, and internal stream/timer fields |
 | node:constants | ✔︎ | ✔︎ | — |
-| node:crypto | ✔︎ | ✔︎⚠️ | WebCrypto and partial classic ciphers, signatures, keys, X.509, ECDH, and HKDF; algorithm/backend limitations remain ([details](#nodecrypto)) |
+| node:crypto | ✔︎ | ✔︎⚠️ | WebCrypto + classic APIs (`hash`, `Hash`/`Hmac`, `createSign`/`createVerify`, `pbkdf2*`, `scrypt*`, `generateKey*`/`generateKeyPair*`, `DiffieHellman*`, `checkPrime*`/`generatePrime*`, RSA encrypt/decrypt, `chacha20-poly1305`, `getCipherInfo`, Ed448/X448); omits OpenSSL engine/FIPS/SPKAC `Certificate` ([details](#nodecrypto)) |
 | node:dgram | ✔︎ | ✔︎⚠️ | Missing internal `_createSocketHandle` |
 | node:diagnostics_channel | ✔︎ | ✔︎ | — |
 | node:dns | ✔︎ | ✔︎ | — |
@@ -22,7 +22,7 @@
 | node:fs/promises | ✔︎ | ✔︎ | — |
 | node:http | ✔︎ | ✔︎⚠️ | Missing `CloseEvent`, `MessageEvent`, and internal `_connectionListener` |
 | node:http2 | ✔︎ | ✔︎⚠️ | Native HTTP/2 surface; `performServerHandshake`, server push, and streaming server request bodies are unimplemented ([notes](#nodehttp2)) |
-| node:https | ✔︎ | ✔︎⚠️ | Inherits `node:tls` limitations; requires TLS feature build ([details](#nodehttps)) |
+| node:https | ✔︎ | — | Requires TLS feature build; follows `node:tls` security policy ([notes](#nodehttps)) |
 | node:inspector | ✔︎ | ✔︎⚠️ | `url()` returns `undefined`; `Session` shim reports unavailable protocol operations ([details](#nodeinspector)) |
 | node:inspector/promises | ✔︎ | ✘ | Not implemented |
 | node:module | ✔︎ | ✔︎⚠️ | CJS facade and `SourceMap` without on-disk compile cache; missing `module.register`, `stripTypeScriptTypes`, and `Module._load` ([details](#nodemodule)) |
@@ -44,7 +44,7 @@
 | node:test | ✔︎ | ✔︎\* | JS polyfill (not native) |
 | node:timers | ✔︎ | ✔︎ | — |
 | node:timers/promises | ✔︎ | ✔︎ | — |
-| node:tls | ✔︎ | ✔︎⚠️ | Rejects `pfx`/`ciphers`/`crl`/`psk`/`ocsp`/sessions/async SNI/soft mTLS; TLS < 1.2 unsupported; no `renegotiate()` or `TLSSocket.write()` backpressure ([details](#nodetls)) |
+| node:tls | ✔︎ | ✔︎ | Supports `pfx`/encrypted PEMs, async `SNICallback`, `ALPNCallback`, soft mTLS (`requestCert: true, rejectUnauthorized: false`), TLS session resumption, `rootCertificates`/`getCACertificates()`, and write backpressure; intentionally disables TLS < 1.2, weak `ciphers`/`sigalgs`/`dhparam`/`crl`/`psk`/`ocsp`, and `renegotiate()` ([notes](#nodetls)) |
 | node:tty | ✔︎ | ✔︎ | — |
 | node:url | ✔︎ | ✔︎ | — |
 | node:util | ✔︎ | ✔︎⚠️ | Missing `getCallSite`, deprecated `isArray`, and internal `_errnoException`/`_exceptionWithHostPort` |
@@ -78,7 +78,7 @@
 | URLPATTERN | ✔︎ | — |
 | WASM-JS-API-2 | ✔︎⚠️ | `wasmz` engine (GC, exception handling, typed function references, shared memory, Memory64, multi-value, bulk memory, reference types, SIMD); missing JS constructors `WebAssembly.Function`/`Tag`/`Exception`, JSPI (`Suspending`/`promising`), and `v128` JS boundary; synchronously mirrored `Memory.buffer`; retained `externref`s ([details](#wasm-js-api-2)) |
 | WASM-WEB-API-2 | ✔︎⚠️ | `compileStreaming`/`instantiateStreaming` buffer the full `Response` before compiling (no incremental streaming compilation) ([details](#wasm-web-api-2)) |
-| WEBCRYPTO | ✔︎⚠️ | Missing `X448`, `Ed448`, `Argon2`, `AES-OCB`, `ChaCha20-Poly1305` and some `deriveBits`/`deriveKey` WPT edge cases ([details](#webcrypto)) |
+| WEBCRYPTO | ✔︎ | Supports standard & modern WebCrypto (`Ed448`, `X448`, `Argon2`, `ChaCha20-Poly1305`); omits `AES-OCB` and backend parity on `graviola` ([notes](#webcrypto)) |
 | WEBIDL | ✔︎⚠️ | Provides `DOMException` and core coercions; lacks full WebIDL prototype/branding/dictionary/overload compliance ([details](#webidl)) |
 | XHR | ✔︎⚠️ | Implements `FormData` and `ProgressEvent`; `XMLHttpRequest` is not implemented (Node.js also omits XHR) ([details](#xhr)) |
 
@@ -119,13 +119,8 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 #### `node:crypto`
 
-- The RustCrypto build supports streaming AES ciphers, HKDF, timing-safe comparison, KeyObject import/export, top-level signatures, ECDH, and X.509 certificates. Missing classic APIs include `createSign`/`createVerify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `DiffieHellman`/`createDiffieHellman`, and `crypto.hash()`.
-- `publicEncrypt` / RSA-OAEP rejects `MD5`, and algorithm availability depends on the compiled TLS/crypto backend (for example, `graviola` lacks most operations).
-
-#### `node:https`
-
-- `https.Server` wraps `tls.Server` and delegates HTTP lifecycle handling to `node:http`, so it inherits all `node:tls` limitations (missing `pfx`/custom `ciphers`/`crl`/PSK/OCSP/session reuse/async SNI/soft mTLS, TLS < 1.2 unsupported, no `renegotiate()`).
-- Requires building with a TLS feature (`tls-ring`, `tls-aws-lc`, `tls-graviola`, or `tls-openssl`); non-TLS builds stub out `createServer`/`get`/`request` and leave `Agent`/`Server`/`globalAgent` as `undefined`.
+- Supports WebCrypto and classic Node crypto APIs: streaming `Hash`/`Hmac`, one-shot `crypto.hash()`, `createSign`/`createVerify`, `Sign`/`Verify`, `pbkdf2`/`pbkdf2Sync`, `scrypt`/`scryptSync`, `generateKey`/`generateKeySync`, `generateKeyPair`/`generateKeyPairSync`, `DiffieHellman`/`DiffieHellmanGroup`/`createDiffieHellman*`/`getDiffieHellman`, `checkPrime*`/`generatePrime*`, `privateEncrypt`/`publicDecrypt`/`publicEncrypt`/`privateDecrypt`, `chacha20-poly1305`, `getCipherInfo`, `Ed448`/`X448`, encrypted PKCS#8 PEM import/export, and `prng`/`pseudoRandomBytes`/`rng`/`fips`/`getFips`/`DH_*`/`OPENSSL_VERSION_NUMBER`.
+- Intentionally rejects `RSA_PKCS1_PADDING` on `privateDecrypt` (CVE-2023-46809 mitigation matching Node 24) and `MD5` in RSA-OAEP; omits OpenSSL engine/SPKAC/FIPS mutability APIs (`Certificate`, `setFips`, `setEngine`, `secureHeapUsed`, `ENGINE_*`/`SSL_OP_*`/`RSA_X931_PADDING` constants); algorithm availability depends on the compiled backend (default RustCrypto vs `graviola`).
 
 #### `node:inspector`
 
@@ -147,13 +142,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - Not implemented: `module.register`, `stripTypeScriptTypes`, and `Module._load`.
 - Extension hooks apply to the CommonJS loader only; they do not change static ESM import semantics.
 - Native `.node` addon loading requires building with `--features napi` or `--features v8-compat` (see [Native addons](#native-addons)).
-
-#### `node:tls`
-
-- Rejects (`ERR_TLS_OPTION_NOT_SUPPORTED`) `pfx`, `ciphers`, `sigalgs`, `dhparam`, `crl`, `psk`, `ocsp`, `session`, `ticket`, async `SNICallback`, `ALPNCallback`, soft mTLS (`requestCert: true` with `rejectUnauthorized: false`), and encrypted private keys on rustls backends (OpenSSL only).
-- TLS versions below 1.2 are not supported.
-- `TLSSocket.renegotiate()` fails with `"renegotiation not supported"`.
-- `TLSSocket.write()` always returns `true` without backpressure or `"drain"` signaling.
 
 #### `node:v8`
 
@@ -197,11 +185,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 - `compileStreaming()` and `instantiateStreaming()` validate `Response.ok` and `Content-Type: application/wasm`, then buffer the entire response via `response.arrayBuffer()` before compiling (no incremental streaming compilation).
 
-#### `WEBCRYPTO`
-
-- Supports `AES-CBC`/`CTR`/`GCM`/`KW`, `HMAC`, `RSASSA-PKCS1-v1_5`, `RSA-PSS`, `RSA-OAEP`, `ECDSA`, `ECDH`, `Ed25519`, `X25519`, `HKDF`, `PBKDF2`, and `SHA-*`.
-- Missing newer/extended algorithms (`X448`, `Ed448`, `Argon2`, `AES-OCB`, `ChaCha20-Poly1305`) and some `deriveBits`/`deriveKey` WPT edge cases; availability varies on non-default crypto backends (e.g. `graviola`).
-
 #### `WEBIDL`
 
 - Exposes `DOMException` and basic JS/Rust type conversions, but lacks full WebIDL prototype, branding, dictionary, and overload compliance (`idlharness` WPT tests are skipped).
@@ -226,35 +209,26 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
 
-- [ ] **1. `node:crypto`, `WEBCRYPTO`, `node:tls`, and `node:https` algorithms & security policies**
-  - **Gap**:
-    - Crypto/WebCrypto: Missing `createSign`/`createVerify`, `generateKeyPair`/`generateKeyPairSync`, `generateKey`/`generateKeySync`, `scrypt`/`scryptSync`, `pbkdf2`/`pbkdf2Sync`, `privateDecrypt`/`privateEncrypt`/`publicDecrypt`, `DiffieHellman`, `crypto.hash()`, `X448`/`Ed448`/`Argon2`/`AES-OCB`/`ChaCha20-Poly1305`, some `deriveBits`/`deriveKey` edge cases, and `graviola` backend parity.
-    - TLS/HTTPS: Rejects `pfx`, `ciphers`, `sigalgs`, `dhparam`, `crl`, `psk`, `ocsp`, `session`, `ticket`, async `SNICallback`, `ALPNCallback`, soft mTLS, encrypted private keys on rustls, TLS < 1.2, `renegotiate()`, and `TLSSocket.write()` `"drain"` backpressure; `https` depends on TLS feature builds.
-  - **Options**:
-    - **A (Pure additive crypto + non-security TLS fixes)**: Implement missing crypto APIs (`crypto.hash()`, `createSign`/`createVerify`, `generateKeyPair*`, `scrypt*`, `pbkdf2*`, `DiffieHellman`, PKCS#12 `pfx` parsing, `ChaCha20-Poly1305`, `Argon2`, `X448`/`Ed448`, RSA decrypts) + `TLSSocket.write()` backpressure/`drain`, async `SNICallback`/`ALPNCallback`, `session`/`ticket`/soft mTLS, while intentionally keeping TLS < 1.2 and weak cipher strings disabled for security.
-    - **B (Backend expansion / OpenSSL unification)**: Allow `tls-openssl` or broader multi-backend support for legacy options (`TLS < 1.2`, arbitrary `ciphers`, `renegotiate()`, `ocsp`/`crl`).
-    - **C (Keep minimal crypto/TLS subset)**: Target only specific algorithms needed by common Node/WinterTC libraries and accept remaining gaps.
-
-- [ ] **2. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
+- [ ] **1. `node:module` TypeScript stripping, ESM Worker Loader, and compile cache**
   - **Gap**: Missing `stripTypeScriptTypes`, `module.register()` (async loader hooks thread), `Module._load`, and on-disk bytecode compile cache (`enableCompileCache` reports `FAILED`).
   - **Options**:
     - **A (Implement lightweight/full features)**: Add `stripTypeScriptTypes` (decide lightweight lexer/stripper vs `oxc` full TS parser), `Module._load`, on-disk QuickJS bytecode compile cache (`enableCompileCache`), and `module.register` loader hooks.
     - **B (Selective subset)**: Add `stripTypeScriptTypes` + `Module._load` + disk compile cache while keeping `module.register` omitted (or async single-isolate hook adapter without dedicated loader worker overhead).
     - **C (Document current CJS/sync hooks boundary)**: Keep `registerHooks` (sync) without worker-based `module.register` or heavy parser deps.
 
-- [ ] **3. `node:async_hooks` (`createHook()` default activation)**
+- [ ] **2. `node:async_hooks` (`createHook()` default activation)**
   - **Gap**: `AsyncLocalStorage` propagates unconditionally with low overhead; user `createHook()` callbacks only run when `LEXE_ASYNC_HOOKS=1` is set.
   - **Options**:
     - **A (Enable on-demand when `createHook().enable()` is called)**: Keep zero overhead when no hook is created/enabled, and activate Promise/async tracking dynamically as soon as any user `AsyncHook.enable()` is called (eliminating the `LEXE_ASYNC_HOOKS=1` gate while preserving default fast-path throughput).
     - **B (Always keep `LEXE_ASYNC_HOOKS=1` opt-in)**: Preserve the explicit environment gate to guarantee zero accidental user-hook activation overhead in production services.
 
-- [ ] **4. `FETCH` policy boundaries & remaining WPT edge cases**
+- [ ] **3. `FETCH` policy boundaries & remaining WPT edge cases**
   - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
   - **Options**:
     - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
     - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
 
-- [ ] **5. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+- [ ] **4. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
   - **Gap**:
     - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
     - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).
@@ -265,6 +239,21 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
     - **B (Targeted deep work)**: Select specific engine/runtime capabilities to invest in (e.g., implementing a real CDP WebSocket inspector server, `ShadowRealm`, 64-bit `ArrayBuffer` fork in QuickJS-ng, or V8-independent `WebIDL` hardening).
 
 ## Other notes
+
+### `node:https`
+
+- `https.Server` wraps `tls.Server` and delegates HTTP lifecycle handling to `node:http`, following the `node:tls` security policy.
+- Requires building with a TLS feature (`tls-ring`, `tls-aws-lc`, `tls-graviola`, or `tls-openssl`); non-TLS builds stub out `createServer`/`get`/`request` and leave `Agent`/`Server`/`globalAgent` as `undefined`.
+
+### `node:tls`
+
+- Supports `pfx`/passphrase, encrypted PKCS#8 PEMs, async `SNICallback`, `ALPNCallback`, soft mTLS (`requestCert: true, rejectUnauthorized: false`), TLS session resumption (`session` / `ticket` / `"session"` event / `isSessionReused()`), `tls.rootCertificates`, `tls.getCACertificates()`, and write backpressure / `"drain"` signaling.
+- Intentionally enforces TLS 1.2+ (`TLS < 1.2` unsupported), rejects weak/custom `ciphers`/`sigalgs`/`dhparam`/`crl`/`psk`/`ocsp`, and disables `TLSSocket.renegotiate()` for security.
+
+### `WEBCRYPTO`
+
+- Supports `AES-CBC`/`CTR`/`GCM`/`KW`, `HMAC`, `RSASSA-PKCS1-v1_5`, `RSA-PSS`, `RSA-OAEP`, `ECDSA`, `ECDH`, `Ed25519`, `Ed448`, `X25519`, `X448`, `HKDF`, `PBKDF2`, `Argon2d`/`Argon2i`/`Argon2id`, `ChaCha20-Poly1305`, and `SHA-*`.
+- Omits `AES-OCB`, and availability varies on non-default crypto backends (e.g. `graviola`).
 
 ### `node:http2`
 

@@ -173,6 +173,13 @@ impl KeyUsageAlgorithm {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Argon2Variant {
+    Argon2d,
+    Argon2i,
+    Argon2id,
+}
+
 #[derive(Debug, Clone)]
 pub enum KeyDerivation {
     Hkdf {
@@ -185,9 +192,54 @@ pub enum KeyDerivation {
         salt: Box<[u8]>,
         iterations: u32,
     },
+    Argon2 {
+        variant: Argon2Variant,
+        nonce: Box<[u8]>,
+        parallelization: u32,
+        memory: u32,
+        passes: u32,
+        version: u8,
+        secret_value: Option<Box<[u8]>>,
+        associated_data: Option<Box<[u8]>>,
+    },
 }
 
 impl KeyDerivation {
+    pub fn for_argon2_object<'js>(
+        ctx: &Ctx<'js>,
+        obj: Object<'js>,
+        variant: Argon2Variant,
+    ) -> Result<Self> {
+        let nonce = obj
+            .get_required::<_, ObjectBytes>("nonce", "algorithm")?
+            .into_bytes(ctx)?
+            .into_boxed_slice();
+        let parallelization: u32 = obj.get_required("parallelization", "algorithm")?;
+        let memory: u32 = obj.get_required("memory", "algorithm")?;
+        let passes: u32 = obj.get_required("passes", "algorithm")?;
+        let version = obj.get_optional::<_, u8>("version")?.unwrap_or(0x13);
+        let secret_value = obj
+            .get_optional::<_, ObjectBytes>("secretValue")?
+            .map(|b| b.into_bytes(ctx))
+            .transpose()?
+            .map(|v| v.into_boxed_slice());
+        let associated_data = obj
+            .get_optional::<_, ObjectBytes>("associatedData")?
+            .map(|b| b.into_bytes(ctx))
+            .transpose()?
+            .map(|v| v.into_boxed_slice());
+        Ok(KeyDerivation::Argon2 {
+            variant,
+            nonce,
+            parallelization,
+            memory,
+            passes,
+            version,
+            secret_value,
+            associated_data,
+        })
+    }
+
     pub fn for_hkdf_object<'js>(ctx: &Ctx<'js>, obj: Object<'js>) -> Result<Self> {
         let hash = extract_sha_hash(ctx, &obj)?;
 
@@ -237,7 +289,10 @@ pub enum KeyAlgorithm {
         algorithm: EcAlgorithm,
     },
     X25519,
+    X448,
     Ed25519,
+    Ed448,
+    ChaCha20Poly1305,
     Hmac {
         hash: HashAlgorithm,
         length: u16,
@@ -250,6 +305,7 @@ pub enum KeyAlgorithm {
     Derive(KeyDerivation),
     HkdfImport,
     Pbkdf2Import,
+    Argon2Import(Argon2Variant),
 }
 
 pub enum KeyFormat {
@@ -356,6 +412,42 @@ fn from_ed25519<'js>(
     Ok(KeyAlgorithm::Ed25519)
 }
 
+fn from_ed448<'js>(
+    ctx: &Ctx<'js>,
+    #[allow(unused_variables)] mode: KeyAlgorithmMode<'_, 'js>,
+    #[allow(unused_variables)] algorithm_name: &str,
+    usages: &Array<'js>,
+    private_usages: &mut Vec<String>,
+    public_usages: &mut Vec<String>,
+) -> Result<KeyAlgorithm> {
+    #[cfg(feature = "_subtle-full")]
+    let key_kind = if let KeyAlgorithmMode::Import { format, kind, data } = mode {
+        import_okp_key(
+            ctx,
+            format,
+            kind,
+            data,
+            const_oid::db::rfc8410::ID_ED_448,
+            algorithm_name,
+        )?;
+        Some(*kind)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "_subtle-full"))]
+    let key_kind: Option<KeyKind> = None;
+
+    KeyUsage::classify_and_check_usages(
+        ctx,
+        KeyUsageAlgorithm::Sign,
+        usages,
+        private_usages,
+        public_usages,
+        key_kind.as_ref(),
+    )?;
+    Ok(KeyAlgorithm::Ed448)
+}
+
 fn from_x25519<'js>(
     ctx: &Ctx<'js>,
     mode: KeyAlgorithmMode<'_, 'js>,
@@ -406,6 +498,157 @@ fn from_x25519<'js>(
         key_kind.as_ref(),
     )?;
     Ok(KeyAlgorithm::X25519)
+}
+
+fn from_x448<'js>(
+    ctx: &Ctx<'js>,
+    #[allow(unused_variables)] mode: KeyAlgorithmMode<'_, 'js>,
+    #[allow(unused_variables)] algorithm_name: &str,
+    usages: &Array<'js>,
+    private_usages: &mut Vec<String>,
+    public_usages: &mut Vec<String>,
+) -> Result<KeyAlgorithm> {
+    #[cfg(feature = "_subtle-full")]
+    let key_kind = if let KeyAlgorithmMode::Import { format, kind, data } = mode {
+        import_okp_key(
+            ctx,
+            format,
+            kind,
+            data,
+            const_oid::db::rfc8410::ID_X_448,
+            algorithm_name,
+        )?;
+        Some(*kind)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "_subtle-full"))]
+    let key_kind: Option<KeyKind> = None;
+
+    KeyUsage::classify_and_check_usages(
+        ctx,
+        KeyUsageAlgorithm::Derive,
+        usages,
+        private_usages,
+        public_usages,
+        key_kind.as_ref(),
+    )?;
+    Ok(KeyAlgorithm::X448)
+}
+
+fn from_chacha20_poly1305<'js>(
+    ctx: &Ctx<'js>,
+    #[allow(unused_variables)] mode: KeyAlgorithmMode<'_, 'js>,
+    usages: &Array<'js>,
+    private_usages: &mut Vec<String>,
+    public_usages: &mut Vec<String>,
+) -> Result<KeyAlgorithm> {
+    #[cfg(feature = "_subtle-full")]
+    let key_kind = if let KeyAlgorithmMode::Import { format, kind, data } = mode {
+        match format {
+            KeyFormatData::Raw(bytes) => {
+                let raw = bytes.into_bytes(ctx)?;
+                if raw.len() != 32 {
+                    return Err(Exception::throw_type(
+                        ctx,
+                        "ChaCha20-Poly1305 key must be 256 bits (32 bytes)",
+                    ));
+                }
+                *data = raw;
+            },
+            KeyFormatData::Jwk(obj) => {
+                let kty: String = obj.get_required("kty", "keyData")?;
+                if kty != "oct" {
+                    return algorithm_mismatch_error(ctx, "ChaCha20-Poly1305");
+                }
+                if let Some(alg) = obj.get_optional::<_, String>("alg")? {
+                    if alg != "C20P" {
+                        return algorithm_mismatch_error(ctx, "ChaCha20-Poly1305");
+                    }
+                }
+                let k: String = obj.get_required("k", "keyData")?;
+                let raw = bytes_from_b64_url_safe(k.as_bytes()).or_throw(ctx)?;
+                if raw.len() != 32 {
+                    return Err(Exception::throw_type(
+                        ctx,
+                        "ChaCha20-Poly1305 key must be 256 bits (32 bytes)",
+                    ));
+                }
+                *data = raw;
+            },
+            _ => {
+                return Err(Exception::throw_message(
+                    ctx,
+                    "ChaCha20-Poly1305 only supports 'raw' and 'jwk' key formats",
+                ));
+            },
+        }
+        *kind = KeyKind::Secret;
+        Some(*kind)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "_subtle-full"))]
+    let key_kind: Option<KeyKind> = None;
+
+    KeyUsage::classify_and_check_usages(
+        ctx,
+        KeyUsageAlgorithm::Symmetric,
+        usages,
+        private_usages,
+        public_usages,
+        key_kind.as_ref(),
+    )?;
+    Ok(KeyAlgorithm::ChaCha20Poly1305)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn from_argon2<'js>(
+    ctx: &Ctx<'js>,
+    mode: KeyAlgorithmMode<'_, 'js>,
+    obj: std::result::Result<Object<'js>, &str>,
+    #[allow(unused_variables)] algorithm_name: &str,
+    variant: Argon2Variant,
+    usages: &Array<'js>,
+    private_usages: &mut Vec<String>,
+    public_usages: &mut Vec<String>,
+) -> Result<KeyAlgorithm> {
+    #[cfg(feature = "_subtle-full")]
+    let (algorithm, key_kind) = match mode {
+        KeyAlgorithmMode::Import { format, kind, data } => {
+            import_derive_key(ctx, format, kind, data, algorithm_name)?;
+            (KeyAlgorithm::Argon2Import(variant), Some(*kind))
+        },
+        KeyAlgorithmMode::Derive => {
+            let obj = obj.or_throw(ctx)?;
+            (
+                KeyAlgorithm::Derive(KeyDerivation::for_argon2_object(ctx, obj, variant)?),
+                None,
+            )
+        },
+        _ => return algorithm_not_supported_error(ctx),
+    };
+    #[cfg(not(feature = "_subtle-full"))]
+    let (algorithm, key_kind) = match mode {
+        KeyAlgorithmMode::Derive => {
+            let obj = obj.or_throw(ctx)?;
+            (
+                KeyAlgorithm::Derive(KeyDerivation::for_argon2_object(ctx, obj, variant)?),
+                None,
+            )
+        },
+        _ => return algorithm_not_supported_error(ctx),
+    };
+
+    KeyUsage::classify_and_check_usages(
+        ctx,
+        KeyUsageAlgorithm::Derive,
+        usages,
+        private_usages,
+        public_usages,
+        key_kind.as_ref(),
+    )?;
+    Ok(algorithm)
 }
 
 fn from_aes<'js>(
@@ -777,6 +1020,14 @@ impl KeyAlgorithm {
                 &mut private_usages,
                 &mut public_usages,
             )?,
+            "Ed448" => from_ed448(
+                ctx,
+                mode,
+                algorithm_name,
+                &usages,
+                &mut private_usages,
+                &mut public_usages,
+            )?,
             "X25519" => from_x25519(
                 ctx,
                 mode,
@@ -785,6 +1036,34 @@ impl KeyAlgorithm {
                 &mut private_usages,
                 &mut public_usages,
             )?,
+            "X448" => from_x448(
+                ctx,
+                mode,
+                algorithm_name,
+                &usages,
+                &mut private_usages,
+                &mut public_usages,
+            )?,
+            "ChaCha20-Poly1305" => {
+                from_chacha20_poly1305(ctx, mode, &usages, &mut private_usages, &mut public_usages)?
+            },
+            "Argon2d" | "Argon2i" | "Argon2id" => {
+                let variant = match algorithm_name {
+                    "Argon2d" => Argon2Variant::Argon2d,
+                    "Argon2i" => Argon2Variant::Argon2i,
+                    _ => Argon2Variant::Argon2id,
+                };
+                from_argon2(
+                    ctx,
+                    mode,
+                    obj,
+                    algorithm_name,
+                    variant,
+                    &usages,
+                    &mut private_usages,
+                    &mut public_usages,
+                )?
+            },
             "AES-CBC" | "AES-CTR" | "AES-GCM" | "AES-KW" => from_aes(
                 ctx,
                 mode,
@@ -1341,10 +1620,17 @@ fn import_okp_key<'js>(
         },
         KeyFormatData::Raw(object_bytes) => {
             let bytes = object_bytes.into_bytes(ctx)?;
-            if bytes.len() != 32 {
+            let expected_len = if oid == const_oid::db::rfc8410::ID_ED_448 {
+                57
+            } else if oid == const_oid::db::rfc8410::ID_X_448 {
+                56
+            } else {
+                32
+            };
+            if bytes.len() != expected_len {
                 return Err(Exception::throw_type(
                     ctx,
-                    &[algorithm_name, " keys must be 32 bytes long"].concat(),
+                    &format!("{algorithm_name} keys must be {expected_len} bytes long"),
                 ));
             }
             *data = bytes;

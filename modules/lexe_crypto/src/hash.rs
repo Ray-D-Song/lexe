@@ -145,6 +145,11 @@ impl Hash {
 
 #[rquickjs::methods]
 impl Hash {
+    #[qjs(constructor)]
+    pub fn constructor(ctx: Ctx<'_>, algorithm: String) -> Result<Self> {
+        Self::new(ctx, algorithm)
+    }
+
     #[qjs(rename = "digest")]
     fn hash_digest<'js>(&mut self, ctx: Ctx<'js>, encoding: Opt<String>) -> Result<Value<'js>> {
         let result = self
@@ -190,6 +195,15 @@ impl Hmac {
 
 #[rquickjs::methods]
 impl Hmac {
+    #[qjs(constructor)]
+    pub fn constructor<'js>(
+        ctx: Ctx<'js>,
+        algorithm: String,
+        key_value: ObjectBytes<'js>,
+    ) -> Result<Self> {
+        Self::new(ctx, algorithm, key_value)
+    }
+
     fn digest<'js>(&mut self, ctx: Ctx<'js>, encoding: Opt<String>) -> Result<Value<'js>> {
         self.hash.hash_digest(ctx, encoding)
     }
@@ -202,5 +216,54 @@ impl Hmac {
         let bytes = bytes.as_bytes(&ctx)?;
         this.0.borrow_mut().hash.do_update(bytes);
         Ok(this.0)
+    }
+}
+
+/// One-shot `crypto.hash(algorithm, data[, outputEncoding])`.
+pub fn hash_oneshot<'js>(
+    ctx: Ctx<'js>,
+    algorithm: String,
+    data: ObjectBytes<'js>,
+    output_encoding: Opt<Value<'js>>,
+) -> Result<Value<'js>> {
+    let alg = HashAlgorithm::try_from(algorithm.as_str()).or_throw(&ctx)?;
+    let bytes = data.as_bytes(&ctx)?;
+    let mut hasher = CRYPTO_PROVIDER.digest(alg);
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+
+    let enc = match output_encoding.0 {
+        None => Some("hex".to_string()),
+        Some(v) if v.is_undefined() => Some("hex".to_string()),
+        Some(v) => {
+            let s = v
+                .as_string()
+                .ok_or_else(|| {
+                    rquickjs::Exception::throw_type(&ctx, "outputEncoding must be a string")
+                })?
+                .to_string()?;
+            if s == "buffer" {
+                None
+            } else {
+                Some(s)
+            }
+        },
+    };
+
+    match enc {
+        None => Buffer(digest).into_js(&ctx),
+        Some(encoding) => {
+            #[cfg(feature = "_rustcrypto")]
+            {
+                crate::key_object::encode_bytes_to_output(&ctx, digest, Some(&encoding))
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            {
+                match encoded_bytes(&ctx, &digest, &encoding)? {
+                    Some(encoded) => Ok(encoded),
+                    None => Buffer(digest).into_js(&ctx),
+                }
+            }
+        },
     }
 }

@@ -1,19 +1,54 @@
 import defaultCrypto, {
+  DiffieHellman,
+  DiffieHellmanGroup,
+  Hash,
+  Hmac,
   KeyObject,
+  Sign,
+  Verify,
   X509Certificate,
+  checkPrime,
+  checkPrimeSync,
   constants,
   createCipheriv,
   createDecipheriv,
+  createDiffieHellman,
   createECDH,
+  createHash,
+  createHmac,
   createPrivateKey,
   createPublicKey,
   createSecretKey,
+  createSign,
+  createVerify,
   diffieHellman,
+  fips,
+  generateKey,
+  generateKeyPair,
+  generateKeyPairSync,
+  generateKeySync,
+  generatePrime,
+  generatePrimeSync,
+  getCipherInfo,
   getCiphers,
   getCurves,
+  getDiffieHellman,
+  getFips,
   getHashes,
+  hash,
   hkdf,
   hkdfSync,
+  pbkdf2,
+  pbkdf2Sync,
+  privateDecrypt,
+  privateEncrypt,
+  prng,
+  pseudoRandomBytes,
+  publicDecrypt,
+  publicEncrypt,
+  rng,
+  scrypt,
+  scryptSync,
   sign,
   timingSafeEqual,
   verify,
@@ -336,7 +371,189 @@ describe("crypto classic & KeyObject & X509", () => {
     expect(hashes).toContain("md5");
     expect(Array.isArray(ciphers)).toBe(true);
     expect(ciphers).toContain("aes-256-gcm");
+    expect(ciphers).toContain("chacha20-poly1305");
     expect(Array.isArray(curves)).toBe(true);
     expect(curves).toContain("prime256v1");
+  });
+
+  it("supports crypto.hash, Hash/Hmac classes, createSign/createVerify, and PRNG aliases", () => {
+    expect(hash("sha256", "abc")).toBe(
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    expect(hash("sha256", Buffer.from("abc"), "buffer")).toEqual(
+      Buffer.from("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "hex")
+    );
+    expect(createHash("sha256")).toBeInstanceOf(Hash);
+    expect(createHmac("sha256", "secret")).toBeInstanceOf(Hmac);
+    expect(fips).toBe(0);
+    expect(getFips()).toBe(0);
+    expect(pseudoRandomBytes(16).length).toBe(16);
+    expect(prng(16).length).toBe(16);
+    expect(rng(16).length).toBe(16);
+
+    const s = createSign("SHA256");
+    expect(s).toBeInstanceOf(Sign);
+    const sig = s.update("hello ").update("world").sign(RSA_PRIV_PEM, "base64");
+    const v = createVerify("SHA256");
+    expect(v).toBeInstanceOf(Verify);
+    expect(v.update("hello world").verify(RSA_PUB_PEM, sig, "base64")).toBe(true);
+  });
+
+  it("supports pbkdf2/pbkdf2Sync and scrypt/scryptSync", async () => {
+    // RFC 6070 vector 1
+    const derived = pbkdf2Sync("password", "salt", 1, 20, "sha1");
+    expect(derived.toString("hex")).toBe("0c60c80f961f0e71f3a9b524af6012062fe037a6");
+
+    const asyncPbkdf2 = await new Promise<Buffer>((resolve, reject) => {
+      pbkdf2("password", "salt", 2, 20, "sha1", (err, key) => {
+        if (err) reject(err);
+        else resolve(key);
+      });
+    });
+    expect(asyncPbkdf2.toString("hex")).toBe("ea6c014dc72d6f8ccd1ed92ace1d41f0d8de8957");
+
+    // RFC 7914 empty vector
+    const sc = scryptSync("", "", 64, { N: 16, r: 1, p: 1 });
+    expect(sc.slice(0, 16).toString("hex")).toBe("77d6576238657b203b19ca42c18a0497");
+
+    const asyncScrypt = await new Promise<Buffer>((resolve, reject) => {
+      scrypt("password", "NaCl", 16, { cost: 16, blockSize: 1, parallelization: 1 }, (err, key) => {
+        if (err) reject(err);
+        else resolve(key);
+      });
+    });
+    expect(asyncScrypt.length).toBe(16);
+  });
+
+  it("supports generateKey*, generateKeyPair* (including Ed448/X448 & passphrase export)", async () => {
+    const aesKey = generateKeySync("aes", { length: 256 });
+    expect(aesKey).toBeInstanceOf(KeyObject);
+    expect(aesKey.symmetricKeySize).toBe(32);
+
+    const hmacKey = await new Promise<KeyObject>((resolve, reject) => {
+      generateKey("hmac", { length: 128 }, (err, k) => (err ? reject(err) : resolve(k)));
+    });
+    expect(hmacKey.symmetricKeySize).toBe(16);
+
+    const { publicKey: ed448Pub, privateKey: ed448Priv } = generateKeyPairSync("ed448");
+    expect(ed448Pub.asymmetricKeyType).toBe("ed448");
+    const sig448 = sign(null, Buffer.from("ed448 message"), ed448Priv);
+    expect(sig448.length).toBe(114);
+    expect(verify(null, Buffer.from("ed448 message"), ed448Pub, sig448)).toBe(true);
+
+    const a448 = generateKeyPairSync("x448");
+    const b448 = await new Promise<{ publicKey: KeyObject; privateKey: KeyObject }>(
+      (resolve, reject) => {
+        generateKeyPair("x448", (err, publicKey, privateKey) =>
+          err ? reject(err) : resolve({ publicKey, privateKey })
+        );
+      }
+    );
+    const s1 = diffieHellman({ privateKey: a448.privateKey, publicKey: b448.publicKey });
+    const s2 = diffieHellman({ privateKey: b448.privateKey, publicKey: a448.publicKey });
+    expect(s1.length).toBe(56);
+    expect(s1.equals(s2)).toBe(true);
+
+    const { publicKey: rsaPubPem, privateKey: rsaEncPem } = generateKeyPairSync("rsa", {
+      modulusLength: 1024,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "pem",
+        cipher: "aes-256-cbc",
+        passphrase: "top-secret-passphrase",
+      },
+    });
+    expect(rsaEncPem).toContain("BEGIN ENCRYPTED PRIVATE KEY");
+    const importedPriv = createPrivateKey({
+      key: rsaEncPem,
+      passphrase: "top-secret-passphrase",
+    });
+    expect(importedPriv.asymmetricKeyType).toBe("rsa");
+    const importedPub = createPublicKey(rsaPubPem);
+    expect(importedPub.asymmetricKeyType).toBe("rsa");
+  });
+
+  it("supports RSA publicEncrypt, privateDecrypt, privateEncrypt, and publicDecrypt", () => {
+    const ctOaep = publicEncrypt(
+      { key: RSA_PUB_PEM, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
+      Buffer.from("secret oaep")
+    );
+    const ptOaep = privateDecrypt(
+      { key: RSA_PRIV_PEM, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
+      ctOaep
+    );
+    expect(ptOaep.toString()).toBe("secret oaep");
+
+    // Node 24 rejects RSA_PKCS1_PADDING on privateDecrypt
+    const ctPkcs1 = publicEncrypt(
+      { key: RSA_PUB_PEM, padding: constants.RSA_PKCS1_PADDING },
+      Buffer.from("legacy pkcs1")
+    );
+    expect(() =>
+      privateDecrypt({ key: RSA_PRIV_PEM, padding: constants.RSA_PKCS1_PADDING }, ctPkcs1)
+    ).toThrow(/no longer supported/);
+
+    // Reverse RSA (privateEncrypt -> publicDecrypt)
+    const privEnc = privateEncrypt(RSA_PRIV_PEM, Buffer.from("signed block"));
+    expect(publicDecrypt(RSA_PUB_PEM, privEnc).toString()).toBe("signed block");
+
+    // Raw RSA_NO_PADDING (256-byte modulus)
+    const rawBlock = Buffer.alloc(256, 0);
+    Buffer.from("raw-rsa").copy(rawBlock, 240);
+    const encRaw = publicEncrypt(
+      { key: RSA_PUB_PEM, padding: constants.RSA_NO_PADDING },
+      rawBlock
+    );
+    const decRaw = privateDecrypt(
+      { key: RSA_PRIV_PEM, padding: constants.RSA_NO_PADDING },
+      encRaw
+    );
+    expect(decRaw.equals(rawBlock)).toBe(true);
+  });
+
+  it("supports DiffieHellman, DiffieHellmanGroup, primes, ChaCha20-Poly1305, and getCipherInfo", async () => {
+    const dh1 = getDiffieHellman("modp14");
+    const dh2 = getDiffieHellman("modp14");
+    expect(dh1).toBeInstanceOf(DiffieHellmanGroup);
+    const pub1 = dh1.generateKeys();
+    const pub2 = dh2.generateKeys();
+    expect(dh1.computeSecret(pub2).equals(dh2.computeSecret(pub1))).toBe(true);
+
+    const custom = createDiffieHellman(256);
+    expect(custom).toBeInstanceOf(DiffieHellman);
+    expect(custom.verifyError).toBe(0);
+    expect(custom.generateKeys("hex").length).toBeGreaterThan(0);
+
+    const pBuf = generatePrimeSync(128, { safe: true });
+    expect(pBuf).toBeInstanceOf(ArrayBuffer);
+    expect(pBuf.byteLength).toBe(16);
+    expect(checkPrimeSync(pBuf)).toBe(true);
+    const pBig = await new Promise<bigint>((resolve, reject) => {
+      generatePrime(64, { bigint: true }, (err, p) => (err ? reject(err) : resolve(p)));
+    });
+    expect(typeof pBig).toBe("bigint");
+    expect(
+      await new Promise<boolean>((resolve, reject) => {
+        checkPrime(pBig, (err, ok) => (err ? reject(err) : resolve(ok)));
+      })
+    ).toBe(true);
+    expect(checkPrimeSync(15n)).toBe(false);
+
+    const key = Buffer.alloc(32, 0x11);
+    const iv = Buffer.alloc(12, 0x22);
+    const aad = Buffer.from("aad-chacha");
+    const c = createCipheriv("chacha20-poly1305", key, iv);
+    c.setAAD(aad);
+    const ct = Buffer.concat([c.update("streamed "), c.update("chacha"), c.final()]);
+    const tag = c.getAuthTag();
+    const d = createDecipheriv("chacha20-poly1305", key, iv);
+    d.setAAD(aad);
+    d.setAuthTag(tag);
+    const pt = Buffer.concat([d.update(ct), d.final()]);
+    expect(pt.toString()).toBe("streamed chacha");
+
+    expect(getCipherInfo("chacha20-poly1305")?.nid).toBe(1018);
+    expect(getCipherInfo(901)?.name).toBe("id-aes256-gcm");
   });
 });

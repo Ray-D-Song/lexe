@@ -1,18 +1,35 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Node-compatible `crypto.publicEncrypt` (RSA-OAEP only).
+//! Node-compatible RSA public/private encryption & decryption and `crypto.constants`.
 
+#[cfg(feature = "_rustcrypto")]
+use crate::key_object::{
+    parse_private_key_value, parse_public_key_value, throw_code_error, KeyMaterial,
+};
 use lexe_buffer::Buffer;
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 use lexe_encoding::bytes_from_b64;
 use lexe_utils::bytes::ObjectBytes;
 use rquickjs::{Ctx, Exception, IntoJs, Object, Result, Value};
+#[cfg(feature = "_rustcrypto")]
+use rsa::{
+    hazmat::{rsa_decrypt_and_check, rsa_encrypt},
+    pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey},
+    sha2::{Sha256, Sha384, Sha512},
+    traits::PublicKeyParts,
+    BoxedUint, Oaep, Pkcs1v15Encrypt, Pkcs1v15Sign, RsaPrivateKey, RsaPublicKey,
+};
+#[cfg(feature = "_rustcrypto")]
+use sha1::Sha1;
 
 use crate::hash::HashAlgorithm;
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 use crate::provider::{CryptoError, CryptoProvider};
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 use crate::CRYPTO_PROVIDER;
 
-/// Node `crypto.constants` RSA & EC point conversion constants.
+/// Node `crypto.constants` RSA, DH, & EC point conversion constants.
 pub const RSA_PKCS1_PADDING: i32 = 1;
 pub const RSA_NO_PADDING: i32 = 3;
 pub const RSA_PKCS1_OAEP_PADDING: i32 = 4;
@@ -23,13 +40,20 @@ pub const RSA_PSS_SALTLEN_AUTO: i32 = -2;
 pub const POINT_CONVERSION_COMPRESSED: i32 = 2;
 pub const POINT_CONVERSION_UNCOMPRESSED: i32 = 4;
 pub const POINT_CONVERSION_HYBRID: i32 = 6;
+pub const DH_CHECK_P_NOT_PRIME: i32 = 1;
+pub const DH_CHECK_P_NOT_SAFE_PRIME: i32 = 2;
+pub const DH_UNABLE_TO_CHECK_GENERATOR: i32 = 4;
+pub const DH_NOT_SUITABLE_GENERATOR: i32 = 8;
+pub const OPENSSL_VERSION_NUMBER: u32 = 805_306_624;
 
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RsaKeyError {
     InvalidKey,
     UnsupportedAlgorithm,
 }
 
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 impl std::fmt::Display for RsaKeyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -41,6 +65,7 @@ impl std::fmt::Display for RsaKeyError {
     }
 }
 
+#[cfg(not(feature = "_rustcrypto"))]
 struct ParsedPublicEncryptOptions {
     key: Vec<u8>,
     padding: i32,
@@ -89,46 +114,19 @@ fn binary_like_to_bytes<'js>(
     ))
 }
 
+#[cfg(not(feature = "_rustcrypto"))]
 fn key_bytes_from_value<'js>(ctx: &Ctx<'js>, value: &Value<'js>) -> Result<Vec<u8>> {
     binary_like_to_bytes(ctx, value, "key")
 }
 
-fn parse_public_encrypt_options<'js>(
+fn parse_rsa_padding_and_oaep<'js>(
     ctx: &Ctx<'js>,
-    key_or_options: Value<'js>,
-) -> Result<ParsedPublicEncryptOptions> {
-    // Direct key: string / ArrayBufferView / ArrayBuffer.
-    if is_direct_key(&key_or_options) {
-        let key = key_bytes_from_value(ctx, &key_or_options)?;
-        return Ok(ParsedPublicEncryptOptions {
-            key,
-            padding: RSA_PKCS1_OAEP_PADDING,
-            hash: HashAlgorithm::Sha1,
-            label: None,
-        });
-    }
-
-    let obj = key_or_options.as_object().ok_or_else(|| {
-        Exception::throw_type(
-            ctx,
-            "The first argument must be of type string or an instance of Buffer, TypedArray, DataView, or KeyObject, or an object with a \"key\" property.",
-        )
-    })?;
-
-    let key_val: Value = obj
-        .get("key")
-        .map_err(|_| Exception::throw_type(ctx, "The \"options.key\" property is required."))?;
-    if key_val.is_undefined() || key_val.is_null() {
-        return Err(Exception::throw_type(
-            ctx,
-            "The \"options.key\" property is required.",
-        ));
-    }
-    let key = key_bytes_from_value(ctx, &key_val)?;
-
+    obj: &Object<'js>,
+    default_padding: i32,
+) -> Result<(i32, HashAlgorithm, Option<Vec<u8>>)> {
     let padding = if let Ok(p) = obj.get::<_, Value>("padding") {
         if p.is_undefined() || p.is_null() {
-            RSA_PKCS1_OAEP_PADDING
+            default_padding
         } else if let Some(n) = p.as_number() {
             n as i32
         } else {
@@ -138,18 +136,8 @@ fn parse_public_encrypt_options<'js>(
             ));
         }
     } else {
-        RSA_PKCS1_OAEP_PADDING
+        default_padding
     };
-
-    if padding != RSA_PKCS1_OAEP_PADDING {
-        return Err(Exception::throw_message(
-            ctx,
-            &format!(
-                "Unsupported padding mode: {}. Only RSA_PKCS1_OAEP_PADDING ({}) is supported.",
-                padding, RSA_PKCS1_OAEP_PADDING
-            ),
-        ));
-    }
 
     let hash = if let Ok(h) = obj.get::<_, Value>("oaepHash") {
         if h.is_undefined() || h.is_null() {
@@ -186,6 +174,52 @@ fn parse_public_encrypt_options<'js>(
         None
     };
 
+    Ok((padding, hash, label))
+}
+
+#[cfg(not(feature = "_rustcrypto"))]
+fn parse_public_encrypt_options<'js>(
+    ctx: &Ctx<'js>,
+    key_or_options: Value<'js>,
+) -> Result<ParsedPublicEncryptOptions> {
+    if is_direct_key(&key_or_options) {
+        let key = key_bytes_from_value(ctx, &key_or_options)?;
+        return Ok(ParsedPublicEncryptOptions {
+            key,
+            padding: RSA_PKCS1_OAEP_PADDING,
+            hash: HashAlgorithm::Sha1,
+            label: None,
+        });
+    }
+
+    let obj = key_or_options.as_object().ok_or_else(|| {
+        Exception::throw_type(
+            ctx,
+            "The first argument must be of type string or an instance of Buffer, TypedArray, DataView, or KeyObject, or an object with a \"key\" property.",
+        )
+    })?;
+
+    let key_val: Value = obj
+        .get("key")
+        .map_err(|_| Exception::throw_type(ctx, "The \"options.key\" property is required."))?;
+    if key_val.is_undefined() || key_val.is_null() {
+        return Err(Exception::throw_type(
+            ctx,
+            "The \"options.key\" property is required.",
+        ));
+    }
+    let key = key_bytes_from_value(ctx, &key_val)?;
+    let (padding, hash, label) = parse_rsa_padding_and_oaep(ctx, obj, RSA_PKCS1_OAEP_PADDING)?;
+    if padding != RSA_PKCS1_OAEP_PADDING {
+        return Err(Exception::throw_message(
+            ctx,
+            &format!(
+                "Unsupported padding mode: {}. Only RSA_PKCS1_OAEP_PADDING ({}) is supported.",
+                padding, RSA_PKCS1_OAEP_PADDING
+            ),
+        ));
+    }
+
     Ok(ParsedPublicEncryptOptions {
         key,
         padding,
@@ -194,6 +228,7 @@ fn parse_public_encrypt_options<'js>(
     })
 }
 
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 fn strip_ascii_whitespace(input: &[u8]) -> Vec<u8> {
     input
         .iter()
@@ -202,6 +237,7 @@ fn strip_ascii_whitespace(input: &[u8]) -> Vec<u8> {
         .collect()
 }
 
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 fn decode_pem_body(body: &[u8]) -> std::result::Result<Vec<u8>, RsaKeyError> {
     let cleaned = strip_ascii_whitespace(body);
     if cleaned.is_empty() {
@@ -210,6 +246,7 @@ fn decode_pem_body(body: &[u8]) -> std::result::Result<Vec<u8>, RsaKeyError> {
     bytes_from_b64(cleaned).map_err(|_| RsaKeyError::InvalidKey)
 }
 
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 fn extract_pem_der(pem: &str) -> std::result::Result<(bool, Vec<u8>), RsaKeyError> {
     // Returns (is_spki, der)
     const SPKI_BEGIN: &str = "-----BEGIN PUBLIC KEY-----";
@@ -243,6 +280,7 @@ fn extract_pem_der(pem: &str) -> std::result::Result<(bool, Vec<u8>), RsaKeyErro
 /// Normalize a public key to PKCS#1 DER for `rsa_oaep_encrypt`.
 ///
 /// Pure Rust error so unit tests can call this without a JS context.
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 pub fn normalize_rsa_public_key(key_bytes: &[u8]) -> std::result::Result<Vec<u8>, RsaKeyError> {
     // Try PEM first if it looks like text.
     let looks_like_pem = key_bytes.windows(5).any(|w| w == b"-----");
@@ -258,6 +296,7 @@ pub fn normalize_rsa_public_key(key_bytes: &[u8]) -> std::result::Result<Vec<u8>
     import_public_der(key_bytes, None)
 }
 
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 fn import_public_der(
     der: &[u8],
     prefer_spki: Option<bool>,
@@ -283,6 +322,7 @@ fn import_public_der(
     }
 }
 
+#[cfg(any(not(feature = "_rustcrypto"), test))]
 fn map_provider_import_error(err: CryptoError) -> RsaKeyError {
     match err {
         CryptoError::UnsupportedAlgorithm => RsaKeyError::UnsupportedAlgorithm,
@@ -290,8 +330,122 @@ fn map_provider_import_error(err: CryptoError) -> RsaKeyError {
     }
 }
 
+#[cfg(not(feature = "_rustcrypto"))]
 fn map_rsa_key_error(ctx: &Ctx<'_>, err: RsaKeyError) -> rquickjs::Error {
     Exception::throw_message(ctx, &err.to_string())
+}
+
+#[cfg(feature = "_rustcrypto")]
+fn uint_to_padded_be(u: BoxedUint, padded_len: usize) -> std::result::Result<Vec<u8>, String> {
+    let leading_zeros = u.leading_zeros() as usize / 8;
+    let be = u.to_be_bytes();
+    let trimmed = &be[leading_zeros..];
+    if trimmed.len() > padded_len {
+        return Err("RSA block exceeds modulus length".to_string());
+    }
+    let mut out = vec![0u8; padded_len];
+    out[padded_len - trimmed.len()..].copy_from_slice(trimmed);
+    Ok(out)
+}
+
+#[cfg(feature = "_rustcrypto")]
+type ParsedRsaKeyAndOpts = (Vec<u8>, i32, HashAlgorithm, Option<Vec<u8>>);
+
+#[cfg(feature = "_rustcrypto")]
+fn parse_rsa_key_and_opts<'js>(
+    ctx: &Ctx<'js>,
+    key_or_options: Value<'js>,
+    default_padding: i32,
+    is_private: bool,
+) -> Result<ParsedRsaKeyAndOpts> {
+    let (padding, hash, label) = if !is_direct_key(&key_or_options) {
+        if let Some(obj) = key_or_options.as_object() {
+            if rquickjs::Class::<crate::key_object::KeyObject>::from_value(&key_or_options).is_ok()
+            {
+                (default_padding, HashAlgorithm::Sha1, None)
+            } else {
+                parse_rsa_padding_and_oaep(ctx, obj, default_padding)?
+            }
+        } else {
+            (default_padding, HashAlgorithm::Sha1, None)
+        }
+    } else {
+        (default_padding, HashAlgorithm::Sha1, None)
+    };
+
+    let ko = if is_private {
+        parse_private_key_value(ctx, key_or_options)?
+    } else {
+        parse_public_key_value(ctx, key_or_options)?
+    };
+    let pkcs1_der = match ko.material {
+        KeyMaterial::RsaPrivate { pkcs1_der, .. } | KeyMaterial::RsaPublic { pkcs1_der, .. } => {
+            pkcs1_der
+        },
+        _ => return Err(Exception::throw_type(ctx, "Expected an RSA key")),
+    };
+    Ok((pkcs1_der, padding, hash, label))
+}
+
+#[cfg(feature = "_rustcrypto")]
+fn rsa_oaep_encrypt_with(
+    pub_key: &RsaPublicKey,
+    hash: HashAlgorithm,
+    label: Option<&[u8]>,
+    plaintext: &[u8],
+) -> std::result::Result<Vec<u8>, String> {
+    let mut rng = rand::rng();
+    let label = label.filter(|l| !l.is_empty());
+    let res = match hash {
+        HashAlgorithm::Sha1 => match label {
+            Some(l) => pub_key.encrypt(&mut rng, Oaep::<Sha1>::new_with_label::<_>(l), plaintext),
+            None => pub_key.encrypt(&mut rng, Oaep::<Sha1>::new(), plaintext),
+        },
+        HashAlgorithm::Sha256 => match label {
+            Some(l) => pub_key.encrypt(&mut rng, Oaep::<Sha256>::new_with_label::<_>(l), plaintext),
+            None => pub_key.encrypt(&mut rng, Oaep::<Sha256>::new(), plaintext),
+        },
+        HashAlgorithm::Sha384 => match label {
+            Some(l) => pub_key.encrypt(&mut rng, Oaep::<Sha384>::new_with_label::<_>(l), plaintext),
+            None => pub_key.encrypt(&mut rng, Oaep::<Sha384>::new(), plaintext),
+        },
+        HashAlgorithm::Sha512 => match label {
+            Some(l) => pub_key.encrypt(&mut rng, Oaep::<Sha512>::new_with_label::<_>(l), plaintext),
+            None => pub_key.encrypt(&mut rng, Oaep::<Sha512>::new(), plaintext),
+        },
+        HashAlgorithm::Md5 => return Err("MD5 is not supported for RSA-OAEP".to_string()),
+    };
+    res.map_err(|e| format!("RSA public encryption failed: {e}"))
+}
+
+#[cfg(feature = "_rustcrypto")]
+fn rsa_oaep_decrypt_with(
+    priv_key: &RsaPrivateKey,
+    hash: HashAlgorithm,
+    label: Option<&[u8]>,
+    ciphertext: &[u8],
+) -> std::result::Result<Vec<u8>, String> {
+    let label = label.filter(|l| !l.is_empty());
+    let res = match hash {
+        HashAlgorithm::Sha1 => match label {
+            Some(l) => priv_key.decrypt(Oaep::<Sha1>::new_with_label::<_>(l), ciphertext),
+            None => priv_key.decrypt(Oaep::<Sha1>::new(), ciphertext),
+        },
+        HashAlgorithm::Sha256 => match label {
+            Some(l) => priv_key.decrypt(Oaep::<Sha256>::new_with_label::<_>(l), ciphertext),
+            None => priv_key.decrypt(Oaep::<Sha256>::new(), ciphertext),
+        },
+        HashAlgorithm::Sha384 => match label {
+            Some(l) => priv_key.decrypt(Oaep::<Sha384>::new_with_label::<_>(l), ciphertext),
+            None => priv_key.decrypt(Oaep::<Sha384>::new(), ciphertext),
+        },
+        HashAlgorithm::Sha512 => match label {
+            Some(l) => priv_key.decrypt(Oaep::<Sha512>::new_with_label::<_>(l), ciphertext),
+            None => priv_key.decrypt(Oaep::<Sha512>::new(), ciphertext),
+        },
+        HashAlgorithm::Md5 => return Err("MD5 is not supported for RSA-OAEP".to_string()),
+    };
+    res.map_err(|e| format!("RSA private decryption failed: {e}"))
 }
 
 /// Node-compatible `crypto.publicEncrypt(key, buffer)`.
@@ -300,30 +454,231 @@ pub fn public_encrypt<'js>(
     key_or_options: Value<'js>,
     data: Value<'js>,
 ) -> Result<Value<'js>> {
-    let options = parse_public_encrypt_options(&ctx, key_or_options)?;
-    let _padding = options.padding; // validated to OAEP only
-    let normalized =
-        normalize_rsa_public_key(&options.key).map_err(|err| map_rsa_key_error(&ctx, err))?;
-    let plaintext = binary_like_to_bytes(&ctx, &data, "buffer")?;
-
-    let ciphertext = CRYPTO_PROVIDER
-        .rsa_oaep_encrypt(
-            &normalized,
-            &plaintext,
-            options.hash,
-            options.label.as_deref(),
-        )
-        .map_err(|err| match err {
-            CryptoError::UnsupportedAlgorithm => Exception::throw_message(
-                &ctx,
-                "RSA-OAEP is not supported by the active crypto provider",
-            ),
-            other => {
-                Exception::throw_message(&ctx, &format!("RSA public encryption failed: {}", other))
+    #[cfg(feature = "_rustcrypto")]
+    {
+        let (pkcs1_der, padding, hash, label) =
+            parse_rsa_key_and_opts(&ctx, key_or_options, RSA_PKCS1_OAEP_PADDING, false)?;
+        let plaintext = binary_like_to_bytes(&ctx, &data, "buffer")?;
+        let pub_key = RsaPublicKey::from_pkcs1_der(&pkcs1_der)
+            .map_err(|e| Exception::throw_message(&ctx, &format!("Invalid RSA public key: {e}")))?;
+        let mut rng = rand::rng();
+        let ciphertext = match padding {
+            RSA_PKCS1_OAEP_PADDING => {
+                rsa_oaep_encrypt_with(&pub_key, hash, label.as_deref(), &plaintext)
+                    .map_err(|e| Exception::throw_message(&ctx, &e))?
             },
-        })?;
+            RSA_PKCS1_PADDING => pub_key
+                .encrypt(&mut rng, Pkcs1v15Encrypt, &plaintext)
+                .map_err(|e| {
+                    Exception::throw_message(&ctx, &format!("RSA public encryption failed: {e}"))
+                })?,
+            RSA_NO_PADDING => {
+                if plaintext.len() != pub_key.size() {
+                    return Err(Exception::throw_message(
+                        &ctx,
+                        "data length mismatch with key size for RSA_NO_PADDING",
+                    ));
+                }
+                let m = BoxedUint::from_be_slice(&plaintext, pub_key.n_bits_precision())
+                    .map_err(|_| Exception::throw_message(&ctx, "RSA input conversion failed"))?;
+                if m >= pub_key.n().as_ref() {
+                    return Err(Exception::throw_message(
+                        &ctx,
+                        "data too large for key modulus",
+                    ));
+                }
+                let c = rsa_encrypt(&pub_key, &m).map_err(|e| {
+                    Exception::throw_message(&ctx, &format!("RSA public encryption failed: {e}"))
+                })?;
+                uint_to_padded_be(c, pub_key.size())
+                    .map_err(|e| Exception::throw_message(&ctx, &e))?
+            },
+            other => {
+                return Err(Exception::throw_type(
+                    &ctx,
+                    &format!("Unsupported RSA publicEncrypt padding: {other}"),
+                ));
+            },
+        };
+        Buffer(ciphertext).into_js(&ctx)
+    }
 
-    Buffer(ciphertext).into_js(&ctx)
+    #[cfg(not(feature = "_rustcrypto"))]
+    {
+        let options = parse_public_encrypt_options(&ctx, key_or_options)?;
+        let _padding = options.padding;
+        let normalized =
+            normalize_rsa_public_key(&options.key).map_err(|err| map_rsa_key_error(&ctx, err))?;
+        let plaintext = binary_like_to_bytes(&ctx, &data, "buffer")?;
+
+        let ciphertext = CRYPTO_PROVIDER
+            .rsa_oaep_encrypt(
+                &normalized,
+                &plaintext,
+                options.hash,
+                options.label.as_deref(),
+            )
+            .map_err(|err| match err {
+                CryptoError::UnsupportedAlgorithm => Exception::throw_message(
+                    &ctx,
+                    "RSA-OAEP is not supported by the active crypto provider",
+                ),
+                other => Exception::throw_message(
+                    &ctx,
+                    &format!("RSA public encryption failed: {}", other),
+                ),
+            })?;
+
+        Buffer(ciphertext).into_js(&ctx)
+    }
+}
+
+/// Node-compatible `crypto.privateDecrypt(key, buffer)`.
+#[cfg(feature = "_rustcrypto")]
+pub fn private_decrypt<'js>(
+    ctx: Ctx<'js>,
+    key_or_options: Value<'js>,
+    data: Value<'js>,
+) -> Result<Value<'js>> {
+    let (pkcs1_der, padding, hash, label) =
+        parse_rsa_key_and_opts(&ctx, key_or_options, RSA_PKCS1_OAEP_PADDING, true)?;
+    if padding == RSA_PKCS1_PADDING {
+        return throw_code_error(
+            &ctx,
+            "TypeError",
+            "ERR_INVALID_ARG_VALUE",
+            "RSA_PKCS1_PADDING is no longer supported for private decryption",
+        );
+    }
+    let ciphertext = binary_like_to_bytes(&ctx, &data, "buffer")?;
+    let priv_key = RsaPrivateKey::from_pkcs1_der(&pkcs1_der)
+        .map_err(|e| Exception::throw_message(&ctx, &format!("Invalid RSA private key: {e}")))?;
+    let mut rng = rand::rng();
+    let plaintext = match padding {
+        RSA_PKCS1_OAEP_PADDING => {
+            rsa_oaep_decrypt_with(&priv_key, hash, label.as_deref(), &ciphertext)
+                .map_err(|e| Exception::throw_message(&ctx, &e))?
+        },
+        RSA_NO_PADDING => {
+            if ciphertext.len() != priv_key.size() {
+                return Err(Exception::throw_message(
+                    &ctx,
+                    "data length mismatch with key size for RSA_NO_PADDING",
+                ));
+            }
+            let c = BoxedUint::from_be_slice(&ciphertext, priv_key.n_bits_precision())
+                .map_err(|_| Exception::throw_message(&ctx, "RSA input conversion failed"))?;
+            let m = rsa_decrypt_and_check(&priv_key, Some(&mut rng), &c).map_err(|e| {
+                Exception::throw_message(&ctx, &format!("RSA private decryption failed: {e}"))
+            })?;
+            uint_to_padded_be(m, priv_key.size()).map_err(|e| Exception::throw_message(&ctx, &e))?
+        },
+        other => {
+            return Err(Exception::throw_type(
+                &ctx,
+                &format!("Unsupported RSA privateDecrypt padding: {other}"),
+            ));
+        },
+    };
+    Buffer(plaintext).into_js(&ctx)
+}
+
+/// Node-compatible `crypto.privateEncrypt(key, buffer)`.
+#[cfg(feature = "_rustcrypto")]
+pub fn private_encrypt<'js>(
+    ctx: Ctx<'js>,
+    key_or_options: Value<'js>,
+    data: Value<'js>,
+) -> Result<Value<'js>> {
+    let (pkcs1_der, padding, _hash, _label) =
+        parse_rsa_key_and_opts(&ctx, key_or_options, RSA_PKCS1_PADDING, true)?;
+    let plaintext = binary_like_to_bytes(&ctx, &data, "buffer")?;
+    let priv_key = RsaPrivateKey::from_pkcs1_der(&pkcs1_der)
+        .map_err(|e| Exception::throw_message(&ctx, &format!("Invalid RSA private key: {e}")))?;
+    let mut rng = rand::rng();
+    let out = match padding {
+        RSA_PKCS1_PADDING => priv_key
+            .sign_with_rng(&mut rng, Pkcs1v15Sign::new_unprefixed(), &plaintext)
+            .map_err(|e| {
+                Exception::throw_message(&ctx, &format!("RSA private encryption failed: {e}"))
+            })?,
+        RSA_NO_PADDING => {
+            if plaintext.len() != priv_key.size() {
+                return Err(Exception::throw_message(
+                    &ctx,
+                    "data length mismatch with key size for RSA_NO_PADDING",
+                ));
+            }
+            let m = BoxedUint::from_be_slice(&plaintext, priv_key.n_bits_precision())
+                .map_err(|_| Exception::throw_message(&ctx, "RSA input conversion failed"))?;
+            let c = rsa_decrypt_and_check(&priv_key, Some(&mut rng), &m).map_err(|e| {
+                Exception::throw_message(&ctx, &format!("RSA private encryption failed: {e}"))
+            })?;
+            uint_to_padded_be(c, priv_key.size()).map_err(|e| Exception::throw_message(&ctx, &e))?
+        },
+        other => {
+            return Err(Exception::throw_type(
+                &ctx,
+                &format!("Unsupported RSA privateEncrypt padding: {other}"),
+            ));
+        },
+    };
+    Buffer(out).into_js(&ctx)
+}
+
+/// Node-compatible `crypto.publicDecrypt(key, buffer)`.
+#[cfg(feature = "_rustcrypto")]
+pub fn public_decrypt<'js>(
+    ctx: Ctx<'js>,
+    key_or_options: Value<'js>,
+    data: Value<'js>,
+) -> Result<Value<'js>> {
+    let (pkcs1_der, padding, _hash, _label) =
+        parse_rsa_key_and_opts(&ctx, key_or_options, RSA_PKCS1_PADDING, false)?;
+    let ciphertext = binary_like_to_bytes(&ctx, &data, "buffer")?;
+    let pub_key = RsaPublicKey::from_pkcs1_der(&pkcs1_der)
+        .map_err(|e| Exception::throw_message(&ctx, &format!("Invalid RSA public key: {e}")))?;
+    let k = pub_key.size();
+    if ciphertext.len() != k {
+        return Err(Exception::throw_message(
+            &ctx,
+            "data length mismatch with key size",
+        ));
+    }
+    let c = BoxedUint::from_be_slice(&ciphertext, pub_key.n_bits_precision())
+        .map_err(|_| Exception::throw_message(&ctx, "RSA input conversion failed"))?;
+    if c >= pub_key.n().as_ref() {
+        return Err(Exception::throw_message(&ctx, "data greater than mod len"));
+    }
+    let m = rsa_encrypt(&pub_key, &c).map_err(|e| {
+        Exception::throw_message(&ctx, &format!("RSA public decryption failed: {e}"))
+    })?;
+    let em = uint_to_padded_be(m, k).map_err(|e| Exception::throw_message(&ctx, &e))?;
+    let out = match padding {
+        RSA_PKCS1_PADDING => {
+            if em.len() < 11 || em[0] != 0x00 || em[1] != 0x01 {
+                return Err(Exception::throw_message(&ctx, "block type is not 01"));
+            }
+            let Some(sep_rel) = em[2..].iter().position(|&b| b != 0xff) else {
+                return Err(Exception::throw_message(&ctx, "no zero byte in padding"));
+            };
+            if sep_rel < 8 || em[2 + sep_rel] != 0x00 {
+                return Err(Exception::throw_message(
+                    &ctx,
+                    "bad pad byte count in PKCS#1 padding",
+                ));
+            }
+            em[3 + sep_rel..].to_vec()
+        },
+        RSA_NO_PADDING => em,
+        other => {
+            return Err(Exception::throw_type(
+                &ctx,
+                &format!("Unsupported RSA publicDecrypt padding: {other}"),
+            ));
+        },
+    };
+    Buffer(out).into_js(&ctx)
 }
 
 /// Build the `crypto.constants` object with the supported padding constant.
@@ -342,6 +697,11 @@ pub fn create_constants_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>> {
         POINT_CONVERSION_UNCOMPRESSED,
     )?;
     constants.set("POINT_CONVERSION_HYBRID", POINT_CONVERSION_HYBRID)?;
+    constants.set("DH_CHECK_P_NOT_PRIME", DH_CHECK_P_NOT_PRIME)?;
+    constants.set("DH_CHECK_P_NOT_SAFE_PRIME", DH_CHECK_P_NOT_SAFE_PRIME)?;
+    constants.set("DH_UNABLE_TO_CHECK_GENERATOR", DH_UNABLE_TO_CHECK_GENERATOR)?;
+    constants.set("DH_NOT_SUITABLE_GENERATOR", DH_NOT_SUITABLE_GENERATOR)?;
+    constants.set("OPENSSL_VERSION_NUMBER", OPENSSL_VERSION_NUMBER)?;
     Ok(constants)
 }
 

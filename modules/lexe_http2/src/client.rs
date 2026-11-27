@@ -1111,6 +1111,9 @@ pub fn connect<'js>(
                         reject_unauthorized: tls_opts.reject_unauthorized,
                         timeout: None,
                         verify_record: None,
+                        session: tls_opts.session.clone(),
+                        session_slot: None,
+                        session_notify: None,
                     };
                     let tls = tls_connect(tcp, connect_opts)
                         .await

@@ -52,6 +52,31 @@ fn sign(
                 .ed25519_sign(handle, data)
                 .or_throw(ctx)?
         },
+        SigningAlgorithm::Ed448 => {
+            if !matches!(&key.algorithm, KeyAlgorithm::Ed448) {
+                return algorithm_mismatch_error(ctx, "Ed448");
+            }
+            #[cfg(feature = "_rustcrypto")]
+            {
+                use der::Decode as _;
+                let pkcs8 = pkcs8::PrivateKeyInfoRef::try_from(handle).or_throw(ctx)?;
+                let seed57 = pkcs8.private_key.as_bytes();
+                let seed_bytes = if seed57.len() == 57 {
+                    seed57
+                } else {
+                    <&der::asn1::OctetStringRef>::from_der(seed57)
+                        .or_throw(ctx)?
+                        .as_bytes()
+                };
+                let arr: [u8; 57] = seed_bytes.try_into().map_err(|_| {
+                    rquickjs::Exception::throw_type(ctx, "Invalid Ed448 private key")
+                })?;
+                let sk = ed448_goldilocks::SigningKey::from(ed448_goldilocks::SecretKey::from(arr));
+                sk.sign_raw(data).to_bytes().to_vec()
+            }
+            #[cfg(not(feature = "_rustcrypto"))]
+            return super::algorithm_not_supported_error(ctx);
+        },
         SigningAlgorithm::Hmac => {
             let hash = if let KeyAlgorithm::Hmac { hash, .. } = &key.algorithm {
                 hash

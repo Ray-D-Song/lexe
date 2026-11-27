@@ -3,12 +3,12 @@
 use std::sync::{Arc, Mutex};
 
 use lexe_context::CtxExtension;
+use lexe_events::Emitter;
 use lexe_net::{check_network_access, get_hostname, PrefixedTcpStream, Socket};
-use lexe_stream::SteamEvents;
 use lexe_utils::{error::ErrorExtensions, result::ResultExt};
 use rquickjs::{
     prelude::{Opt, Rest, This},
-    Class, Ctx, Error, Exception, Function, Result, Value,
+    Class, Ctx, Error, Exception, Function, IntoJs, Result, Value,
 };
 use tokio::net::TcpStream;
 
@@ -142,6 +142,9 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
     // The native side is always half-open for TLS (one direction ends at a
     // time); the JS layer decides user-visible behaviour from its own option.
     let tls_socket = TlsSocket::new(ctx.clone(), true)?;
+    let session_slot = tls_socket.borrow().session_slot.clone();
+    let resume_session = options.session.clone();
+    let (session_tx, mut session_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
     let tls_js = build_tls_socket_object(&ctx, &tls_socket, allow_half_open)?;
     {
         let mut borrow = tls_socket.borrow_mut();
@@ -149,6 +152,28 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
         borrow.check_server_identity_cb = check_server_identity_cb;
         borrow.secure_connecting = true;
         borrow.pending = true;
+    }
+
+    {
+        let sess_sock = tls_socket.clone();
+        let sess_ctx = ctx.clone();
+        ctx.clone().spawn_exit(async move {
+            while let Some(token) = session_rx.recv().await {
+                if sess_sock.borrow().destroyed {
+                    break;
+                }
+                if let Ok(buf_val) = lexe_buffer::Buffer(token).into_js(&sess_ctx) {
+                    let _ = TlsSocket::emit_str(
+                        sess_sock.clone(),
+                        &sess_ctx,
+                        "session",
+                        vec![buf_val],
+                        false,
+                    );
+                }
+            }
+            Ok::<_, rquickjs::Error>(())
+        })?;
     }
 
     if let Some(cb) = callback {
@@ -208,6 +233,9 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
                     reject_unauthorized,
                     timeout,
                     verify_record: verify_record.clone(),
+                    session: resume_session.clone(),
+                    session_slot: Some(session_slot.clone()),
+                    session_notify: Some(session_tx.clone()),
                 };
                 let tls_stream = tls_connect(io, connect_opts)
                     .await
@@ -257,6 +285,9 @@ pub fn connect<'js>(ctx: Ctx<'js>, args: Rest<Value<'js>>) -> Result<Value<'js>>
                     reject_unauthorized,
                     timeout,
                     verify_record: verify_record.clone(),
+                    session: resume_session.clone(),
+                    session_slot: Some(session_slot.clone()),
+                    session_notify: Some(session_tx.clone()),
                 };
                 let tls_stream = tls_connect(tcp, connect_opts)
                     .await
