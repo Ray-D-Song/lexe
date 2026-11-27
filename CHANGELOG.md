@@ -15,6 +15,10 @@ All notable changes to Lexe are documented in this file.
   - Added OS worker-thread `module.register(specifier[, parentURL][, options])` with async `initialize`, `transferList` (`MessagePort`), and chained `resolve`/`load` hooks, plus `Module._load` and legacy CJS loader helpers (`_resolveLookupPaths`, `_findPath`, `_stat`, `_initPaths`, `_pathCache`, `_preloadModules`, `_readPackage`, `globalPaths`, `runMain`, `wrap`, `wrapper`).
 - Enabled `node:async_hooks` `createHook()` dynamically on demand (`docs/compatibility.md`; `node:async_hooks` graduated to `✔︎`):
   - Removed the `LEXE_ASYNC_HOOKS=1` gate (`HOOKING_MODE`) and activated async/Promise hook tracking on demand whenever `createHook().enable()` is called, returning `this` for `enable()`/`disable()` while preserving the zero-overhead fast path when no `AsyncLocalStorage` consumer or enabled user hook is active.
+- Expanded `FETCH` compatibility (`docs/compatibility.md`; `FETCH` graduated to `✔︎` with documented server-runtime policy):
+  - Fixed `Response.clone()` / `Request.clone()` when `.body` has been accessed prior to cloning (avoiding dual-reader stream stalls and enforcing locked/disturbed validation), and added explicit `duplex: "half"` validation and `Request.duplex`.
+  - Enabled TLS ALPN `h2` negotiation on `FETCH_HTTP_CLIENT` and added full `StreamingBody` error/abort reset propagation (`HyperBodyError`, `Notify`-backed reader cancellation) for HTTP/2 streaming request uploads.
+  - Added W3C Subresource Integrity (`integrity` with `sha256`/`sha384`/`sha512` strongest-tier verification across `http:`/`https:`/`data:`/`blob:`/`file:`), in-memory `CacheStorage` (`caches`) & `Cache` APIs, and `GET`/`HEAD` `file://` local file fetching (`200`/`403`/`404`/`500` status mapping).
 
 ## [0.1.10] - 2026-11-27
 

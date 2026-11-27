@@ -14,8 +14,8 @@ use lexe_stream_web::ReadableStream;
 use lexe_url::{url_class::URL, url_search_params::URLSearchParams};
 use lexe_utils::{bytes::ObjectBytes, object::ObjectExt, result::ResultExt};
 use rquickjs::{
-    atom::PredefinedAtom, class::Trace, function::Opt, ArrayBuffer, Class, Ctx, Exception, FromJs,
-    IntoJs, Null, Object, Result, TypedArray, Value,
+    atom::PredefinedAtom, class::Trace, function::Opt, ArrayBuffer, Class, Coerced, Ctx, Exception,
+    FromJs, IntoJs, Null, Object, Result, TypedArray, Value,
 };
 use std::sync::RwLock;
 
@@ -70,6 +70,7 @@ pub struct Request<'js> {
     body_stream: RwLock<Option<Value<'js>>>,
     signal: Option<Class<'js, AbortSignal<'js>>>,
     mode: RequestMode,
+    integrity: String,
     keepalive: bool,
     agent: Option<Class<'js, Agent>>,
 }
@@ -101,6 +102,7 @@ impl<'js> Request<'js> {
             body_stream: RwLock::new(None),
             signal: None,
             mode: RequestMode::Cors,
+            integrity: String::new(),
             keepalive: false,
             agent: None,
         };
@@ -114,9 +116,16 @@ impl<'js> Request<'js> {
             // Check if input is a Request - if so, transfer body (mark original as used)
             if let Some(input_request) = Class::<Request>::from_object(obj) {
                 let input_req = input_request.borrow_mut();
+                if input_req.has_unusable_body() {
+                    return Err(Exception::throw_type(
+                        &ctx,
+                        "Cannot construct Request from a Request with an already used or locked body",
+                    ));
+                }
                 request.url = input_req.url.clone();
                 request.method = input_req.method.clone();
                 request.mode = input_req.mode.clone();
+                request.integrity = input_req.integrity.clone();
                 request.keepalive = input_req.keepalive;
                 request.signal = input_req.signal.clone();
                 request.agent = input_req.agent.clone();
@@ -126,18 +135,25 @@ impl<'js> Request<'js> {
                         headers.borrow().clone(),
                     )?);
                 }
-                // Transfer body - take from original, marking it as used
-                let mut body_guard = input_req.body.write().unwrap();
-                if let BodyVariant::Provided(ref mut provided) = &mut *body_guard {
-                    if let Some(body_value) = provided.take() {
-                        request.body = RwLock::new(BodyVariant::Provided(Some(body_value)));
+                // Transfer body only when caller options do not override the body.
+                let caller_overrides_body = options
+                    .0
+                    .as_ref()
+                    .and_then(|v| v.as_object())
+                    .and_then(|o| o.get_optional::<_, Value>("body").ok().flatten())
+                    .is_some();
+                if !caller_overrides_body {
+                    let mut body_guard = input_req.body.write().unwrap();
+                    if let BodyVariant::Provided(ref mut provided) = &mut *body_guard {
+                        if let Some(body_value) = provided.take() {
+                            request.body = RwLock::new(BodyVariant::Provided(Some(body_value)));
+                        }
                     }
-                }
-                drop(body_guard);
-                // Transfer cached body stream if present
-                let stream = input_req.body_stream.write().unwrap().take();
-                if stream.is_some() {
-                    *request.body_stream.write().unwrap() = stream;
+                    drop(body_guard);
+                    let stream = input_req.body_stream.write().unwrap().take();
+                    if stream.is_some() {
+                        *request.body_stream.write().unwrap() = stream;
+                    }
                 }
                 drop(input_req);
             } else {
@@ -242,6 +258,16 @@ impl<'js> Request<'js> {
     }
 
     #[qjs(get)]
+    fn integrity(&self) -> String {
+        self.integrity.clone()
+    }
+
+    #[qjs(get)]
+    fn duplex(&self) -> &'static str {
+        "half"
+    }
+
+    #[qjs(get)]
     fn agent(&self) -> Option<Class<'js, Agent>> {
         self.agent.clone()
     }
@@ -309,6 +335,34 @@ impl<'js> Request<'js> {
             None
         };
 
+        // If `request.body` has already been created as a ReadableStream, validate and tee it.
+        let existing_stream = self.body_stream.read().unwrap().clone();
+        if let Some(existing_stream) = existing_stream {
+            if let Some(stream) = existing_stream
+                .as_object()
+                .and_then(Class::<ReadableStream>::from_object)
+            {
+                crate::body_helpers::validate_stream_usable(&ctx, &stream, "clone request")?;
+                let (branch1, branch2) = lexe_stream_web::tee_readable_stream(ctx.clone(), stream)?;
+                let b1_val = branch1.into_value();
+                *self.body.write().unwrap() = BodyVariant::Provided(Some(b1_val.clone()));
+                *self.body_stream.write().unwrap() = Some(b1_val);
+
+                return Ok(Self {
+                    url: self.url.clone(),
+                    method: self.method.clone(),
+                    headers,
+                    body: RwLock::new(BodyVariant::Provided(Some(branch2.into_value()))),
+                    body_stream: RwLock::new(None),
+                    signal: self.signal.clone(),
+                    mode: self.mode.clone(),
+                    integrity: self.integrity.clone(),
+                    keepalive: self.keepalive,
+                    agent: self.agent.clone(),
+                });
+            }
+        }
+
         let body_guard = self.body.read().unwrap();
         let cloned_body = match &*body_guard {
             BodyVariant::Provided(provided) => {
@@ -328,9 +382,9 @@ impl<'js> Request<'js> {
 
                     // Update original body to use branch1
                     drop(body_guard);
-                    let mut body_write = self.body.write().unwrap();
-                    *body_write = BodyVariant::Provided(Some(branch1.into_value()));
-                    *self.body_stream.write().unwrap() = None;
+                    let b1_val = branch1.into_value();
+                    *self.body.write().unwrap() = BodyVariant::Provided(Some(b1_val.clone()));
+                    *self.body_stream.write().unwrap() = Some(b1_val);
 
                     return Ok(Self {
                         url: self.url.clone(),
@@ -340,6 +394,7 @@ impl<'js> Request<'js> {
                         body_stream: RwLock::new(None),
                         signal: self.signal.clone(),
                         mode: self.mode.clone(),
+                        integrity: self.integrity.clone(),
                         keepalive: self.keepalive,
                         agent: self.agent.clone(),
                     });
@@ -358,6 +413,7 @@ impl<'js> Request<'js> {
             body_stream: RwLock::new(None),
             signal: self.signal.clone(),
             mode: self.mode.clone(),
+            integrity: self.integrity.clone(),
             keepalive: self.keepalive,
             agent: self.agent.clone(),
         })
@@ -365,6 +421,65 @@ impl<'js> Request<'js> {
 }
 
 impl<'js> Request<'js> {
+    pub(crate) fn url_string(&self) -> String {
+        self.url.clone()
+    }
+
+    pub(crate) fn method_string(&self) -> String {
+        self.method.clone()
+    }
+
+    pub(crate) fn headers_vec(&self, ctx: &Ctx<'js>) -> Result<Vec<(String, String)>> {
+        Ok(self
+            .get_headers(ctx)?
+            .map(|h| {
+                h.iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    pub(crate) fn has_unusable_body(&self) -> bool {
+        if let Some(stream_val) = self.body_stream.read().unwrap().as_ref() {
+            if let Some(stream) = stream_val
+                .as_object()
+                .and_then(Class::<ReadableStream>::from_object)
+            {
+                let s = stream.borrow();
+                if s.disturbed || s.is_readable_stream_locked() {
+                    return true;
+                }
+            }
+        }
+        let body = self.body.read().unwrap();
+        match &*body {
+            BodyVariant::Empty => false,
+            BodyVariant::Provided(None) => true,
+            BodyVariant::Provided(Some(v)) => {
+                if let Some(stream) = v.as_object().and_then(Class::<ReadableStream>::from_object) {
+                    let s = stream.borrow();
+                    s.disturbed || s.is_readable_stream_locked()
+                } else {
+                    false
+                }
+            },
+        }
+    }
+
+    pub(crate) fn take_body_for_fetch(&self) -> Option<Value<'js>> {
+        if let Some(stream) = self.body_stream.write().unwrap().take() {
+            *self.body.write().unwrap() = BodyVariant::Provided(None);
+            return Some(stream);
+        }
+        let mut body_guard = self.body.write().unwrap();
+        if let BodyVariant::Provided(ref mut provided) = &mut *body_guard {
+            provided.take()
+        } else {
+            None
+        }
+    }
+
     #[allow(clippy::await_holding_lock)]
     #[allow(clippy::readonly_write_lock)]
     async fn take_bytes(&self, ctx: &Ctx<'js>) -> Result<Option<Vec<u8>>> {
@@ -447,6 +562,24 @@ fn assign_request<'js>(request: &mut Request<'js>, ctx: Ctx<'js>, obj: &Object<'
     if let Some(mode) = obj.get_optional::<_, String>("mode")? {
         request.mode = mode.try_into().or_throw(&ctx)?;
     }
+    if let Some(integrity) = obj.get_optional::<_, Value>("integrity")? {
+        if !integrity.is_undefined() && !integrity.is_null() {
+            request.integrity = integrity.get::<Coerced<String>>()?.0;
+        }
+    }
+    let has_duplex_half = match obj.get_optional::<_, Value>("duplex")? {
+        Some(duplex_val) if !duplex_val.is_undefined() => {
+            let duplex_str = duplex_val.get::<Coerced<String>>()?.0;
+            if duplex_str != "half" {
+                return Err(Exception::throw_type(
+                    &ctx,
+                    &format!("Invalid duplex option: {duplex_str}"),
+                ));
+            }
+            true
+        },
+        _ => false,
+    };
     if let Some(keepalive) = obj.get_optional::<_, Value>("keepalive")? {
         request.keepalive = if let Some(b) = keepalive.as_bool() {
             b
@@ -486,6 +619,12 @@ fn assign_request<'js>(request: &mut Request<'js>, ctx: Ctx<'js>, obj: &Object<'
             } else if let Some(body_obj) = body.as_object() {
                 // Check if it's a ReadableStream
                 if let Some(stream) = Class::<ReadableStream>::from_object(body_obj) {
+                    if !has_duplex_half {
+                        return Err(Exception::throw_type(
+                            &ctx,
+                            "Failed to construct 'Request': The duplex option must be specified as 'half' when sending a ReadableStream body.",
+                        ));
+                    }
                     crate::body_helpers::validate_stream_usable(
                         &ctx,
                         &stream,

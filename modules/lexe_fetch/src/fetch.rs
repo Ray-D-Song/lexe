@@ -1,14 +1,13 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 use bytes::Bytes;
-use http_body_util::{combinators::BoxBody, Full};
+use http_body_util::{combinators::BoxBody, BodyExt, Full};
 use hyper::{header::HeaderName, Method, Request, Uri};
 use lexe_abort::AbortSignal;
 use lexe_buffer::{Blob, File};
 use lexe_context::CtxExtension;
 use lexe_encoding::bytes_from_b64;
-use lexe_http::Agent;
-use lexe_http::HyperClient;
+use lexe_http::{Agent, HyperBodyError, HyperClient};
 use lexe_stream_web::ReadableStream;
 use lexe_utils::{
     bytes::{bytes_to_typed_array, ObjectBytes},
@@ -28,9 +27,11 @@ use rquickjs::{
 use std::{
     collections::HashSet,
     convert::Infallible,
+    io::ErrorKind,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU64},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     task::{Context, Poll},
@@ -41,6 +42,8 @@ use tokio::{select, sync::Semaphore};
 use super::{
     form_data::FormData,
     headers::{Headers, HeadersGuard},
+    integrity::verify_integrity,
+    request::Request as FetchRequest,
     response::{FetchTiming, Response},
     security::ensure_url_access,
     MIME_TYPE_FORM_DATA,
@@ -119,99 +122,176 @@ pub fn init(global_client: HyperClient, globals: &Object) -> Result<()> {
                     .unwrap_or(global_client);
 
                 // https://fetch.spec.whatwg.org/#scheme-fetch
-                if let Some((scheme, fragment)) = options.url.split_once(':') {
+                let integrity = options.integrity;
+                let response = if let Some((scheme, fragment)) = options.url.split_once(':') {
                     match scheme.to_ascii_lowercase().as_str() {
-                        "http" | "https" => {},
-                        "data" => {
-                            return parse_data_url(&ctx, fragment, &options.method, fetch_start_ms)
+                        "http" | "https" => {
+                            fetch_http(
+                                &ctx,
+                                &client,
+                                options.url,
+                                options.method,
+                                options.headers,
+                                options.body,
+                                options.abort_receiver,
+                                options.redirect,
+                                start,
+                                fetch_start_ms,
+                            )
+                            .await?
                         },
-                        "blob" => {
-                            return fetch_blob_url(
+                        "data" => parse_data_url(&ctx, fragment, &options.method, fetch_start_ms)?,
+                        "blob" => fetch_blob_url(
+                            &ctx,
+                            &options.url,
+                            fragment,
+                            &options.method,
+                            fetch_start_ms,
+                        )?,
+                        "file" => {
+                            fetch_file_url(
                                 &ctx,
                                 &options.url,
                                 fragment,
                                 &options.method,
+                                options.abort_receiver.as_ref(),
                                 fetch_start_ms,
                             )
+                            .await?
                         },
-                        "about" | "file" => {
+                        "about" => {
                             return Err(Exception::throw_type(&ctx, "Unsupported scheme"));
                         },
                         _ => return Err(Exception::throw_type(&ctx, "Invalid scheme")),
                     }
-                }
-
-                let mut uri = options.url.parse::<Uri>().map_err(|_| {
-                    Exception::throw_type(&ctx, &["Invalid URL :", &options.url].concat())
-                })?;
-                let initial_uri: Uri = uri.clone();
-
-                let method_string = options.method.to_string();
-                let method = options.method;
-                let abort_receiver = options.abort_receiver;
-
-                ensure_url_access(&ctx, &uri)?;
-
-                // For streaming bodies - stream from JS to hyper via channel
-                if let Some(RequestBody::Stream(stream)) = options.body {
-                    return send_stream(
+                } else {
+                    fetch_http(
                         &ctx,
                         &client,
-                        stream,
-                        method,
-                        method_string,
-                        uri,
-                        options.headers.as_ref(),
+                        options.url,
+                        options.method,
+                        options.headers,
+                        options.body,
+                        options.abort_receiver,
+                        options.redirect,
                         start,
                         fetch_start_ms,
-                        abort_receiver,
                     )
-                    .await;
+                    .await?
+                };
+
+                if !integrity.is_empty() {
+                    return verify_response_integrity(&ctx, &integrity, response).await;
                 }
 
-                let body = options.body;
-
-                let res = send(
-                    &ctx,
-                    &client,
-                    method,
-                    &mut uri,
-                    &initial_uri,
-                    options.headers.as_ref(),
-                    body.as_ref(),
-                    abort_receiver.as_ref(),
-                    &options.redirect,
-                )
-                .await?;
-
-                let (res, redirected, guard, timing) = res;
-                let _ = &timing;
-                let response_start_ms = timing.response_start_ms;
-                let fetch_timing = build_fetch_timing(
-                    uri.to_string(),
-                    &res,
-                    fetch_start_ms,
-                    timing.redirect_start_ms,
-                    timing.redirect_end_ms,
-                    timing.request_start_ms,
-                    response_start_ms,
-                );
-
-                Response::from_incoming(
-                    ctx,
-                    res,
-                    method_string,
-                    uri.to_string(),
-                    start,
-                    redirected,
-                    abort_receiver,
-                    guard,
-                    Some(fetch_timing),
-                )
+                Ok(response)
             }
         })),
     )?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fetch_http<'js>(
+    ctx: &Ctx<'js>,
+    client: &HyperClient,
+    url: String,
+    method: Method,
+    headers: Option<Headers>,
+    body: Option<RequestBody<'js>>,
+    abort_receiver: Option<mc_oneshot::Receiver<Value<'js>>>,
+    redirect: String,
+    start: Instant,
+    fetch_start_ms: f64,
+) -> Result<Response<'js>> {
+    let mut uri = url
+        .parse::<Uri>()
+        .map_err(|_| Exception::throw_type(ctx, &["Invalid URL :", &url].concat()))?;
+    let initial_uri: Uri = uri.clone();
+    let method_string = method.to_string();
+
+    ensure_url_access(ctx, &uri)?;
+
+    // For streaming bodies - stream from JS to hyper via channel
+    if let Some(RequestBody::Stream(stream)) = body {
+        return send_stream(
+            ctx,
+            client,
+            stream,
+            method,
+            method_string,
+            uri,
+            headers.as_ref(),
+            start,
+            fetch_start_ms,
+            abort_receiver,
+        )
+        .await;
+    }
+
+    let (res, redirected, guard, timing) = send(
+        ctx,
+        client,
+        method,
+        &mut uri,
+        &initial_uri,
+        headers.as_ref(),
+        body.as_ref(),
+        abort_receiver.as_ref(),
+        &redirect,
+    )
+    .await?;
+
+    let response_start_ms = timing.response_start_ms;
+    let fetch_timing = build_fetch_timing(
+        uri.to_string(),
+        &res,
+        fetch_start_ms,
+        timing.redirect_start_ms,
+        timing.redirect_end_ms,
+        timing.request_start_ms,
+        response_start_ms,
+    );
+
+    Response::from_incoming(
+        ctx.clone(),
+        res,
+        method_string,
+        uri.to_string(),
+        start,
+        redirected,
+        abort_receiver,
+        guard,
+        Some(fetch_timing),
+    )
+}
+
+async fn verify_response_integrity<'js>(
+    ctx: &Ctx<'js>,
+    integrity: &str,
+    response: Response<'js>,
+) -> Result<Response<'js>> {
+    let status = response.status() as u16;
+    let status_text = response.status_text_opt();
+    let url = response.url();
+    let redirected = response.redirected();
+    let headers = response.headers_clone();
+    let bytes = response.take_bytes_for_verify(ctx).await?;
+    let is_empty = bytes.is_none();
+    let slice = bytes.as_deref().unwrap_or(&[]);
+    verify_integrity(ctx, integrity, slice)?;
+    Response::from_buffered_bytes(
+        ctx.clone(),
+        slice,
+        status,
+        status_text,
+        url,
+        headers,
+        redirected,
+        "GET".to_string(),
+        None,
+        is_empty,
+    )
 }
 
 struct SendTiming {
@@ -234,8 +314,21 @@ async fn send_stream<'js>(
     fetch_start_ms: f64,
     abort_receiver: Option<mc_oneshot::Receiver<Value<'js>>>,
 ) -> Result<Response<'js>> {
-    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(128);
+    crate::body_helpers::validate_stream_usable(ctx, &stream, "fetch")?;
+    if let Some(scheme) = uri.scheme_str() {
+        if let ("http", Some(port)) = (scheme, uri.authority().and_then(|a| a.port_u16())) {
+            if BLOCKED_PORTS.contains(&port) {
+                return Err(Exception::throw_type(ctx, "Invalid port in URL"));
+            }
+        }
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<std::result::Result<Bytes, HyperBodyError>>(128);
     let (err_tx, err_rx) = tokio::sync::oneshot::channel::<String>();
+    let aborted = Arc::new(AtomicBool::new(false));
+    let aborted_reader = aborted.clone();
+    let cancel_notify = Arc::new(tokio::sync::Notify::new());
+    let cancel_notify_reader = cancel_notify.clone();
     let ctx2 = ctx.clone();
 
     // Spawn stream reader in JS context
@@ -246,24 +339,47 @@ async fn send_stream<'js>(
             let read_fn: Function = reader.get("read")?;
 
             loop {
+                if aborted_reader.load(Ordering::Acquire) {
+                    if let Ok(cancel_fn) = reader.get::<_, Function>("cancel") {
+                        let _ = cancel_fn.call::<_, Value>((This(reader.clone()),));
+                    }
+                    break;
+                }
                 let promise: rquickjs::Promise = read_fn.call((This(reader.clone()),))?;
-                let read_result = match promise.into_future::<Object>().await.catch(&ctx2) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let msg = match e {
-                            rquickjs::CaughtError::Exception(ex) => {
-                                ex.message().unwrap_or_default()
-                            },
-                            rquickjs::CaughtError::Value(v) => v
-                                .as_string()
-                                .and_then(|s| s.to_string().ok())
-                                .unwrap_or_else(|| "Stream error".into()),
-                            rquickjs::CaughtError::Error(e) => e.to_string(),
-                        };
-                        let _ = err_tx.send(msg);
+                let read_fut = promise.into_future::<Object>();
+                let read_result = select! {
+                    biased;
+                    _ = cancel_notify_reader.notified() => {
+                        if let Ok(cancel_fn) = reader.get::<_, Function>("cancel") {
+                            let _ = cancel_fn.call::<_, Value>((This(reader.clone()),));
+                        }
                         break;
-                    },
+                    }
+                    r = read_fut => match r.catch(&ctx2) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let msg = match e {
+                                rquickjs::CaughtError::Exception(ex) => {
+                                    ex.message().unwrap_or_else(|| "Stream error".into())
+                                },
+                                rquickjs::CaughtError::Value(v) => v
+                                    .as_string()
+                                    .and_then(|s| s.to_string().ok())
+                                    .unwrap_or_else(|| "Stream error".into()),
+                                rquickjs::CaughtError::Error(e) => e.to_string(),
+                            };
+                            let _ = err_tx.send(msg.clone());
+                            let _ = tx.send(Err(msg.into())).await;
+                            break;
+                        },
+                    }
                 };
+                if aborted_reader.load(Ordering::Acquire) {
+                    if let Ok(cancel_fn) = reader.get::<_, Function>("cancel") {
+                        let _ = cancel_fn.call::<_, Value>((This(reader.clone()),));
+                    }
+                    break;
+                }
                 let done: bool = read_result.get("done").unwrap_or(true);
                 if done {
                     break;
@@ -279,13 +395,14 @@ async fn send_stream<'js>(
                     {
                         array_buffer.as_bytes().map(|b| b.to_vec())
                     } else {
-                        let _ =
-                            err_tx.send("Failed to read body: chunk is not a BufferSource".into());
+                        let msg = "Failed to read body: chunk is not a BufferSource".to_string();
+                        let _ = err_tx.send(msg.clone());
+                        let _ = tx.send(Err(msg.into())).await;
                         break;
                     };
 
                     if let Some(bytes) = bytes {
-                        if tx.send(Bytes::copy_from_slice(&bytes)).await.is_err() {
+                        if !bytes.is_empty() && tx.send(Ok(Bytes::from(bytes))).await.is_err() {
                             break;
                         }
                     }
@@ -307,10 +424,10 @@ async fn send_stream<'js>(
     }
     apply_default_headers(&mut req, &detected_headers);
 
-    let box_body: BoxBody<Bytes, Infallible> = BoxBody::new(stream_body);
+    let box_body: BoxBody<Bytes, HyperBodyError> = BoxBody::new(stream_body);
     let request = req.body(box_body).or_throw(ctx)?;
 
-    // Race request against stream error
+    // Race request against stream error and abort signal
     let request_start_ms = time::monotonic_elapsed_ms();
     let request_fut = client.request(request);
     tokio::pin!(request_fut);
@@ -318,15 +435,37 @@ async fn send_stream<'js>(
     let mut err_done = false;
 
     let res = loop {
-        select! {
-            biased;
-            result = &mut err_rx, if !err_done => {
-                err_done = true;
-                if let Ok(msg) = result {
-                    return Err(Exception::throw_type(ctx, &msg));
+        if let Some(abort_rx) = abort_receiver.as_ref() {
+            select! {
+                biased;
+                reason = abort_rx.recv() => {
+                    aborted.store(true, Ordering::Release);
+                    cancel_notify.notify_waiters();
+                    return Err(ctx.throw(reason));
                 }
+                result = &mut err_rx, if !err_done => {
+                    err_done = true;
+                    if let Ok(msg) = result {
+                        aborted.store(true, Ordering::Release);
+                        cancel_notify.notify_waiters();
+                        return Err(Exception::throw_type(ctx, &msg));
+                    }
+                }
+                res = &mut request_fut => break res.or_throw(ctx)?,
             }
-            res = &mut request_fut => break res.or_throw(ctx)?,
+        } else {
+            select! {
+                biased;
+                result = &mut err_rx, if !err_done => {
+                    err_done = true;
+                    if let Ok(msg) = result {
+                        aborted.store(true, Ordering::Release);
+                        cancel_notify.notify_waiters();
+                        return Err(Exception::throw_type(ctx, &msg));
+                    }
+                }
+                res = &mut request_fut => break res.or_throw(ctx)?,
+            }
         }
     };
     let response_start_ms = time::monotonic_elapsed_ms();
@@ -544,6 +683,213 @@ fn parse_data_url<'js>(
     Ok(response)
 }
 
+fn file_url_to_path(ctx: &Ctx<'_>, rest: &str) -> Result<PathBuf> {
+    let without_frag = rest.split('#').next().unwrap_or("");
+    let without_query = without_frag.split('?').next().unwrap_or("");
+    let raw_path = if let Some(after_slashes) = without_query.strip_prefix("//") {
+        let (host, path_part) = match after_slashes.find('/') {
+            Some(idx) => (&after_slashes[..idx], &after_slashes[idx..]),
+            None => (after_slashes, "/"),
+        };
+        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+            return Err(Exception::throw_type(
+                ctx,
+                "Failed to fetch file URL: non-local hosts are not supported",
+            ));
+        }
+        path_part
+    } else {
+        without_query
+    };
+
+    let decoded = percent_decode_str(raw_path).decode_utf8().or_throw(ctx)?;
+    #[cfg(windows)]
+    let normalized = {
+        let s = decoded.as_ref();
+        let bytes = s.as_bytes();
+        if bytes.len() >= 3
+            && bytes[0] == b'/'
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b':'
+        {
+            s[1..].replace('/', "\\")
+        } else {
+            s.replace('/', "\\")
+        }
+    };
+    #[cfg(not(windows))]
+    let normalized = decoded.into_owned();
+
+    Ok(PathBuf::from(normalized))
+}
+
+fn mime_type_for_path(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("html" | "htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js" | "mjs" | "cjs") => "application/javascript; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("txt" | "md" | "ts" | "mts" | "cts") => "text/plain; charset=utf-8",
+        Some("xml") => "application/xml; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("wasm") => "application/wasm",
+        Some("pdf") => "application/pdf",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn fetch_file_url<'js>(
+    ctx: &Ctx<'js>,
+    full_url: &str,
+    rest: &str,
+    method: &Method,
+    abort_receiver: Option<&mc_oneshot::Receiver<Value<'js>>>,
+    fetch_start_ms: f64,
+) -> Result<Response<'js>> {
+    if *method != Method::GET && *method != Method::HEAD {
+        return Err(Exception::throw_type(
+            ctx,
+            "Failed to fetch file URL: only GET and HEAD methods are supported",
+        ));
+    }
+
+    let path = file_url_to_path(ctx, rest)?;
+    let meta_result = if let Some(abort_rx) = abort_receiver {
+        select! {
+            res = tokio::fs::metadata(&path) => res,
+            reason = abort_rx.recv() => return Err(ctx.throw(reason)),
+        }
+    } else {
+        tokio::fs::metadata(&path).await
+    };
+
+    let (status, status_text, bytes, content_len, content_type): (
+        u16,
+        Option<String>,
+        Vec<u8>,
+        Option<u64>,
+        Option<&'static str>,
+    ) = match meta_result {
+        Ok(meta) if meta.is_dir() => (403, Some("Forbidden".into()), Vec::new(), None, None),
+        Ok(meta) => {
+            let mime = mime_type_for_path(&path);
+            if *method == Method::HEAD {
+                (
+                    200,
+                    Some("OK".into()),
+                    Vec::new(),
+                    Some(meta.len()),
+                    Some(mime),
+                )
+            } else {
+                let read_result = if let Some(abort_rx) = abort_receiver {
+                    select! {
+                        res = tokio::fs::read(&path) => res,
+                        reason = abort_rx.recv() => return Err(ctx.throw(reason)),
+                    }
+                } else {
+                    tokio::fs::read(&path).await
+                };
+                match read_result {
+                    Ok(data) => {
+                        let len = data.len() as u64;
+                        (200, Some("OK".into()), data, Some(len), Some(mime))
+                    },
+                    Err(err) => match err.kind() {
+                        ErrorKind::NotFound => {
+                            (404, Some("Not Found".into()), Vec::new(), None, None)
+                        },
+                        ErrorKind::PermissionDenied | ErrorKind::IsADirectory => {
+                            (403, Some("Forbidden".into()), Vec::new(), None, None)
+                        },
+                        _ => (
+                            500,
+                            Some("Internal Server Error".into()),
+                            Vec::new(),
+                            None,
+                            None,
+                        ),
+                    },
+                }
+            }
+        },
+        Err(err) => match err.kind() {
+            ErrorKind::NotFound => (404, Some("Not Found".into()), Vec::new(), None, None),
+            ErrorKind::PermissionDenied => (403, Some("Forbidden".into()), Vec::new(), None, None),
+            _ => (
+                500,
+                Some("Internal Server Error".into()),
+                Vec::new(),
+                None,
+                None,
+            ),
+        },
+    };
+
+    let mut pairs = Vec::new();
+    if let Some(len) = content_len {
+        pairs.push(("content-length".to_string(), len.to_string()));
+    }
+    if let Some(ct) = content_type {
+        pairs.push(("content-type".to_string(), ct.to_string()));
+    }
+    let headers = Headers::from_pairs(pairs, HeadersGuard::Response);
+    let body_len = bytes.len() as u64;
+    let empty_body = *method == Method::HEAD || status != 200;
+
+    let response = Response::from_buffered_bytes(
+        ctx.clone(),
+        &bytes,
+        status,
+        status_text,
+        full_url.to_string(),
+        headers,
+        false,
+        method.to_string(),
+        None,
+        empty_body,
+    )?;
+
+    let end_ms = time::monotonic_elapsed_ms();
+    perf::emit_resource_timing(
+        ctx,
+        ResourceTimingRecord {
+            name: full_url.to_string(),
+            initiator_type: "fetch".to_string(),
+            next_hop_protocol: String::new(),
+            start_time: fetch_start_ms,
+            duration: (end_ms - fetch_start_ms).max(0.0),
+            worker_start: 0.0,
+            redirect_start: 0.0,
+            redirect_end: 0.0,
+            fetch_start: fetch_start_ms,
+            domain_lookup_start: fetch_start_ms,
+            domain_lookup_end: fetch_start_ms,
+            connect_start: fetch_start_ms,
+            connect_end: fetch_start_ms,
+            secure_connection_start: fetch_start_ms,
+            request_start: fetch_start_ms,
+            response_start: end_ms,
+            response_end: end_ms,
+            transfer_size: body_len,
+            encoded_body_size: body_len,
+            decoded_body_size: body_len,
+            response_status: status,
+            delivery_type: String::new(),
+        },
+    );
+
+    Ok(response)
+}
+
 fn fetch_blob_url<'js>(
     ctx: &Ctx<'js>,
     full_url: &str,
@@ -655,7 +1001,7 @@ fn build_request<'js>(
     body: Option<&RequestBody<'js>>,
     prev_status: &u16,
     initial_uri: &Uri,
-) -> Result<(Request<BoxBody<Bytes, Infallible>>, HeadersGuard)> {
+) -> Result<(Request<BoxBody<Bytes, HyperBodyError>>, HeadersGuard)> {
     if let Some(scheme) = uri.scheme_str() {
         if !matches!(scheme, "http" | "https") {
             return Err(Exception::throw_type(ctx, "Invalid scheme in URL"));
@@ -703,12 +1049,14 @@ fn build_request<'js>(
     apply_default_headers(&mut req, &detected_headers);
 
     // Build the body
-    let box_body: BoxBody<Bytes, Infallible> = match body {
-        Some(RequestBody::Static { body, .. }) => BoxBody::new(body.clone()),
+    let box_body: BoxBody<Bytes, HyperBodyError> = match body {
+        Some(RequestBody::Static { body, .. }) => {
+            BoxBody::new(body.clone().map_err(|never: Infallible| match never {}))
+        },
         Some(RequestBody::Stream(_)) => {
             unreachable!("Streaming bodies are handled by send_stream")
         },
-        None => BoxBody::new(Full::default()),
+        None => BoxBody::new(Full::default().map_err(|never: Infallible| match never {})),
     };
 
     let request = req.body(box_body).or_throw(ctx)?;
@@ -717,19 +1065,20 @@ fn build_request<'js>(
 }
 
 struct StreamingBody {
-    rx: tokio::sync::mpsc::Receiver<Bytes>,
+    rx: tokio::sync::mpsc::Receiver<std::result::Result<Bytes, HyperBodyError>>,
 }
 
 impl http_body::Body for StreamingBody {
     type Data = Bytes;
-    type Error = Infallible;
+    type Error = HyperBodyError;
 
     fn poll_frame(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<std::result::Result<http_body::Frame<Self::Data>, Self::Error>>> {
         match self.rx.poll_recv(cx) {
-            Poll::Ready(Some(bytes)) => Poll::Ready(Some(Ok(http_body::Frame::data(bytes)))),
+            Poll::Ready(Some(Ok(bytes))) => Poll::Ready(Some(Ok(http_body::Frame::data(bytes)))),
+            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
@@ -806,6 +1155,7 @@ struct FetchOptions<'js> {
     body: Option<RequestBody<'js>>,
     abort_receiver: Option<mc_oneshot::Receiver<Value<'js>>>,
     redirect: String,
+    integrity: String,
     agent: Option<Class<'js, Agent>>,
 }
 
@@ -816,17 +1166,26 @@ fn get_fetch_options<'js>(
 ) -> Result<FetchOptions<'js>> {
     let mut url = None;
     let mut resource_opts = None;
+    let mut resource_request: Option<Class<'js, FetchRequest<'js>>> = None;
     let mut arg_opts = None;
     let mut headers = None;
     let mut method = None;
     let mut body = None;
     let mut abort_receiver = None;
     let mut redirect = String::from("");
+    let mut integrity = String::from("");
     let mut agent = None;
 
     if let Some(obj) = resource.as_object() {
         let obj = obj.clone();
-        if obj.instance_of::<crate::Request>() {
+        if let Some(req_cls) = Class::<FetchRequest>::from_object(&obj) {
+            if req_cls.borrow().has_unusable_body() {
+                return Err(Exception::throw_type(
+                    ctx,
+                    "Cannot execute 'fetch' on a Request with an already used or locked body",
+                ));
+            }
+            resource_request = Some(req_cls);
             resource_opts = Some(obj);
         } else if let Some(to_string) = obj.get::<_, Option<Function>>(PredefinedAtom::ToString)? {
             url = Some(to_string.call::<_, String>((This(obj),))?);
@@ -860,13 +1219,50 @@ fn get_fetch_options<'js>(
             }?);
         }
 
-        let mut inferred_content_type: Option<String> = None;
-        if let Some(body_opt) =
-            get_option::<Value>("body", arg_opts.as_ref(), resource_opts.as_ref())?
+        let arg_duplex_half = match arg_opts
+            .as_ref()
+            .and_then(|o| o.get::<_, Option<Value>>("duplex").ok().flatten())
         {
+            Some(v) if !v.is_undefined() => {
+                let d = v.get::<Coerced<String>>()?.0;
+                if d != "half" {
+                    return Err(Exception::throw_type(
+                        ctx,
+                        &format!("Invalid duplex option: {d}"),
+                    ));
+                }
+                true
+            },
+            _ => false,
+        };
+
+        let mut inferred_content_type: Option<String> = None;
+        let arg_body_opt = if let Some(arg_obj) = arg_opts.as_ref() {
+            arg_obj.get::<_, Option<Value>>("body")?
+        } else {
+            None
+        };
+        let (body_opt, from_request_instance) = if let Some(v) = arg_body_opt {
+            (Some(v), false)
+        } else if let Some(req_cls) = resource_request.as_ref() {
+            (req_cls.borrow().take_body_for_fetch(), true)
+        } else {
+            (
+                get_option::<Value>("body", None, resource_opts.as_ref())?,
+                false,
+            )
+        };
+
+        if let Some(body_opt) = body_opt {
             if !body_opt.is_undefined() && !body_opt.is_null() {
                 // Check if body is a ReadableStream
                 if let Ok(stream) = Class::<ReadableStream>::from_value(&body_opt) {
+                    if !from_request_instance && !arg_duplex_half {
+                        return Err(Exception::throw_type(
+                            ctx,
+                            "Failed to execute 'fetch': The duplex option must be specified as 'half' when sending a ReadableStream body.",
+                        ));
+                    }
                     body = Some(RequestBody::Stream(stream));
                 } else {
                     let bytes = if let Ok(blob) = Class::<Blob>::from_value(&body_opt) {
@@ -935,6 +1331,12 @@ fn get_fetch_options<'js>(
             redirect.push_str(redirect_str);
         }
 
+        if let Some(integrity_opt) =
+            get_option::<Coerced<String>>("integrity", arg_opts.as_ref(), resource_opts.as_ref())?
+        {
+            integrity.push_str(&integrity_opt.0);
+        }
+
         if let Some(agent_opt) =
             get_option::<Class<'js, Agent>>("agent", arg_opts.as_ref(), resource_opts.as_ref())?
         {
@@ -954,6 +1356,7 @@ fn get_fetch_options<'js>(
         body,
         abort_receiver,
         redirect,
+        integrity,
         agent,
     })
 }

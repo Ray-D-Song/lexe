@@ -69,7 +69,7 @@
 | DOM | ✔︎ | — |
 | ECMASCRIPT | ✔︎⚠️ | QuickJS-ng engine (31-bit `ArrayBuffer` limit, no `ShadowRealm`); V8 `Error.captureStackTrace`/`CallSite` fields are stub polyfills ([details](#ecmascript)) |
 | ENCODING | ✔︎ | — |
-| FETCH | ✔︎⚠️ | No `file:` URL fetch; omits browser policy controls (`credentials`, `referrer`, `integrity`, `caches`, CORS); WPT edge cases ([details](#fetch)) |
+| FETCH | ✔︎ | Supports HTTP/1.1 & HTTP/2 streaming, `file:` / `blob:` / `data:` URLs, SRI `integrity`, and in-memory `caches` (`CacheStorage`/`Cache`); intentionally omits browser-origin policies (CORS preflight, `credentials`, `referrer`, `forbidden-header`) ([notes](#fetch)) |
 | FILEAPI | ✔︎ | — |
 | HR-TIME | ✔︎ | — |
 | HTML | ✔︎ | — |
@@ -148,12 +148,6 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 - `ShadowRealm` is not implemented.
 - V8-specific `Error.captureStackTrace` and `CallSite` methods (`isEval`, `isNative`, `isConstructor`, `isToplevel`, `getEvalOrigin`, `getMethodName`, `getTypeName`, `getThis`) are stub polyfills.
 
-#### `FETCH`
-
-- `file:` scheme throws `TypeError("Unsupported scheme")` (`blob:` URLs from `URL.createObjectURL()` support `GET`/`HEAD`).
-- Browser-centric options and policies (`credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, HTTP `cache` / `caches` API, CORS preflight, forbidden-header enforcement) are omitted or non-enforcing.
-- Some WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming) do not yet pass.
-
 #### `WASM-JS-API-2`
 
 - Backed by `wasmz` (`wasmz` bytecode VM) rather than V8.
@@ -189,13 +183,7 @@ See [`compat/README.md`](../compat/README.md) for exact fixture scope, commands,
 
 Remaining `⚠️` items require explicit product/architecture choices (binary size, dependency weight, engine boundaries, runtime overhead, or security semantics) before implementation or intentional Matrix graduation. Decided items are removed from this list once implemented or accepted as documented behavior.
 
-- [ ] **1. `FETCH` policy boundaries & remaining WPT edge cases**
-  - **Gap**: `fetch("file://...")` throws `Unsupported scheme`; omits `credentials`, `referrer`, `referrerPolicy`, `integrity`, `priority`, `cache`/`caches`, CORS preflight, and forbidden-header enforcement; minor WPT edge cases (`response-clone` under stress, HTTP/2 request-upload streaming).
-  - **Options**:
-    - **A (Fix runtime gaps + server-appropriate features)**: Fix `response-clone` & HTTP/2 upload streaming and add SRI `integrity` verification / optional in-memory `caches`, while keeping CORS/browser-origin policies intentionally disabled (`non-browser runtime`) and deciding explicitly whether `fetch("file://...")` should be allowed or stay rejected for SSRF/security isolation.
-    - **B (Fix WPT runtime edge cases only)**: Fix `response-clone` + HTTP/2 upload streaming and accept server-runtime omissions (`file:`, `credentials`, CORS, `caches`, `integrity`).
-
-- [ ] **2. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
+- [ ] **1. Engine boundaries & runtime positioning (`QuickJS`, `node:inspector`, `node:sea`, `WEBIDL`, `XHR`)**
   - **Gap**:
     - `ECMASCRIPT` / `node:buffer` / `node:v8` / `node:worker_threads`: QuickJS 31-bit `MAX_LENGTH` (`2147483647`), no `ShadowRealm`, V8 `CallSite` stub methods, no V8 heap snapshots (`getHeapSnapshot`/`writeHeapSnapshot`), `GCProfiler`, `queryObjects`, `startupSnapshot`, `takeCoverage`/`stopCoverage`.
     - `node:inspector`: No CDP/WebSocket inspector server (`url()` is `undefined`, `Session` returns `ERR_INSPECTOR_NOT_AVAILABLE`).
@@ -226,6 +214,12 @@ Remaining `⚠️` items require explicit product/architecture choices (binary s
 
 - Supports `AES-CBC`/`CTR`/`GCM`/`KW`, `HMAC`, `RSASSA-PKCS1-v1_5`, `RSA-PSS`, `RSA-OAEP`, `ECDSA`, `ECDH`, `Ed25519`, `Ed448`, `X25519`, `X448`, `HKDF`, `PBKDF2`, `Argon2d`/`Argon2i`/`Argon2id`, `ChaCha20-Poly1305`, and `SHA-*`.
 - Omits `AES-OCB`, and availability varies on non-default crypto backends (e.g. `graviola`).
+
+### `FETCH`
+
+- Supports HTTP/1.1 & HTTP/2 (`h2` over TLS ALPN) streaming `Request`/`Response` bodies (`duplex: "half"`, abort & mid-stream error reset propagation), `Response.clone()`/`Request.clone()`, `data:`, `blob:`, and local `file:` URLs (`GET`/`HEAD` reading with HTTP `200`/`403`/`404`/`500` status mapping).
+- Supports Subresource Integrity (`integrity` with `sha256`/`sha384`/`sha512` strongest-tier verification) and per-context in-memory `CacheStorage` (`caches`) / `Cache` (`open`, `has`, `keys`, `delete`, `match`, `matchAll`, `add`, `addAll`, `put`, `Vary` matching).
+- Intentionally omits browser-origin policies (`credentials`, `referrer`, `referrerPolicy`, `priority`, CORS preflight, and forbidden-header enforcement) for a server/CLI runtime.
 
 ### `node:http2`
 

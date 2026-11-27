@@ -542,6 +542,36 @@ impl<'js> Response<'js> {
     }
 
     pub(crate) fn clone(&self, ctx: Ctx<'js>) -> Result<Self> {
+        // If `response.body` was already created as a ReadableStream, validate
+        // that it is neither locked nor disturbed and tee that stream directly.
+        let existing_stream = self.body_stream.read().unwrap().clone();
+        if let Some(existing_stream) = existing_stream {
+            if let Some(stream) = existing_stream
+                .as_object()
+                .and_then(Class::<ReadableStream>::from_object)
+            {
+                crate::body_helpers::validate_stream_usable(&ctx, &stream, "clone response")?;
+                let (branch1, branch2) = lexe_stream_web::tee_readable_stream(ctx.clone(), stream)?;
+                let b1_val = branch1.into_value();
+                *self.body.write().unwrap() = BodyVariant::Provided(Some(b1_val.clone()));
+                *self.body_stream.write().unwrap() = Some(b1_val);
+
+                return Ok(Self {
+                    body: RwLock::new(BodyVariant::Provided(Some(branch2.into_value()))),
+                    body_stream: RwLock::new(None),
+                    method: self.method.clone(),
+                    url: self.url.clone(),
+                    start: self.start,
+                    status: self.status,
+                    status_text: self.status_text.clone(),
+                    redirected: self.redirected,
+                    headers: Class::<Headers>::instance(ctx, self.headers.borrow().clone())?,
+                    abort_receiver: self.abort_receiver.clone(),
+                    timing: self.timing.clone(),
+                });
+            }
+        }
+
         let body = self.body.read().unwrap();
         let cloned_body = match &*body {
             BodyVariant::Incoming(incoming, content_encoding) => {
@@ -566,9 +596,9 @@ impl<'js> Response<'js> {
 
                 // Update self to use branch1
                 drop(body);
-                let mut body_write = self.body.write().unwrap();
-                *body_write = BodyVariant::Provided(Some(branch1.into_value()));
-                *self.body_stream.write().unwrap() = None;
+                let b1_val = branch1.into_value();
+                *self.body.write().unwrap() = BodyVariant::Provided(Some(b1_val.clone()));
+                *self.body_stream.write().unwrap() = Some(b1_val);
 
                 return Ok(Self {
                     body: RwLock::new(BodyVariant::Provided(Some(branch2.into_value()))),
@@ -596,14 +626,15 @@ impl<'js> Response<'js> {
                     .as_object()
                     .and_then(Class::<ReadableStream>::from_object)
                 {
+                    crate::body_helpers::validate_stream_usable(&ctx, &stream, "clone response")?;
                     let (branch1, branch2) =
                         lexe_stream_web::tee_readable_stream(ctx.clone(), stream.clone())?;
 
                     // Update original body to use branch1
                     drop(body);
-                    let mut body_write = self.body.write().unwrap();
-                    *body_write = BodyVariant::Provided(Some(branch1.into_value()));
-                    *self.body_stream.write().unwrap() = None;
+                    let b1_val = branch1.into_value();
+                    *self.body.write().unwrap() = BodyVariant::Provided(Some(b1_val.clone()));
+                    *self.body_stream.write().unwrap() = Some(b1_val);
 
                     return Ok(Self {
                         body: RwLock::new(BodyVariant::Provided(Some(branch2.into_value()))),
@@ -757,6 +788,67 @@ impl<'js> Response<'js> {
 
 #[allow(clippy::too_many_arguments)]
 impl<'js> Response<'js> {
+    pub(crate) fn status_text_opt(&self) -> Option<String> {
+        self.status_text.clone()
+    }
+
+    pub(crate) fn headers_vec(&self, _ctx: &Ctx<'js>) -> Result<Vec<(String, String)>> {
+        let headers = self.headers.borrow();
+        Ok(headers
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect())
+    }
+
+    pub(crate) fn headers_clone(&self) -> Headers {
+        self.headers.borrow().clone()
+    }
+
+    pub(crate) async fn consume_body_bytes(
+        res_cls: &Class<'js, Response<'js>>,
+        ctx: &Ctx<'js>,
+    ) -> Result<Option<Vec<u8>>> {
+        res_cls.borrow().take_bytes(ctx).await
+    }
+
+    pub(crate) async fn take_bytes_for_verify(&self, ctx: &Ctx<'js>) -> Result<Option<Vec<u8>>> {
+        self.take_bytes(ctx).await
+    }
+
+    pub(crate) fn from_buffered_bytes(
+        ctx: Ctx<'js>,
+        bytes: &[u8],
+        status: u16,
+        status_text: Option<String>,
+        url: String,
+        headers: Headers,
+        redirected: bool,
+        method: String,
+        timing: Option<Arc<FetchTiming>>,
+        empty_body: bool,
+    ) -> Result<Self> {
+        let headers = Class::instance(ctx.clone(), headers)?;
+        let body = if empty_body {
+            BodyVariant::Empty
+        } else {
+            let ta = TypedArray::<u8>::new_copy(ctx.clone(), bytes)?.into_value();
+            BodyVariant::Provided(Some(ta))
+        };
+        Ok(Self {
+            body: RwLock::new(body),
+            body_stream: RwLock::new(None),
+            method,
+            url,
+            start: Instant::now(),
+            status,
+            status_text,
+            redirected,
+            headers,
+            abort_receiver: None,
+            timing,
+        })
+    }
+
     pub fn from_incoming(
         ctx: Ctx<'js>,
         response: hyper::Response<Incoming>,

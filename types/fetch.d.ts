@@ -179,6 +179,7 @@ declare global {
     body?: BodyInit;
     headers?: HeadersLike;
     agent?: Agent;
+    integrity?: string;
     duplex?: "half";
   }
 
@@ -231,6 +232,14 @@ declare global {
      * Stores true or false to indicate whether or not the body has been used in a request yet.
      */
     readonly bodyUsed: boolean;
+    /**
+     * Contains the Subresource Integrity value of the request.
+     */
+    readonly integrity: string;
+    /**
+     * Contains the duplex mode of the request.
+     */
+    readonly duplex: "half";
     /**
      * The {@link Agent} associated with the request.
      */
@@ -361,6 +370,51 @@ declare global {
      */
     static redirect(url: string | URL, status?: number): Response;
   }
+
+  interface CacheQueryOptions {
+    ignoreSearch?: boolean;
+    ignoreMethod?: boolean;
+    ignoreVary?: boolean;
+  }
+
+  interface MultiCacheQueryOptions extends CacheQueryOptions {
+    cacheName?: string;
+  }
+
+  class Cache {
+    match(
+      request: string | URL | Request,
+      options?: CacheQueryOptions
+    ): Promise<Response | undefined>;
+    matchAll(
+      request?: string | URL | Request,
+      options?: CacheQueryOptions
+    ): Promise<Response[]>;
+    add(request: string | URL | Request): Promise<void>;
+    addAll(requests: Array<string | URL | Request>): Promise<void>;
+    put(request: string | URL | Request, response: Response): Promise<void>;
+    delete(
+      request: string | URL | Request,
+      options?: CacheQueryOptions
+    ): Promise<boolean>;
+    keys(
+      request?: string | URL | Request,
+      options?: CacheQueryOptions
+    ): Promise<Request[]>;
+  }
+
+  class CacheStorage {
+    match(
+      request: string | URL | Request,
+      options?: MultiCacheQueryOptions
+    ): Promise<Response | undefined>;
+    has(cacheName: string): Promise<boolean>;
+    open(cacheName: string): Promise<Cache>;
+    delete(cacheName: string): Promise<boolean>;
+    keys(): Promise<string[]>;
+  }
+
+  const caches: CacheStorage;
 
   function fetch(
     input: string | URL | Request,

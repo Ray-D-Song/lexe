@@ -41,7 +41,7 @@ use crate::{
         validate_header_name_str, HeaderStore,
     },
     server::{build_incoming_headers_js, IncomingMessage},
-    Agent, HyperClient,
+    Agent, HyperBodyError, HyperClient,
 };
 
 struct ParsedRequest<'js> {
@@ -834,15 +834,19 @@ impl<'js> ClientRequest<'js> {
             builder = builder.header("accept", "*/*");
         }
 
-        let body: BoxBody<Bytes, Infallible> = if let Some(rx) = body_rx {
+        let body: BoxBody<Bytes, HyperBodyError> = if let Some(rx) = body_rx {
             StreamBody::new(
-                UnboundedReceiverStream::new(rx).map(|b| Ok::<_, Infallible>(Frame::data(b))),
+                UnboundedReceiverStream::new(rx).map(|b| Ok::<_, HyperBodyError>(Frame::data(b))),
             )
             .boxed()
         } else if buffered_body.is_empty() {
-            Full::new(Bytes::new()).boxed()
+            Full::new(Bytes::new())
+                .map_err(|never: Infallible| match never {})
+                .boxed()
         } else {
-            Full::new(Bytes::from(buffered_body)).boxed()
+            Full::new(Bytes::from(buffered_body))
+                .map_err(|never: Infallible| match never {})
+                .boxed()
         };
         let request = builder.body(body).or_throw(&ctx)?;
 
@@ -963,7 +967,7 @@ impl<'js> ClientRequest<'js> {
 async fn send_request_via_transport(
     client: HyperClient,
     socket_path: Option<String>,
-    request: Request<BoxBody<Bytes, Infallible>>,
+    request: Request<BoxBody<Bytes, HyperBodyError>>,
 ) -> std::result::Result<hyper::Response<hyper::body::Incoming>, String> {
     if let Some(path) = socket_path {
         #[cfg(unix)]

@@ -3,7 +3,7 @@
 pub use self::security::{get_allow_list, get_deny_list, set_allow_list, set_deny_list};
 use self::{form_data::FormData, headers::Headers, request::Request, response::Response};
 use lexe_buffer::Blob;
-use lexe_http::HTTP_CLIENT;
+use lexe_http::FETCH_HTTP_CLIENT;
 use lexe_utils::{
     class::CustomInspectExtension,
     primordials::{BasePrimordials, Primordial},
@@ -12,9 +12,11 @@ use lexe_utils::{
 use rquickjs::{prelude::Func, Class, Ctx, Result, Value};
 
 pub(crate) mod body_helpers;
+mod cache;
 pub mod fetch;
 pub mod form_data;
 pub mod headers;
+pub mod integrity;
 pub mod request;
 pub mod response;
 mod security;
@@ -41,7 +43,8 @@ pub fn init(ctx: &Ctx) -> Result<()> {
     BasePrimordials::init(ctx)?;
 
     //init eagerly
-    fetch::init(HTTP_CLIENT.as_ref().or_throw(ctx)?.clone(), &globals)?;
+    fetch::init(FETCH_HTTP_CLIENT.as_ref().or_throw(ctx)?.clone(), &globals)?;
+    cache::init_cache_api(ctx, &globals)?;
 
     Class::<FormData>::define(&globals)?;
 

@@ -742,7 +742,7 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 ))]
 async fn send_get(uri: &hyper::Uri) -> Result<hyper::Response<hyper::body::Incoming>, ExecError> {
     use bytes::Bytes;
-    use http_body_util::Empty;
+    use http_body_util::{BodyExt as _, Empty};
     use hyper::{header, Request};
 
     let client = lexe_http::HTTP_CLIENT
@@ -754,9 +754,12 @@ async fn send_get(uri: &hyper::Uri) -> Result<hyper::Response<hyper::body::Incom
         .uri(uri)
         .header(header::USER_AGENT, format!("lexe/{VERSION}"))
         .header(header::ACCEPT, "*/*")
-        .body(Empty::<Bytes>::new().boxed())?;
+        .body(
+            Empty::<Bytes>::new()
+                .map_err(|never: std::convert::Infallible| match never {})
+                .boxed(),
+        )?;
 
-    use http_body_util::BodyExt as _;
     Ok(client.request(req).await?)
 }
 

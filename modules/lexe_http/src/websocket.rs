@@ -159,7 +159,10 @@ impl<'js> WebSocket<'js> {
         outgoing: mpsc::UnboundedReceiver<Outgoing>,
     ) -> Result<Ended> {
         let response = client
-            .request(request.map(|body| body.boxed()))
+            .request(request.map(|body| {
+                body.map_err(|never: std::convert::Infallible| match never {})
+                    .boxed()
+            }))
             .await
             .map_err(|err| {
                 Exception::throw_message(&ctx, &format!("WebSocket handshake failed: {err}"))

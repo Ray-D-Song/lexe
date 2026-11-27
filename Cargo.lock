@@ -2352,6 +2352,7 @@ dependencies = [
  "pin-project-lite",
  "rand 0.10.1",
  "rquickjs",
+ "sha2 0.11.0",
  "tokio",
  "tracing",
  "wiremock",

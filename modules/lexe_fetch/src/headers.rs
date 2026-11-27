@@ -249,6 +249,14 @@ impl Headers {
         Ok(Self { headers, guard })
     }
 
+    pub fn from_pairs(pairs: Vec<(String, String)>, guard: HeadersGuard) -> Self {
+        let headers = pairs
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        Self { headers, guard }
+    }
+
     pub fn from_value<'js>(ctx: &Ctx<'js>, value: Value<'js>, guard: HeadersGuard) -> Result<Self> {
         if value.is_array() {
             let array = unsafe { value.into_array().unwrap_unchecked() };

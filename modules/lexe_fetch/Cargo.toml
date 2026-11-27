@@ -55,7 +55,9 @@ rand = { version = "0.10.1", features = [
   "thread_rng",
 ], default-features = false }
 rquickjs = { version = "=0.12.1", default-features = false }
+sha2 = { version = "0.11", default-features = false }
 tokio = { version = "1", features = [
+  "fs",
   "macros",
   "sync",
 ], default-features = false }

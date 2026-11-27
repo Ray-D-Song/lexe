@@ -1,5 +1,3 @@
-use std::convert::Infallible;
-
 use bytes::Bytes;
 use http_body_util::combinators::BoxBody;
 use hyper_util::{
@@ -8,6 +6,8 @@ use hyper_util::{
 };
 use lexe_dns_cache::CachedDnsResolver;
 use once_cell::sync::Lazy;
+
+pub type HyperBodyError = Box<dyn std::error::Error + Send + Sync>;
 
 use crate::get_pool_idle_timeout;
 
@@ -26,13 +26,31 @@ mod rustls_client {
     use crate::HttpVersion;
 
     pub type HyperClient =
-        Client<HttpsConnector<HttpConnector<CachedDnsResolver>>, BoxBody<Bytes, Infallible>>;
+        Client<HttpsConnector<HttpConnector<CachedDnsResolver>>, BoxBody<Bytes, HyperBodyError>>;
 
     pub static HTTP_CLIENT: Lazy<Result<HyperClient, Box<dyn std::error::Error + Send + Sync>>> =
         Lazy::new(|| build_client(None));
 
+    /// Dedicated pooled client for `fetch()` that negotiates HTTP/2 via TLS
+    /// ALPN when built with `http2` while still speaking HTTP/1.1 cleanly.
+    pub static FETCH_HTTP_CLIENT: Lazy<
+        Result<HyperClient, Box<dyn std::error::Error + Send + Sync>>,
+    > = Lazy::new(|| build_client_with_alpn(None, cfg!(feature = "http2")));
+
     pub fn build_client(
         tls_config: Option<ClientConfig>,
+    ) -> Result<HyperClient, Box<dyn std::error::Error + Send + Sync>> {
+        let allow_h2 = match get_http_version() {
+            #[cfg(feature = "http2")]
+            HttpVersion::Http2 => true,
+            _ => false,
+        };
+        build_client_with_alpn(tls_config, allow_h2)
+    }
+
+    pub fn build_client_with_alpn(
+        tls_config: Option<ClientConfig>,
+        allow_h2: bool,
     ) -> Result<HyperClient, Box<dyn std::error::Error + Send + Sync>> {
         let pool_idle_timeout = get_pool_idle_timeout();
 
@@ -52,12 +70,19 @@ mod rustls_client {
         let mut cache_dns_connector = CachedDnsResolver::new().into_http_connector();
         cache_dns_connector.enforce_http(false);
 
-        let https = match get_http_version() {
+        let https = if allow_h2 {
             #[cfg(feature = "http2")]
-            HttpVersion::Http2 => builder
-                .enable_all_versions()
-                .wrap_connector(cache_dns_connector),
-            _ => builder.enable_http1().wrap_connector(cache_dns_connector),
+            {
+                builder
+                    .enable_all_versions()
+                    .wrap_connector(cache_dns_connector)
+            }
+            #[cfg(not(feature = "http2"))]
+            {
+                builder.enable_http1().wrap_connector(cache_dns_connector)
+            }
+        } else {
+            builder.enable_http1().wrap_connector(cache_dns_connector)
         };
 
         Ok(Client::builder(TokioExecutor::new())
@@ -76,10 +101,14 @@ mod openssl_client {
     use openssl::ssl::SslConnectorBuilder;
 
     pub type HyperClient =
-        Client<HttpsConnector<HttpConnector<CachedDnsResolver>>, BoxBody<Bytes, Infallible>>;
+        Client<HttpsConnector<HttpConnector<CachedDnsResolver>>, BoxBody<Bytes, HyperBodyError>>;
 
     pub static HTTP_CLIENT: Lazy<Result<HyperClient, Box<dyn std::error::Error + Send + Sync>>> =
         Lazy::new(|| build_client(None));
+
+    pub static FETCH_HTTP_CLIENT: Lazy<
+        Result<HyperClient, Box<dyn std::error::Error + Send + Sync>>,
+    > = Lazy::new(|| build_client(None));
 
     pub fn build_client(
         tls_config: Option<SslConnectorBuilder>,
