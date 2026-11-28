@@ -1,5 +1,5 @@
 # Lexe
-<a href="https://hellogithub.com/repository/Ray-D-Song/lexe" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=9a55d6aa58d2467086642f3fdbd2cc1b&claim_uid=4QeJb78I1ZfwtVi&theme=small" alt="Featured｜HelloGitHub" /></a>
+<a href="https://hellogithub.com/repository/Ray-D-Song/lexe" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=9a55d6aa58d2467086642f3fdbd2cc1b&claim_uid=4QeJb78I1ZfwtVi&theme=small_dark" alt="Featured｜HelloGitHub" /></a>
 
 Lexe is a lightweight JavaScript runtime built on QuickJS.
 
